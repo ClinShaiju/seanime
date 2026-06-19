@@ -373,6 +373,8 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		PlaybackType      debrid_client.StreamPlaybackType `json:"playbackType"` // "default" or "externalPlayerLink"
 		ClientId          string                           `json:"clientId"`
 		BatchEpisodeFiles *hibiketorrent.BatchEpisodeFiles `json:"batchEpisodeFiles"`
+		// Preload is true if the stream should only be resolved and cached, not played.
+		Preload bool `json:"preload,omitempty"`
 	}
 
 	var b body
@@ -393,7 +395,7 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		b.Torrent.MagnetLink = magnet
 	}
 
-	err := h.App.DebridClientRepository.StartStream(c.Request().Context(), &debrid_client.StartStreamOptions{
+	opts := &debrid_client.StartStreamOptions{
 		MediaId:           b.MediaId,
 		EpisodeNumber:     b.EpisodeNumber,
 		AniDBEpisode:      b.AniDBEpisode,
@@ -405,9 +407,17 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		PlaybackType:      b.PlaybackType,
 		AutoSelect:        b.AutoSelect,
 		BatchEpisodeFiles: b.BatchEpisodeFiles,
-	})
-	if err != nil {
-		return h.RespondWithError(c, err)
+		Preload:           b.Preload,
+	}
+
+	if b.Preload {
+		if err := h.App.DebridClientRepository.PreloadStream(c.Request().Context(), opts); err != nil {
+			return h.RespondWithError(c, err)
+		}
+	} else {
+		if err := h.App.DebridClientRepository.StartStream(c.Request().Context(), opts); err != nil {
+			return h.RespondWithError(c, err)
+		}
 	}
 
 	return h.RespondWithData(c, true)

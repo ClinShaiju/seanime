@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"seanime/internal/api/anilist"
 	"seanime/internal/database/db_bridge"
 	"seanime/internal/debrid/debrid"
 	"seanime/internal/directstream"
@@ -28,6 +29,23 @@ type (
 		currentStreamUrl string
 
 		playbackSubscriberCtxCancelFunc context.CancelFunc
+
+		// Preloaded next-episode stream (native player autoplay).
+		// Resolved at ~80% of the current episode so the next start is instant.
+		preloadMu         sync.Mutex
+		preloadCancelFunc context.CancelFunc
+		preloadedStream   mo.Option[*preloadedDebridStream]
+	}
+
+	// preloadedDebridStream holds a fully-resolved debrid stream URL for a future episode.
+	preloadedDebridStream struct {
+		opts          *StartStreamOptions
+		streamUrl     string
+		fileId        string
+		filepath      string
+		media         *anilist.BaseAnime
+		torrent       *hibiketorrent.AnimeTorrent
+		torrentItemId string
 	}
 
 	StreamPlaybackType string
@@ -52,6 +70,8 @@ type (
 		PlaybackType      StreamPlaybackType
 		AutoSelect        bool
 		BatchEpisodeFiles *hibiketorrent.BatchEpisodeFiles
+		// Preload is true when the stream should only be resolved and cached (not played).
+		Preload bool
 	}
 
 	CancelStreamOptions struct {
@@ -87,6 +107,19 @@ const (
 // startStream is called by the client to start streaming a torrent
 func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOptions) (err error) {
 	defer util.HandlePanicInModuleWithError("debrid/client/StartStream", &err)
+
+	// Reuse a preloaded stream if one matches this episode (native player + external player link).
+	if canReusePreloadedStream(opts.PlaybackType) {
+		s.preloadMu.Lock()
+		cached, ok := s.preloadedStream.Get()
+		hit := ok && debridStreamOptionsMatch(opts, cached.opts)
+		// Drop the cache either way: a hit consumes it, a miss invalidates a stale preload.
+		s.clearPreloadedStreamLocked()
+		s.preloadMu.Unlock()
+		if hit {
+			return s.playPreloadedStream(ctx, opts, cached)
+		}
+	}
 
 	s.repository.previousStreamOptions = mo.Some(opts)
 
@@ -574,6 +607,10 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 }
 
 func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
+	s.preloadMu.Lock()
+	s.clearPreloadedStreamLocked()
+	s.preloadMu.Unlock()
+
 	if s.repository.directStreamManager != nil {
 		s.repository.directStreamManager.CloseOpen("")
 	}
@@ -601,6 +638,267 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 			s.repository.logger.Err(err).Msg("debridstream: Failed to remove torrent")
 		}
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Preload
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// debridStreamOptionsMatch reports whether two option sets target the same episode.
+func debridStreamOptionsMatch(a, b *StartStreamOptions) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.MediaId == b.MediaId && a.EpisodeNumber == b.EpisodeNumber && a.AniDBEpisode == b.AniDBEpisode
+}
+
+// clearPreloadedStreamLocked cancels any in-flight preload and drops the cached stream.
+// Caller must hold preloadMu.
+func (s *StreamManager) clearPreloadedStreamLocked() {
+	if s.preloadCancelFunc != nil {
+		s.preloadCancelFunc()
+		s.preloadCancelFunc = nil
+	}
+	s.preloadedStream = mo.None[*preloadedDebridStream]()
+}
+
+// preloadStream resolves the next episode's debrid stream URL ahead of time and caches it.
+// It runs silently (no overlay events) so it doesn't disturb the episode still playing.
+func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOptions) (err error) {
+	defer util.HandlePanicInModuleWithError("debrid/client/preloadStream", &err)
+
+	if s.repository.settings == nil || !s.repository.settings.PreloadNextStream {
+		return nil
+	}
+
+	provider, err := s.repository.GetProvider()
+	if err != nil {
+		return fmt.Errorf("debridstream: Failed to preload stream: %w", err)
+	}
+
+	// Replace any existing preload and create a fresh cancellable context.
+	s.preloadMu.Lock()
+	s.clearPreloadedStreamLocked()
+	preloadCtx, cancel := context.WithCancel(context.Background())
+	s.preloadCancelFunc = cancel
+	s.preloadMu.Unlock()
+
+	s.repository.logger.Info().
+		Int("mediaId", opts.MediaId).
+		Int("episodeNumber", opts.EpisodeNumber).
+		Msg("debridstream: Preloading stream for next episode")
+
+	go func() {
+		defer util.HandlePanicInModuleThen("debrid/client/preloadStream", func() {})
+
+		media, _, err := s.getMediaInfo(preloadCtx, opts.MediaId)
+		if err != nil || preloadCtx.Err() != nil {
+			return
+		}
+
+		selectedTorrent := opts.Torrent
+		fileId := opts.FileId
+		filepath := ""
+
+		if opts.AutoSelect {
+			pt, err := s.repository.findBestTorrent(provider, media, opts.EpisodeNumber)
+			if err != nil {
+				s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to select torrent")
+				return
+			}
+			selectedTorrent, fileId, filepath = pt.torrent, pt.fileId, pt.filepath
+		} else {
+			if selectedTorrent == nil {
+				return
+			}
+			if fileId == "" {
+				pt, err := s.repository.findBestTorrentFromManualSelection(provider, selectedTorrent, media, opts.EpisodeNumber, opts.FileIndex)
+				if err != nil {
+					s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to analyze torrent")
+					return
+				}
+				selectedTorrent, fileId, filepath = pt.torrent, pt.fileId, pt.filepath
+			}
+		}
+
+		if selectedTorrent == nil || preloadCtx.Err() != nil {
+			return
+		}
+
+		torrentItemId, err := provider.AddTorrent(debrid.AddTorrentOptions{
+			MagnetLink:   selectedTorrent.MagnetLink,
+			InfoHash:     selectedTorrent.InfoHash,
+			SelectFileId: fileId,
+		})
+		if err != nil {
+			s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to add torrent")
+			return
+		}
+
+		// Drain progress updates silently while the debrid service caches the torrent.
+		itemCh := make(chan debrid.TorrentItem, 1)
+		go func() {
+			for range itemCh { //nolint:revive
+			}
+		}()
+		streamUrl, err := provider.GetTorrentStreamUrl(preloadCtx, debrid.StreamTorrentOptions{
+			ID:     torrentItemId,
+			FileId: fileId,
+		}, itemCh)
+		close(itemCh)
+
+		if preloadCtx.Err() != nil {
+			return
+		}
+		if err != nil || streamUrl == "" {
+			s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to resolve stream URL")
+			return
+		}
+
+		s.preloadMu.Lock()
+		// Only store if this preload wasn't superseded or cancelled in the meantime.
+		if preloadCtx.Err() == nil {
+			s.preloadedStream = mo.Some(&preloadedDebridStream{
+				opts:          opts,
+				streamUrl:     streamUrl,
+				fileId:        fileId,
+				filepath:      filepath,
+				media:         media.ToBaseAnime(),
+				torrent:       selectedTorrent,
+				torrentItemId: torrentItemId,
+			})
+			s.repository.logger.Info().Str("torrent", selectedTorrent.Name).Msg("debridstream: Preloaded stream ready")
+		}
+		s.preloadMu.Unlock()
+	}()
+
+	return nil
+}
+
+// canReusePreloadedStream reports whether a playback type can consume a preloaded stream.
+// Native player and external player link both just need a ready stream URL; the desktop
+// media player ("default") path is interactive and not preloaded.
+func canReusePreloadedStream(pt StreamPlaybackType) bool {
+	return pt == PlaybackTypeNativePlayer || pt == PlaybackTypeExternalPlayer
+}
+
+// playPreloadedStream hands an already-resolved debrid stream to the right player without
+// re-running the ~20s resolve. Supports the native player and external player link
+// (the latter is what the mobile/mpv client uses).
+func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStreamOptions, cached *preloadedDebridStream) (err error) {
+	defer util.HandlePanicInModuleWithError("debrid/client/playPreloadedStream", &err)
+
+	s.repository.previousStreamOptions = mo.Some(opts)
+	s.repository.logger.Info().
+		Int("mediaId", opts.MediaId).
+		Str("playbackType", string(opts.PlaybackType)).
+		Msgf("debridstream: Using preloaded stream for episode %s", opts.AniDBEpisode)
+
+	if s.downloadCtxCancelFunc != nil {
+		s.downloadCtxCancelFunc()
+		s.downloadCtxCancelFunc = nil
+	}
+	if s.playbackSubscriberCtxCancelFunc != nil {
+		s.playbackSubscriberCtxCancelFunc()
+		s.playbackSubscriberCtxCancelFunc = nil
+	}
+
+	// The native player needs an open session before we hand it the stream.
+	if opts.PlaybackType == PlaybackTypeNativePlayer {
+		s.repository.directStreamManager.BeginOpen(opts.ClientId, "Loading preloaded stream...", func() {
+			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true})
+		})
+		if !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+			return nil
+		}
+	}
+
+	s.currentTorrentItemId = cached.torrentItemId
+
+	streamCtx, cancelCtx := context.WithCancel(context.Background())
+	s.downloadCtxCancelFunc = cancelCtx
+
+	// Allow a hook to rewrite the stream URL / media (mirrors the normal resolve path).
+	streamUrl := cached.streamUrl
+	event := &DebridSendStreamToMediaPlayerEvent{
+		WindowTitle:  "",
+		StreamURL:    streamUrl,
+		Media:        cached.media,
+		AniDbEpisode: opts.AniDBEpisode,
+		PlaybackType: string(opts.PlaybackType),
+	}
+	if err := hook.GlobalHookManager.OnDebridSendStreamToMediaPlayer().Trigger(event); err != nil {
+		s.repository.logger.Err(err).Msg("debridstream: Failed to send preloaded stream to media player")
+	}
+	streamUrl = event.StreamURL
+	media := event.Media
+
+	if event.DefaultPrevented {
+		s.repository.logger.Debug().Msg("debridstream: Preloaded stream prevented by hook")
+		cancelCtx()
+		s.downloadCtxCancelFunc = nil
+		return nil
+	}
+
+	s.currentStreamUrl = streamUrl
+
+	switch opts.PlaybackType {
+	case PlaybackTypeNativePlayer:
+		if !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+			return nil
+		}
+		err = s.repository.directStreamManager.PlayDebridStream(streamCtx, cached.filepath, directstream.PlayDebridStreamOptions{
+			StreamUrl:    streamUrl,
+			MediaId:      media.ID,
+			AnidbEpisode: opts.AniDBEpisode,
+			Media:        media,
+			Torrent:      cached.torrent,
+			FileId:       cached.fileId,
+			UserAgent:    opts.UserAgent,
+			ClientId:     opts.ClientId,
+			AutoSelect:   false,
+		})
+		if err != nil {
+			s.repository.logger.Error().Err(err).Msg("debridstream: Failed to play preloaded stream")
+			return err
+		}
+
+	case PlaybackTypeExternalPlayer:
+		// The client (e.g. mobile mpv) opens this URL itself.
+		s.repository.wsEventManager.SendEventTo(opts.ClientId, events.ExternalPlayerOpenURL, struct {
+			Url           string `json:"url"`
+			MediaId       int    `json:"mediaId"`
+			EpisodeNumber int    `json:"episodeNumber"`
+			MediaTitle    string `json:"mediaTitle"`
+		}{
+			Url:           streamUrl,
+			MediaId:       opts.MediaId,
+			EpisodeNumber: opts.EpisodeNumber,
+			MediaTitle:    media.GetPreferredTitle(),
+		})
+		s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
+			Status:      StreamStatusReady,
+			TorrentName: cached.torrent.Name,
+			Message:     "External player link sent",
+		})
+
+	default:
+		// Reuse is gated to the two types above; this is unreachable.
+		s.repository.logger.Warn().Str("playbackType", string(opts.PlaybackType)).Msg("debridstream: Preloaded stream for unsupported playback type, ignoring")
+		cancelCtx()
+		s.downloadCtxCancelFunc = nil
+		return nil
+	}
+
+	go func() {
+		defer util.HandlePanicInModuleThen("debridstream/AddBatchHistory", func() {})
+		if cached.torrent != nil && cached.torrent.IsBatch {
+			_ = db_bridge.InsertTorrentstreamHistory(s.repository.db, media.GetID(), cached.torrent, opts.BatchEpisodeFiles)
+			s.repository.wsEventManager.SendEvent(events.InvalidateQueries, []string{events.GetTorrentstreamBatchHistoryEndpoint})
+		}
+	}()
+
+	return nil
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

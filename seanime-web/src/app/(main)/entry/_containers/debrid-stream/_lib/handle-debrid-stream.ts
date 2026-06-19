@@ -25,12 +25,14 @@ type DebridStreamSelectionProps = {
     chosenFileId: string
     batchEpisodeFiles: HibikeTorrent_BatchEpisodeFiles | undefined
     forcePlaybackMethod?: ForcePlaybackMethod
+    preload?: boolean
 }
 type DebridStreamAutoSelectProps = {
     mediaId: number
     episodeNumber: number
     aniDBEpisode: string
     forcePlaybackMethod?: ForcePlaybackMethod
+    preload?: boolean
 }
 
 export function useHandleStartDebridStream() {
@@ -78,10 +80,13 @@ export function useHandleStartDebridStream() {
             clientId: clientId || "",
             autoSelect: false,
             batchEpisodeFiles: params.batchEpisodeFiles,
+            preload: params.preload,
         }, {
             onSuccess: () => {
             },
             onError: () => {
+                // A preload failure must not disturb the episode currently playing.
+                if (params.preload) return
                 setState(null)
             },
         })
@@ -100,10 +105,14 @@ export function useHandleStartDebridStream() {
             playbackType: getPlaybackType(forcePlaybackMethod),
             clientId: clientId || "",
             autoSelect: true,
+            preload: params.preload,
         }, {
             onSuccess: () => {
             },
             onError: () => {
+                // A preload failure must not disturb the episode currently playing
+                // (and must not disable auto-select for the real next-episode start).
+                if (params.preload) return
                 setState(null)
                 React.startTransition(() => {
                     setCurrentSessionAutoSelect(false)

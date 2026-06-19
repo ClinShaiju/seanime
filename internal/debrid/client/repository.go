@@ -305,6 +305,11 @@ func (r *Repository) StartStream(ctx context.Context, opts *StartStreamOptions) 
 	return r.streamManager.startStream(ctx, opts)
 }
 
+// PreloadStream resolves and caches the next episode's stream URL for instant playback.
+func (r *Repository) PreloadStream(ctx context.Context, opts *StartStreamOptions) error {
+	return r.streamManager.preloadStream(ctx, opts)
+}
+
 func (r *Repository) GetStreamURL() (string, bool) {
 	return r.streamManager.currentStreamUrl, r.streamManager.currentStreamUrl != ""
 }

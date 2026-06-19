@@ -565,6 +565,7 @@ type DebridSettings struct {
 	IncludeDebridStreamInLibrary bool   `gorm:"column:include_debrid_stream_in_library" json:"includeDebridStreamInLibrary"`
 	StreamAutoSelect             bool   `gorm:"column:stream_auto_select" json:"streamAutoSelect"`
 	StreamPreferredResolution    string `gorm:"column:stream_preferred_resolution" json:"streamPreferredResolution"`
+	PreloadNextStream            bool   `gorm:"column:preload_next_stream" json:"preloadNextStream"`
 }
 
 type DebridTorrentItem struct {

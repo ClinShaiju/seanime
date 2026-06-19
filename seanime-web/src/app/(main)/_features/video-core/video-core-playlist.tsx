@@ -4,6 +4,7 @@ import { useGetAnimeEntry } from "@/api/hooks/anime_entries.hooks"
 import { EpisodeGridItem } from "@/app/(main)/_features/anime/_components/episode-grid-item"
 import { getNextBatchFileSelection, useAutoPlaySelectedTorrent, useTorrentstreamAutoplay } from "@/app/(main)/_features/autoplay/autoplay"
 import { useNakamaWatchParty } from "@/app/(main)/_features/nakama/nakama-manager"
+import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { usePlaylistManager } from "@/app/(main)/_features/playlists/_containers/global-playlist-manager"
 import { VideoCoreNextButton, VideoCorePreviousButton } from "@/app/(main)/_features/video-core/video-core-control-bar"
 import { VideoCore_PlaybackType, VideoCoreLifecycleState } from "@/app/(main)/_features/video-core/video-core.atoms"
@@ -118,6 +119,7 @@ export function useVideoCorePlaylistSetup(providedState: VideoCoreLifecycleState
 }
 
 export function useVideoCorePlaylist() {
+    const serverStatus = useServerStatus()
     const playlistState = useAtomValue(vc_playlistState)
     const playbackType = playlistState?.type
     const animeEntry = playlistState?.animeEntry
@@ -248,6 +250,52 @@ export function useVideoCorePlaylist() {
         }
     }
 
+    // preloadNextEpisode resolves & caches the next debrid episode's stream URL ahead of time
+    // (called at ~80% of the current episode) so autoplay starts instantly instead of after a ~20s resolve.
+    // Only the debrid + auto-select / saved-batch paths are preloadable (manual drawer selection can't be).
+    function preloadNextEpisode() {
+        if (isWatchPartyPeer || globalCurrentPlaylist) return
+        if (playbackType !== "debrid") return
+        if (!serverStatus?.debridSettings?.preloadNextStream) return
+
+        const episode = playlistState?.nextEpisode
+        if (!episode || !episode.aniDBEpisode || !playlistState?.animeEntry) return
+
+        if (debridStream_currentSessionAutoSelect) {
+            handleDebridstreamAutoSelect({
+                mediaId: playlistState.animeEntry.mediaId,
+                episodeNumber: episode.episodeNumber,
+                aniDBEpisode: episode.aniDBEpisode,
+                preload: true,
+            })
+            return
+        }
+
+        if (autoPlayTorrent?.torrent?.isBatch) {
+            let fileIndex: number | undefined = undefined
+            if (autoPlayTorrent?.batchFiles) {
+                const file = autoPlayTorrent.batchFiles.files?.find(n => n.index === autoPlayTorrent.batchFiles!.current + 1)
+                if (file) {
+                    fileIndex = file.index
+                }
+            }
+            handleDebridstreamSelection({
+                mediaId: playlistState.animeEntry.mediaId,
+                episodeNumber: episode.episodeNumber,
+                aniDBEpisode: episode.aniDBEpisode,
+                torrent: autoPlayTorrent.torrent,
+                chosenFileId: fileIndex !== undefined ? String(fileIndex) : "",
+                batchEpisodeFiles: (autoPlayTorrent?.batchFiles && fileIndex !== undefined) ? {
+                    ...autoPlayTorrent.batchFiles,
+                    current: fileIndex,
+                    currentEpisodeNumber: episode.episodeNumber,
+                    currentAniDBEpisode: episode.aniDBEpisode,
+                } : undefined,
+                preload: true,
+            })
+        }
+    }
+
     const playEpisode = (which: "previous" | "next" | string) => {
         if (isWatchPartyPeer) return
 
@@ -336,6 +384,7 @@ export function useVideoCorePlaylist() {
         hasPreviousEpisode: !!playlistState?.previousEpisode && !isWatchPartyPeer,
         hasNextEpisode: !!playlistState?.nextEpisode && !isWatchPartyPeer,
         playEpisode,
+        preloadNextEpisode,
     }
 }
 

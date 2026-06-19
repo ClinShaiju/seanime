@@ -1,0 +1,52 @@
+name: Build Server (Linux)
+
+# Focused build of the Linux server binaries (arm64 + amd64) for this private fork.
+# Mirrors the build steps of the upstream "Release Draft" workflow, scoped to Linux
+# so it needs no signing secrets / electron submodule and stays cheap on Actions minutes.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build web interface
+        run: |
+          cd seanime-web
+          npm install
+          npm run build
+          cd ..
+          rm -rf web
+          mv seanime-web/out web
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2'
+
+      - name: Build Linux server binaries
+        run: |
+          CGO_ENABLED=0 GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o seanime-server-linux-arm64 .
+          CGO_ENABLED=0 GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o seanime-server-linux-amd64 .
+
+      - name: Upload server binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: seanime-server-linux
+          path: |
+            seanime-server-linux-arm64
+            seanime-server-linux-amd64
+          if-no-files-found: error

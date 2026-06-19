@@ -22,6 +22,7 @@ const debridSettingsSchema = defineSchema(({ z }) => z.object({
     includeDebridStreamInLibrary: z.boolean().default(false),
     streamAutoSelect: z.boolean().default(false),
     streamPreferredResolution: z.string(),
+    preloadNextStream: z.boolean().default(false),
 }))
 
 type DebridSettingsProps = {
@@ -89,6 +90,7 @@ export function DebridSettings(props: DebridSettingsProps) {
                     includeDebridStreamInLibrary: settings?.includeDebridStreamInLibrary,
                     streamAutoSelect: settings?.streamAutoSelect ?? false,
                     streamPreferredResolution: settings?.streamPreferredResolution || "-",
+                    preloadNextStream: settings?.preloadNextStream ?? false,
                 }}
                 stackClass="space-y-4"
             >
@@ -183,6 +185,15 @@ export function DebridSettings(props: DebridSettingsProps) {
                             <div className="pt-2">
                                 <AutoSelectProfileButton />
                             </div>
+                        </SettingsCard>
+
+                        <SettingsCard title="Preloading">
+                            <Field.Switch
+                                side="right"
+                                name="preloadNextStream"
+                                label="Preload next episode"
+                                help="When using the built-in player with auto-select, resolve the next episode's stream around 80% so autoplay starts instantly instead of after a delay."
+                            />
                         </SettingsCard>
 
 

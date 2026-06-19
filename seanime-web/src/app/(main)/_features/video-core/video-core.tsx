@@ -749,6 +749,7 @@ export function VideoCore(props: VideoCoreProps) {
     const { isParticipant: isWatchPartyParticipant } = useNakamaWatchParty()
 
     const videoCompletedRef = useRef(false)
+    const preloadFiredRef = useRef(false)
     const currentPlaybackRef = useRef<string | null>(null)
     const stalledPlaybackRef = useRef<string | null>(null)
 
@@ -1112,6 +1113,7 @@ export function VideoCore(props: VideoCoreProps) {
         onAudioChange()
 
         videoCompletedRef.current = false
+        preloadFiredRef.current = false
 
         if (!state.playbackInfo) return // shouldn't happen
 
@@ -1324,9 +1326,18 @@ export function VideoCore(props: VideoCoreProps) {
             onCompleted?.()
             dispatchVideoCompletedEvent()
         }
+
+        // Preload the next episode's stream at 80% so native-player autoplay starts instantly.
+        // No-op unless this is the native player streaming from debrid (see preloadNextEpisode).
+        if (!!v.duration && !preloadFiredRef.current && percent >= 0.8) {
+            preloadFiredRef.current = true
+            if (props.id === "native-player" && !isGlobalPlaylistActive) {
+                preloadNextEpisode()
+            }
+        }
     }
 
-    const { playEpisode, isGlobalPlaylistActive } = useVideoCorePlaylist()
+    const { playEpisode, isGlobalPlaylistActive, preloadNextEpisode } = useVideoCorePlaylist()
     const handleEnded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         log.info("Video ended")
         subtitleManager?.pgsRenderer?.stop()
