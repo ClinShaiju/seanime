@@ -1348,6 +1348,27 @@
     }
   },
   {
+    "name": "franchiseRootTitle",
+    "trimmedName": "franchiseRootTitle",
+    "comments": [
+      "franchiseRootTitle returns a media's preferred romaji-ish title for franchise stemming.",
+      ""
+    ],
+    "filepath": "internal/handlers/anime_franchise.go",
+    "filename": "anime_franchise.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
     "name": "HandleGetAnimeFranchise",
     "trimmedName": "GetAnimeFranchise",
     "comments": [
@@ -1394,6 +1415,87 @@
       "returns": "anime.FranchiseGroup",
       "returnGoType": "anime.FranchiseGroup",
       "returnTypescriptType": "Anime_FranchiseGroup"
+    }
+  },
+  {
+    "name": "resolveFranchiseGroup",
+    "trimmedName": "resolveFranchiseGroup",
+    "comments": [
+      "resolveFranchiseGroup walks the franchise relation tree (or returns the cached",
+      "group) for the given root media id. Shared by the franchise + merged-season routes.",
+      ""
+    ],
+    "filepath": "internal/handlers/anime_franchise.go",
+    "filename": "anime_franchise.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleGetMergedSeason",
+    "trimmedName": "GetMergedSeason",
+    "comments": [
+      "HandleGetMergedSeason",
+      "",
+      "\t@summary returns a split-cour season merged into one continuous episode list.",
+      "\t@desc For a season made of multiple AniList entries (cours) sharing a TMDB season",
+      "\t@desc number, concatenates their episode collections into one list. Each episode keeps",
+      "\t@desc its source cour media id + cour-relative number (for per-cour AniList progress)",
+      "\t@desc and absolute number (for batch/torrent matching). UI shows a continuous count;",
+      "\t@desc AniList stays tracked per cour.",
+      "\t@route /api/v1/library/anime-entry/{id}/merged-season/{season} [GET]",
+      "\t@returns anime.MergedSeason",
+      ""
+    ],
+    "filepath": "internal/handlers/anime_franchise.go",
+    "filename": "anime_franchise.go",
+    "api": {
+      "summary": "returns a split-cour season merged into one continuous episode list.",
+      "descriptions": [
+        "For a season made of multiple AniList entries (cours) sharing a TMDB season",
+        "number, concatenates their episode collections into one list. Each episode keeps",
+        "its source cour media id + cour-relative number (for per-cour AniList progress)",
+        "and absolute number (for batch/torrent matching). UI shows a continuous count;",
+        "AniList stays tracked per cour."
+      ],
+      "endpoint": "/api/v1/library/anime-entry/{id}/merged-season/{season}",
+      "methods": [
+        "GET"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "anime.MergedSeason",
+      "returnGoType": "anime.MergedSeason",
+      "returnTypescriptType": "Anime_MergedSeason"
+    }
+  },
+  {
+    "name": "franchiseEntryProgress",
+    "trimmedName": "franchiseEntryProgress",
+    "comments": [
+      "franchiseEntryProgress returns the user's AniList progress for a media id, 0 if absent.",
+      ""
+    ],
+    "filepath": "internal/handlers/anime_franchise.go",
+    "filename": "anime_franchise.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
     }
   },
   {

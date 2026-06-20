@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"seanime/internal/api/anilist"
 	"seanime/internal/library/anime"
 	"seanime/internal/util/limiter"
@@ -54,10 +55,19 @@ func (h *Handler) HandleGetAnimeFranchise(c echo.Context) error {
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
+	group, err := h.resolveFranchiseGroup(c, mId)
+	if err != nil {
+		return h.RespondWithError(c, err)
+	}
+	return h.RespondWithData(c, group)
+}
 
+// resolveFranchiseGroup walks the franchise relation tree (or returns the cached
+// group) for the given root media id. Shared by the franchise + merged-season routes.
+func (h *Handler) resolveFranchiseGroup(c echo.Context, mId int) (*anime.FranchiseGroup, error) {
 	// Cache hit avoids the expensive relation walk entirely.
 	if g, ok := anime.GetCachedFranchiseGroup(h.App.FileCacher, mId); ok {
-		return h.RespondWithData(c, g)
+		return g, nil
 	}
 
 	client := h.App.AnilistClientRef.Get()
@@ -111,7 +121,7 @@ func (h *Handler) HandleGetAnimeFranchise(c echo.Context) error {
 	if len(members) == 0 {
 		res, e := client.CompleteAnimeByID(c.Request().Context(), &mId)
 		if e != nil {
-			return h.RespondWithError(c, e)
+			return nil, e
 		}
 		addMember(res.GetMedia().ToBaseAnime())
 	}
@@ -152,7 +162,88 @@ func (h *Handler) HandleGetAnimeFranchise(c echo.Context) error {
 	group := anime.BuildFranchiseFromMembers(members, refs)
 	anime.CacheFranchiseGroup(h.App.FileCacher, group)
 
-	return h.RespondWithData(c, group)
+	return group, nil
+}
+
+// HandleGetMergedSeason
+//
+//	@summary returns a split-cour season merged into one continuous episode list.
+//	@desc For a season made of multiple AniList entries (cours) sharing a TMDB season
+//	@desc number, concatenates their episode collections into one list. Each episode keeps
+//	@desc its source cour media id + cour-relative number (for per-cour AniList progress)
+//	@desc and absolute number (for batch/torrent matching). UI shows a continuous count;
+//	@desc AniList stays tracked per cour.
+//	@route /api/v1/library/anime-entry/{id}/merged-season/{season} [GET]
+//	@returns anime.MergedSeason
+func (h *Handler) HandleGetMergedSeason(c echo.Context) error {
+	mId, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return h.RespondWithError(c, err)
+	}
+	seasonNum, err := strconv.Atoi(c.Param("season"))
+	if err != nil {
+		return h.RespondWithError(c, err)
+	}
+
+	group, err := h.resolveFranchiseGroup(c, mId)
+	if err != nil {
+		return h.RespondWithError(c, err)
+	}
+
+	cours := lo.Filter(group.Seasons, func(e *anime.GroupedEntry, _ int) bool {
+		return e.SeasonNumber == seasonNum && e.Media != nil
+	})
+	if len(cours) == 0 {
+		return h.RespondWithError(c, errors.New("no cours found for that season"))
+	}
+
+	animeCollection, _ := h.App.GetAnimeCollection(false)
+
+	merged := &anime.MergedSeason{SeasonNumber: seasonNum, Cours: []*anime.MergedCour{}, Episodes: []*anime.Episode{}}
+	globalEp := 0
+	for _, cour := range cours {
+		ec, e := anime.NewEpisodeCollection(anime.NewEpisodeCollectionOptions{
+			Media:               cour.Media,
+			MetadataProviderRef: h.App.MetadataProviderRef,
+			Logger:              h.App.Logger,
+		})
+		if e != nil || ec == nil {
+			continue
+		}
+
+		mc := &anime.MergedCour{MediaId: cour.MediaId, Media: cour.Media, StartEpisode: globalEp + 1}
+		if animeCollection != nil {
+			mc.Progress = franchiseEntryProgress(animeCollection, cour.MediaId)
+		}
+		for _, ep := range ec.Episodes {
+			if ep.Type != anime.LocalFileTypeMain {
+				continue
+			}
+			merged.Episodes = append(merged.Episodes, ep)
+			globalEp++
+			mc.EpisodeCount++
+		}
+		merged.Cours = append(merged.Cours, mc)
+		merged.TotalProgress += mc.Progress
+	}
+	merged.TotalEpisodes = globalEp
+
+	return h.RespondWithData(c, merged)
+}
+
+// franchiseEntryProgress returns the user's AniList progress for a media id, 0 if absent.
+func franchiseEntryProgress(col *anilist.AnimeCollection, mediaId int) int {
+	if col == nil || col.MediaListCollection == nil {
+		return 0
+	}
+	for _, l := range col.MediaListCollection.Lists {
+		for _, e := range l.GetEntries() {
+			if e != nil && e.Media != nil && e.Media.ID == mediaId {
+				return e.GetProgressSafe()
+			}
+		}
+	}
+	return 0
 }
 
 // HandleGetFranchiseRefs

@@ -328,6 +328,20 @@ export const API_ENDPOINTS = {
         },
         /**
          *  @description
+         *  Route returns a split-cour season merged into one continuous episode list.
+         *  For a season made of multiple AniList entries (cours) sharing a TMDB season
+         *  number, concatenates their episode collections into one list. Each episode keeps
+         *  its source cour media id + cour-relative number (for per-cour AniList progress)
+         *  and absolute number (for batch/torrent matching). UI shows a continuous count;
+         *  AniList stays tracked per cour.
+         */
+        GetMergedSeason: {
+            key: "ANIME-FRANCHISE-get-merged-season",
+            methods: ["GET"],
+            endpoint: "/api/v1/library/anime-entry/{id}/merged-season/{season}",
+        },
+        /**
+         *  @description
          *  Route resolves franchise grouping refs (TMDB id + season number) for many AniList ids.
          *  Cheap bulk lookup (metadata only, no relation walk) used to collapse the library
          *  into one card per franchise. Heavily cached per id.

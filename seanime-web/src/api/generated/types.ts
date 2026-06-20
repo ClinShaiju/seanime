@@ -1801,6 +1801,38 @@ export type Anime_LocalFileParsedData = {
 export type Anime_LocalFileType = "main" | "special" | "nc"
 
 /**
+ * - Filepath: internal/library/anime/franchise.go
+ * - Filename: franchise.go
+ * - Package: anime
+ */
+export type Anime_MergedCour = {
+    mediaId: number
+    media?: AL_BaseAnime
+    /**
+     * user's AniList progress for this cour
+     */
+    progress: number
+    episodeCount: number
+    /**
+     * 1-based continuous number where this cour begins
+     */
+    startEpisode: number
+}
+
+/**
+ * - Filepath: internal/library/anime/franchise.go
+ * - Filename: franchise.go
+ * - Package: anime
+ */
+export type Anime_MergedSeason = {
+    seasonNumber: number
+    cours?: Array<Anime_MergedCour>
+    episodes?: Array<Anime_Episode>
+    totalEpisodes: number
+    totalProgress: number
+}
+
+/**
  * - Filepath: internal/library/anime/missing_episodes.go
  * - Filename: missing_episodes.go
  * - Package: anime

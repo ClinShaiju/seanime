@@ -32,18 +32,40 @@ the merged episode list. (Caveat: an unreleased cour with no animap mapping gets
 wrong season number — e.g. Ascendance "Adopted Daughter" — until it airs; that's an
 upstream gap, not this feature.)
 
+## Three things to route per episode (key design)
+
+Each merged episode must carry, so the frontend/back can fan actions to the right place:
+- **source cour `mediaId`** (`episode.baseAnime.id`) → AniList progress (per-cour).
+- **cour-relative `episodeNumber`/`progressNumber`** → AniList progress value.
+- **`absoluteEpisodeNumber`** → batch/torrent matching. A 2nd-cour ep 1 is ep 13 in a
+  batch; Seanime currently passes the cour-relative 1, so autoselect must use the
+  absolute number for merged seasons. (`Episode.AbsoluteEpisodeNumber` already exists.)
+
+AniList stays per-cour: UI "15/24" = cour1 12/12 (completed) + cour2 3/12 (watching).
+
 ## Plan
 
-### Backend (data foundation — low risk)
-- `internal/library/anime/merged_season.go`: given the franchise + a target season
-  number, gather its cours (AniList entries), build each cour's `Entry` (reuse
-  `NewEntry`), and concatenate their `Episodes` into one list:
-  - **Display number** renumbered continuously (1..36).
-  - Each episode keeps its **source `BaseAnime` + source `progressNumber`** (so
-    playback/progress can route correctly).
-  - Carry a per-episode `sourceMediaId` so the frontend doesn't have to infer it.
-- New handler `HandleGetMergedSeason(rootId, seasonNumber)` → a merged `Entry`-shaped
-  payload. Read-only; doesn't touch the existing single-entry path.
+### Backend (DONE — deployed)
+- `HandleGetMergedSeason(rootId, seasonNumber)` → `anime.MergedSeason`
+  (`internal/handlers/anime_franchise.go`, route
+  `/api/v1/library/anime-entry/{id}/merged-season/{season}`). Reuses the cached
+  franchise group, filters Seasons to the target season number (= the cours), and
+  for each cour builds its **episode collection** (`NewEpisodeCollection` — the
+  view-agnostic metadata source that works for Debrid/Torrent streaming, unlike
+  `NewEntry` which is local-file only) and concatenates the main episodes. Each
+  `Episode` retains its source `BaseAnime` + cour-relative + absolute numbers.
+  `MergedCour` carries per-cour progress + the continuous start episode.
+  Franchise-build logic extracted to `resolveFranchiseGroup` (shared).
+
+### Frontend (NEXT — the careful part, needs live testing)
+- Season switcher: collapse same-season cours into one "Season N" chip; selecting a
+  multi-cour season loads the merged payload instead of navigating to a cour.
+- Render the merged episode list with continuous display numbers (array position).
+- **Per-episode routing**: play / progress / watch-history use the episode's source
+  `baseAnime.id` + cour-relative number — NOT the page `entry.mediaId`. Must work in
+  the Debrid view (user's setup) — validate live; can't be tested from the build host.
+- **Autoselect/torrent**: when searching a batch for a merged-season episode, match on
+  the **absolute** number.
 
 ### Frontend (the careful part — playback rework)
 - Season switcher: collapse same-season cours into one "Season N" chip; selecting a

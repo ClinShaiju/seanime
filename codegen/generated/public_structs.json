@@ -49562,6 +49562,126 @@
   {
     "filepath": "../internal/library/anime/franchise.go",
     "filename": "franchise.go",
+    "name": "MergedSeason",
+    "formattedName": "Anime_MergedSeason",
+    "package": "anime",
+    "fields": [
+      {
+        "name": "SeasonNumber",
+        "jsonName": "seasonNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Cours",
+        "jsonName": "cours",
+        "goType": "[]MergedCour",
+        "typescriptType": "Array\u003cAnime_MergedCour\u003e",
+        "usedTypescriptType": "Anime_MergedCour",
+        "usedStructName": "anime.MergedCour",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Episodes",
+        "jsonName": "episodes",
+        "goType": "[]Episode",
+        "typescriptType": "Array\u003cAnime_Episode\u003e",
+        "usedTypescriptType": "Anime_Episode",
+        "usedStructName": "anime.Episode",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "TotalEpisodes",
+        "jsonName": "totalEpisodes",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "TotalProgress",
+        "jsonName": "totalProgress",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": []
+  },
+  {
+    "filepath": "../internal/library/anime/franchise.go",
+    "filename": "franchise.go",
+    "name": "MergedCour",
+    "formattedName": "Anime_MergedCour",
+    "package": "anime",
+    "fields": [
+      {
+        "name": "MediaId",
+        "jsonName": "mediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Media",
+        "jsonName": "media",
+        "goType": "anilist.BaseAnime",
+        "typescriptType": "AL_BaseAnime",
+        "usedTypescriptType": "AL_BaseAnime",
+        "usedStructName": "anilist.BaseAnime",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Progress",
+        "jsonName": "progress",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": [
+          " user's AniList progress for this cour"
+        ]
+      },
+      {
+        "name": "EpisodeCount",
+        "jsonName": "episodeCount",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "StartEpisode",
+        "jsonName": "startEpisode",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": [
+          " 1-based continuous number where this cour begins"
+        ]
+      }
+    ],
+    "comments": []
+  },
+  {
+    "filepath": "../internal/library/anime/franchise.go",
+    "filename": "franchise.go",
     "name": "GroupedEntry",
     "formattedName": "Anime_GroupedEntry",
     "package": "anime",

@@ -262,6 +262,7 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 
 	v1Library.GET("/anime-entry/:id", h.HandleGetAnimeEntry)
 	v1Library.GET("/anime-entry/:id/franchise", h.HandleGetAnimeFranchise)
+	v1Library.GET("/anime-entry/:id/merged-season/:season", h.HandleGetMergedSeason)
 	v1Library.POST("/franchise-refs", h.HandleGetFranchiseRefs)
 	v1Library.POST("/anime-entry/suggestions", h.HandleFetchAnimeEntrySuggestions)
 	v1Library.POST("/anime-entry/manual-match", h.HandleAnimeEntryManualMatch)

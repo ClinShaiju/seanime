@@ -60,6 +60,26 @@ type (
 		SeasonNumber int    `json:"seasonNumber"`
 	}
 
+	// MergedSeason is a split-cour season presented as one continuous episode list.
+	// Episodes keep their source cour BaseAnime + cour-relative number (AniList progress)
+	// and absolute number (batch/torrent matching); the UI numbers them continuously.
+	MergedSeason struct {
+		SeasonNumber  int            `json:"seasonNumber"`
+		Cours         []*MergedCour  `json:"cours"`
+		Episodes      []*Episode     `json:"episodes"`
+		TotalEpisodes int            `json:"totalEpisodes"`
+		TotalProgress int            `json:"totalProgress"`
+	}
+
+	// MergedCour describes one cour within a merged season.
+	MergedCour struct {
+		MediaId      int                `json:"mediaId"`
+		Media        *anilist.BaseAnime `json:"media"`
+		Progress     int                `json:"progress"`     // user's AniList progress for this cour
+		EpisodeCount int                `json:"episodeCount"`
+		StartEpisode int                `json:"startEpisode"` // 1-based continuous number where this cour begins
+	}
+
 	// GroupedEntry is a media placed within a franchise.
 	GroupedEntry struct {
 		Media        *anilist.BaseAnime `json:"media"`

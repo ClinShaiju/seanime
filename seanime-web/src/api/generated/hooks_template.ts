@@ -338,6 +338,15 @@
 //     })
 // }
 
+// export function useGetMergedSeason() {
+//     return useServerQuery<Anime_MergedSeason>({
+//         endpoint: API_ENDPOINTS.ANIME_FRANCHISE.GetMergedSeason.endpoint,
+//         method: API_ENDPOINTS.ANIME_FRANCHISE.GetMergedSeason.methods[0],
+//         queryKey: [API_ENDPOINTS.ANIME_FRANCHISE.GetMergedSeason.key],
+//         enabled: true,
+//     })
+// }
+
 // export function useGetFranchiseRefs() {
 //     return useServerMutation<Array<Anime_FranchiseRefEntry>, GetFranchiseRefs_Variables>({
 //         endpoint: API_ENDPOINTS.ANIME_FRANCHISE.GetFranchiseRefs.endpoint,

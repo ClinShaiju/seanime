@@ -112,6 +112,7 @@ const (
 	GetMediastreamSettingsEndpoint                     = "MEDIASTREAM-get-mediastream-settings"
 	GetMemoryProfileEndpoint                           = "STATUS-get-memory-profile"
 	GetMemoryStatsEndpoint                             = "STATUS-get-memory-stats"
+	GetMergedSeasonEndpoint                            = "ANIME-FRANCHISE-get-merged-season"
 	GetMissingEpisodesEndpoint                         = "ANIME-ENTRIES-get-missing-episodes"
 	GetNakamaAnimeAllLibraryFilesEndpoint              = "NAKAMA-get-nakama-anime-all-library-files"
 	GetNakamaAnimeLibraryEndpoint                      = "NAKAMA-get-nakama-anime-library"
