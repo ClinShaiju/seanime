@@ -1159,7 +1159,7 @@ export type AL_MediaSort = "ID" |
 export type AL_MediaStatus = "FINISHED" | "RELEASING" | "NOT_YET_RELEASED" | "CANCELLED" | "HIATUS"
 
 /**
- * - Filepath: internal/api/anilist/tags.go
+ * - Filepath: ..\internal\api\anilist\tags.go
  * - Filename: tags.go
  * - Package: anilist
  */
@@ -1627,6 +1627,58 @@ export type Anime_EpisodeMetadata = {
 }
 
 /**
+ * - Filepath: internal/library/anime/franchise.go
+ * - Filename: franchise.go
+ * - Package: anime
+ */
+export type Anime_FranchiseGroup = {
+    tmdbId?: string
+    rootMediaId: number
+    rootMedia?: AL_BaseAnime
+    /**
+     * TV, sorted by season number
+     */
+    seasons?: Array<Anime_GroupedEntry>
+    /**
+     * movie/OVA/special, sorted by air date
+     */
+    extras?: Array<Anime_GroupedEntry>
+    /**
+     * seasons ∪ extras, sorted by air date
+     */
+    watchOrder?: Array<Anime_GroupedEntry>
+}
+
+/**
+ * - Filepath: internal/library/anime/franchise.go
+ * - Filename: franchise.go
+ * - Package: anime
+ */
+export type Anime_FranchiseRefEntry = {
+    mediaId: number
+    tmdbId: string
+    seasonNumber: number
+}
+
+/**
+ * - Filepath: internal/library/anime/franchise.go
+ * - Filename: franchise.go
+ * - Package: anime
+ */
+export type Anime_GroupedEntry = {
+    media?: AL_BaseAnime
+    mediaId: number
+    /**
+     * -1 if unknown
+     */
+    seasonNumber: number
+    /**
+     * movie/OVA/special (TMDB season 0 or non-TV format)
+     */
+    isExtra: boolean
+}
+
+/**
  * - Filepath: internal/library/anime/collection.go
  * - Filename: collection.go
  * - Package: anime
@@ -1938,7 +1990,7 @@ export type Continuity_UpdateWatchHistoryItemOptions = {
 }
 
 /**
- * - Filepath: internal/continuity/history.go
+ * - Filepath: ..\internal\continuity\history.go
  * - Filename: history.go
  * - Package: continuity
  */
@@ -3093,6 +3145,7 @@ export type HibikeTorrent_AnimeTorrent = {
     downloadUrl: string
     magnetLink?: string
     infoHash?: string
+    streamUrl?: string
     resolution?: string
     isBatch?: boolean
     episodeNumber?: number
@@ -3359,7 +3412,7 @@ export type Manga_PageDimension = {
 }
 
 /**
- * - Filepath: internal/manga/download.go
+ * - Filepath: ..\internal\manga\download.go
  * - Filename: download.go
  * - Package: manga
  */
@@ -3818,14 +3871,14 @@ export type Models_HomeItem = {
 }
 
 /**
- * - Filepath: internal/database/models/models.go
+ * - Filepath: ..\internal\database\models\models.go
  * - Filename: models.go
  * - Package: models
  */
 export type Models_IntSlice = Array<number>
 
 /**
- * - Filepath: internal/database/models/models.go
+ * - Filepath: ..\internal\database\models\models.go
  * - Filename: models.go
  * - Package: models
  */
@@ -3871,6 +3924,7 @@ export type Models_LibrarySettings = {
      * "", "library", "torrentstream", "debridstream", "onlinestream", "ext:[extensionId]"
      */
     defaultPlaybackSource: string
+    groupSeasons: boolean
 }
 
 /**
@@ -4023,7 +4077,7 @@ export type Models_SilencedMediaEntry = {
 }
 
 /**
- * - Filepath: internal/database/models/models.go
+ * - Filepath: ..\internal\database\models\models.go
  * - Filename: models.go
  * - Package: models
  */
@@ -4195,7 +4249,7 @@ export type Nakama_NakamaAnimeLibrary = {
 }
 
 /**
- * - Filepath: internal/nakama/share.go
+ * - Filepath: ..\internal\nakama\share.go
  * - Filename: share.go
  * - Package: nakama
  */

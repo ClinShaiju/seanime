@@ -19,6 +19,7 @@ import { vc_isFullscreen } from "@/app/(main)/_features/video-core/video-core-at
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { MetaSection } from "@/app/(main)/entry/_components/meta-section"
 import { RelationsRecommendationsSection } from "@/app/(main)/entry/_components/relations-recommendations-section"
+import { SeasonSwitcher } from "@/app/(main)/entry/_components/season-switcher"
 import { DebridStreamPage } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-page"
 import { ENTRY_VIEW_SHELL_TRANSITION, ENTRY_VIEW_TRANSITION } from "@/app/(main)/entry/_containers/entry-view-transition"
 import { EpisodeSection } from "@/app/(main)/entry/_containers/episode-list/episode-section"
@@ -319,6 +320,8 @@ export function AnimeEntryPage() {
     return (
         <div data-anime-entry-page data-media={JSON.stringify(animeEntry.media)} data-anime-entry-list-data={JSON.stringify(animeEntry.listData)}>
             <MetaSection entry={animeEntry} details={animeDetails} detailsLoading={animeDetailsLoading} />
+
+            <SeasonSwitcher mediaId={mediaId} />
 
             <div
                 data-anime-entry-page-content-container

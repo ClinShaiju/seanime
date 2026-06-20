@@ -1,3 +1,5 @@
+import { useGroupedById } from "@/app/(main)/_features/anime-library/_lib/group-seasons"
+import { GroupedMediaCard } from "@/app/(main)/_features/media/_components/grouped-media-card"
 import { MediaCardLazyGrid } from "@/app/(main)/_features/media/_components/media-card-grid"
 import { MediaEntryCard } from "@/app/(main)/_features/media/_components/media-entry-card"
 import { useAnilistAdvancedSearch } from "@/app/(main)/search/_lib/handle-advanced-search"
@@ -10,18 +12,24 @@ export function AdvancedSearchList() {
 
     const { isLoading, data, fetchNextPage, hasNextPage, type } = useAnilistAdvancedSearch()
 
-    const items = data?.pages.filter(Boolean).flatMap(n => n.Page?.media).filter(Boolean)
+    const rawItems = data?.pages.filter(Boolean).flatMap(n => n.Page?.media).filter(Boolean)
+    const items = useGroupedById(rawItems ?? [], type === "anime")
 
     return <>
         {!isLoading && <MediaCardLazyGrid itemCount={items?.length ?? 0}>
             {items?.map(media => (
-                <MediaEntryCard
-                    key={`${media.id}`}
-                    media={media}
-                    showLibraryBadge={true}
-                    showTrailer
-                    type={type}
-                />
+                type === "anime"
+                    ? <GroupedMediaCard
+                        key={`${media.id}`}
+                        media={media as any}
+                        showLibraryBadge
+                        showTrailer
+                    />
+                    : <MediaEntryCard
+                        key={`${media.id}`}
+                        media={media}
+                        type={type}
+                    />
             ))}
         </MediaCardLazyGrid>}
         {isLoading && <LoadingSpinner />}

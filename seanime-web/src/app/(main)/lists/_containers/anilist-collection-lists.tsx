@@ -1,4 +1,4 @@
-import { AL_AnimeCollection_MediaListCollection_Lists } from "@/api/generated/types"
+import { AL_AnimeCollection_MediaListCollection_Lists, AL_AnimeCollection_MediaListCollection_Lists_Entries } from "@/api/generated/types"
 import { useGetAniListStats } from "@/api/hooks/anilist.hooks"
 import { AnilistAnimeEntryList } from "@/app/(main)/_features/anime/_components/anilist-media-entry-list"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
@@ -62,6 +62,26 @@ export function AnilistCollectionLists() {
 
     const { data: stats, isLoading: statsLoading } = useGetAniListStats(!!serverStatus?.user && !serverStatus?.user?.isSimulated)
 
+    // When searching, collapse a franchise into a single card across all statuses
+    // (status splitting only makes sense while browsing the lists).
+    const isAnimeSearch = pageType === "anime" && debouncedSearchInput.trim().length > 0
+    const searchBaseList = currentList ?? completedList ?? planningList ?? pausedList ?? droppedList ?? repeatingList ?? customLists?.[0]
+    const mergedSearchEntries = React.useMemo<AL_AnimeCollection_MediaListCollection_Lists_Entries[]>(() => {
+        if (!isAnimeSearch) return []
+        const seen = new Set<number>()
+        const out: AL_AnimeCollection_MediaListCollection_Lists_Entries[] = []
+        for (const l of [currentList, repeatingList, planningList, pausedList, completedList, droppedList, ...(customLists ?? [])]) {
+            for (const e of (l?.entries ?? [])) {
+                const id = e?.media?.id
+                if (id && !seen.has(id)) {
+                    seen.add(id)
+                    out.push(e)
+                }
+            }
+        }
+        return out
+    }, [isAnimeSearch, currentList, repeatingList, planningList, pausedList, completedList, droppedList, customLists])
+
     const setParams = useSetAtom(__myListsSearch_paramsAtom)
 
     // useMount(() => {
@@ -118,6 +138,13 @@ export function AnilistCollectionLists() {
                     <SearchOptions customLists={customLists} />
 
                     <div className="py-6 space-y-6" data-anilist-collection-lists-stack>
+                        {isAnimeSearch && <>
+                            {!!mergedSearchEntries.length && searchBaseList && <>
+                                <h2>Results <span className="text-[--muted] font-medium ml-3">{mergedSearchEntries.length}</span></h2>
+                                <AnilistAnimeEntryList type={pageType} list={{ ...searchBaseList, entries: mergedSearchEntries }} />
+                            </>}
+                        </>}
+                        {!isAnimeSearch && <>
                         {(!!currentList?.entries?.length && ["-", "CURRENT"].includes(selectedIndex)) && <>
                             <h2>Current <span className="text-[--muted] font-medium ml-3">{currentList?.entries?.length}</span></h2>
                             <AnilistAnimeEntryList type={pageType} list={currentList} />
@@ -151,6 +178,7 @@ export function AnilistCollectionLists() {
                                 <AnilistAnimeEntryList type={pageType} list={list} />
                             </div> : null
                         })}
+                        </>}
                     </div>
                 </PageWrapper>}
 

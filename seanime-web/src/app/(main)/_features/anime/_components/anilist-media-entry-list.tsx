@@ -1,9 +1,33 @@
 import { AL_AnimeCollection_MediaListCollection_Lists, AL_AnimeCollection_MediaListCollection_Lists_Entries } from "@/api/generated/types"
+import { GroupedAnilistEntry, useGroupedAnilistEntries } from "@/app/(main)/_features/anime-library/_lib/group-seasons"
 import { MediaCardLazyGrid } from "@/app/(main)/_features/media/_components/media-card-grid"
 import { MediaEntryCard } from "@/app/(main)/_features/media/_components/media-entry-card"
 import { Carousel, CarouselContent, CarouselDotButtons } from "@/components/ui/carousel"
 import { cn } from "@/components/ui/core/styling"
 import React from "react"
+
+function seasonsOverlay(entry: GroupedAnilistEntry) {
+    const n = entry.__franchiseSeasons ?? 0
+    if (n <= 1) return undefined
+    return (
+        <p className="font-semibold text-white bg-gray-950 z-[5] absolute left-0 top-0 w-fit px-3 py-1 !bg-opacity-90 text-sm rounded-none rounded-br-lg">
+            {n} seasons
+        </p>
+    )
+}
+
+// For a collapsed card, sum watched + episode count across all member seasons so
+// the badge reads total-watched / total-episodes instead of just the rep season's.
+function franchiseTotals(entry: GroupedAnilistEntry) {
+    const members = entry.__franchiseMembers
+    if (!members || members.length <= 1) return null
+    let progress = 0, episodes = 0
+    for (const m of members) {
+        progress += m.progress ?? 0
+        episodes += m.media?.episodes ?? 0
+    }
+    return { progress, episodes }
+}
 
 
 type AnilistAnimeEntryListProps = {
@@ -23,6 +47,8 @@ export function AnilistAnimeEntryList(props: AnilistAnimeEntryListProps) {
         layout = "grid",
         ...rest
     } = props
+
+    const entries = useGroupedAnilistEntries(list?.entries?.filter(Boolean) ?? [], type === "anime")
 
     function getListData(entry: AL_AnimeCollection_MediaListCollection_Lists_Entries) {
         return {
@@ -50,18 +76,20 @@ export function AnilistAnimeEntryList(props: AnilistAnimeEntryListProps) {
         >
             <CarouselDotButtons className="-top-2" />
             <CarouselContent className="px-6">
-                {list?.entries?.filter(Boolean)?.map(entry => {
+                {entries.map(entry => {
+                    const totals = franchiseTotals(entry)
                     return <div
                         key={entry.media?.id}
                         className={"relative basis-[200px] col-span-1 place-content-stretch flex-none md:basis-[250px] mx-2 mt-8 mb-0"}
                     >
                         <MediaEntryCard
                             key={`${entry.media?.id}`}
-                            listData={getListData(entry)}
+                            listData={totals ? { ...getListData(entry), progress: totals.progress } : getListData(entry)}
                             showLibraryBadge
-                            media={entry.media!}
+                            media={totals ? { ...entry.media!, episodes: totals.episodes } : entry.media!}
                             showListDataButton
                             type={type}
+                            overlay={seasonsOverlay(entry)}
                         />
                     </div>
                 })}
@@ -70,17 +98,21 @@ export function AnilistAnimeEntryList(props: AnilistAnimeEntryListProps) {
     )
 
     return (
-        <MediaCardLazyGrid itemCount={list?.entries?.filter(Boolean)?.length || 0} data-anilist-anime-entry-list>
-            {list?.entries?.filter(Boolean)?.map((entry) => (
-                <MediaEntryCard
-                    key={`${entry.media?.id}`}
-                    listData={getListData(entry)}
-                    showLibraryBadge
-                    media={entry.media!}
-                    showListDataButton
-                    type={type}
-                />
-            ))}
+        <MediaCardLazyGrid itemCount={entries.length || 0} data-anilist-anime-entry-list>
+            {entries.map((entry) => {
+                const totals = franchiseTotals(entry)
+                return (
+                    <MediaEntryCard
+                        key={`${entry.media?.id}`}
+                        listData={totals ? { ...getListData(entry), progress: totals.progress } : getListData(entry)}
+                        showLibraryBadge
+                        media={totals ? { ...entry.media!, episodes: totals.episodes } : entry.media!}
+                        showListDataButton
+                        type={type}
+                        overlay={seasonsOverlay(entry)}
+                    />
+                )
+            })}
         </MediaCardLazyGrid>
     )
 }

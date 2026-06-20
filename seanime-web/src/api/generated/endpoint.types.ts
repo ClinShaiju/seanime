@@ -15,9 +15,9 @@ import type {
     Anime_PlaylistEpisode,
     ChapterDownloader_DownloadID,
     Continuity_UpdateWatchHistoryItemOptions,
-    Debrid_TorrentItem,
     DebridClient_CancelStreamOptions,
     DebridClient_StreamPlaybackType,
+    Debrid_TorrentItem,
     HibikeTorrent_AnimeTorrent,
     HibikeTorrent_BatchEpisodeFiles,
     LibraryExplorer_SuperUpdateFileOptions,
@@ -294,6 +294,35 @@ export type UpdateAnimeEntryProgress_Variables = {
 export type UpdateAnimeEntryRepeat_Variables = {
     mediaId: number
     repeat: number
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// anime_franchise
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * - Filepath: internal/handlers/anime_franchise.go
+ * - Filename: anime_franchise.go
+ * - Endpoint: /api/v1/library/anime-entry/{id}/franchise
+ * @description
+ * Route returns the franchise (seasons + extras + watch order) for an AniList anime media id.
+ */
+export type GetAnimeFranchise_Variables = {
+    /**
+     *  AniList anime media ID
+     */
+    id: number
+}
+
+/**
+ * - Filepath: internal/handlers/anime_franchise.go
+ * - Filename: anime_franchise.go
+ * - Endpoint: /api/v1/library/franchise-refs
+ * @description
+ * Route resolves franchise grouping refs (TMDB id + season number) for many AniList ids.
+ */
+export type GetFranchiseRefs_Variables = {
+    mediaIds: Array<number>
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -594,6 +623,11 @@ export type DebridStartStream_Variables = {
     playbackType: DebridClient_StreamPlaybackType
     clientId: string
     batchEpisodeFiles?: HibikeTorrent_BatchEpisodeFiles
+    /**
+     *  Preload is true if the stream should only be resolved and cached, not played.
+     *
+     *  Preload is true if the stream should only be resolved and cached, not played.
+     */
     preload?: boolean
 }
 
@@ -2029,6 +2063,13 @@ export type SearchTorrent_Variables = {
     resolution?: string
     bestRelease?: boolean
     includeSpecialProviders?: boolean
+    /**
+     *  When true (debrid-stream selection), results are ordered by the auto-select rules
+     *  (profile scoring, season match) and cache prioritization, without dropping any.
+     *
+     *  When true (debrid-stream selection), results are ordered by the auto-select rules
+     *  (profile scoring, season match) and cache prioritization, without dropping any.
+     */
     sortByAutoSelect?: boolean
 }
 

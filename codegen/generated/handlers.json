@@ -1348,6 +1348,97 @@
     }
   },
   {
+    "name": "HandleGetAnimeFranchise",
+    "trimmedName": "GetAnimeFranchise",
+    "comments": [
+      "HandleGetAnimeFranchise",
+      "",
+      "\t@summary returns the franchise (seasons + extras + watch order) for an AniList anime media id.",
+      "\t@desc Presentation-only season grouping (Stremio-style). Walks the SEQUEL/PREQUEL",
+      "\t@desc relation tree, resolves each member's TMDB id + season number, and returns one",
+      "\t@desc grouped anime.FranchiseGroup. Tracking is untouched — each season stays its own",
+      "\t@desc AniList entry.",
+      "\t@route /api/v1/library/anime-entry/{id}/franchise [GET]",
+      "\t@param id - int - true - \"AniList anime media ID\"",
+      "\t@returns anime.FranchiseGroup",
+      ""
+    ],
+    "filepath": "internal/handlers/anime_franchise.go",
+    "filename": "anime_franchise.go",
+    "api": {
+      "summary": "returns the franchise (seasons + extras + watch order) for an AniList anime media id.",
+      "descriptions": [
+        "Presentation-only season grouping (Stremio-style). Walks the SEQUEL/PREQUEL",
+        "relation tree, resolves each member's TMDB id + season number, and returns one",
+        "grouped anime.FranchiseGroup. Tracking is untouched — each season stays its own",
+        "AniList entry."
+      ],
+      "endpoint": "/api/v1/library/anime-entry/{id}/franchise",
+      "methods": [
+        "GET"
+      ],
+      "params": [
+        {
+          "name": "id",
+          "jsonName": "id",
+          "goType": "int",
+          "usedStructType": "",
+          "typescriptType": "number",
+          "required": true,
+          "descriptions": [
+            "AniList anime media ID"
+          ]
+        }
+      ],
+      "bodyFields": [],
+      "returns": "anime.FranchiseGroup",
+      "returnGoType": "anime.FranchiseGroup",
+      "returnTypescriptType": "Anime_FranchiseGroup"
+    }
+  },
+  {
+    "name": "HandleGetFranchiseRefs",
+    "trimmedName": "GetFranchiseRefs",
+    "comments": [
+      "HandleGetFranchiseRefs",
+      "",
+      "\t@summary resolves franchise grouping refs (TMDB id + season number) for many AniList ids.",
+      "\t@desc Cheap bulk lookup (metadata only, no relation walk) used to collapse the library",
+      "\t@desc into one card per franchise. Heavily cached per id.",
+      "\t@route /api/v1/library/franchise-refs [POST]",
+      "\t@returns []anime.FranchiseRefEntry",
+      ""
+    ],
+    "filepath": "internal/handlers/anime_franchise.go",
+    "filename": "anime_franchise.go",
+    "api": {
+      "summary": "resolves franchise grouping refs (TMDB id + season number) for many AniList ids.",
+      "descriptions": [
+        "Cheap bulk lookup (metadata only, no relation walk) used to collapse the library",
+        "into one card per franchise. Heavily cached per id."
+      ],
+      "endpoint": "/api/v1/library/franchise-refs",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "MediaIds",
+          "jsonName": "mediaIds",
+          "goType": "[]int",
+          "usedStructType": "",
+          "typescriptType": "Array\u003cnumber\u003e",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "[]anime.FranchiseRefEntry",
+      "returnGoType": "anime.FranchiseRefEntry",
+      "returnTypescriptType": "Array\u003cAnime_FranchiseRefEntry\u003e"
+    }
+  },
+  {
     "name": "HandleLogin",
     "trimmedName": "Login",
     "comments": [
@@ -2730,6 +2821,19 @@
           "typescriptType": "HibikeTorrent_BatchEpisodeFiles",
           "required": false,
           "descriptions": []
+        },
+        {
+          "name": "Preload",
+          "jsonName": "preload",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": false,
+          "descriptions": [
+            "Preload is true if the stream should only be resolved and cached, not played.",
+            "",
+            "Preload is true if the stream should only be resolved and cached, not played."
+          ]
         }
       ],
       "returns": "bool",
@@ -11395,6 +11499,21 @@
           "typescriptType": "boolean",
           "required": false,
           "descriptions": []
+        },
+        {
+          "name": "SortByAutoSelect",
+          "jsonName": "sortByAutoSelect",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": false,
+          "descriptions": [
+            "When true (debrid-stream selection), results are ordered by the auto-select rules",
+            "(profile scoring, season match) and cache prioritization, without dropping any.",
+            "",
+            "When true (debrid-stream selection), results are ordered by the auto-select rules",
+            "(profile scoring, season match) and cache prioritization, without dropping any."
+          ]
         }
       ],
       "returns": "torrent.SearchData",

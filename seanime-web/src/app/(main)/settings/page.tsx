@@ -364,6 +364,7 @@ export default function Page() {
                                         updateChannel: data.updateChannel || "github",
                                         enableExtensionSecureMode: data.enableExtensionSecureMode ?? false,
                                         defaultPlaybackSource: data.defaultPlaybackSource === "-" ? "" : data.defaultPlaybackSource,
+                                        groupSeasons: data.groupSeasons ?? false,
                                     },
                                     nakama: {
                                         enabled: data.nakamaEnabled ?? false,
@@ -575,6 +576,7 @@ export default function Page() {
                                 updateChannel: status?.settings?.library?.updateChannel || "github",
                                 enableExtensionSecureMode: status?.settings?.library?.enableExtensionSecureMode ?? false,
                                 defaultPlaybackSource: status?.settings?.library?.defaultPlaybackSource || "-",
+                                groupSeasons: status?.settings?.library?.groupSeasons ?? false,
                                 hideAnimeSpoilers: status?.themeSettings?.hideAnimeSpoilers ?? THEME_DEFAULT_VALUES.hideAnimeSpoilers,
                                 hideAnimeSpoilerThumbnails: status?.themeSettings?.hideAnimeSpoilerThumbnails ?? THEME_DEFAULT_VALUES.hideAnimeSpoilerThumbnails,
                                 hideAnimeSpoilerTitles: status?.themeSettings?.hideAnimeSpoilerTitles ?? THEME_DEFAULT_VALUES.hideAnimeSpoilerTitles,

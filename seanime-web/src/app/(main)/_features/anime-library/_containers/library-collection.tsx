@@ -1,5 +1,6 @@
 import { AL_MediaListStatus, Anime_LibraryCollectionEntry, Anime_LibraryCollectionList } from "@/api/generated/types"
 import { __mainLibrary_paramsAtom } from "@/app/(main)/_features/anime-library/_lib/handle-library-collection"
+import { GroupedLibraryEntry, sumFranchiseProgress, useGroupedCollectionList } from "@/app/(main)/_features/anime-library/_lib/group-seasons"
 import { MediaCardLazyGrid } from "@/app/(main)/_features/media/_components/media-card-grid"
 import { MediaEntryCard } from "@/app/(main)/_features/media/_components/media-entry-card"
 import { PageWrapper } from "@/components/shared/page-wrapper"
@@ -19,6 +20,8 @@ export function LibraryCollectionLists({ collectionList, isLoading, streamingMed
     showStatuses?: AL_MediaListStatus[],
     type: "carousel" | "grid"
 }) {
+
+    collectionList = useGroupedCollectionList(collectionList)
 
     return (
         <PageWrapper
@@ -57,6 +60,8 @@ export function LibraryCollectionFilteredLists({ collectionList, isLoading, stre
 }) {
 
     // const params = useAtomValue(__mainLibrary_paramsAtom)
+
+    collectionList = useGroupedCollectionList(collectionList)
 
     const filteredCollectionList = React.useMemo(() => {
         return collectionList.filter(collection => {
@@ -179,10 +184,14 @@ export const LibraryCollectionEntryItem = React.memo(({ entry, streamingMediaIds
     streamingMediaIds: number[],
     type: "carousel" | "grid"
 }) => {
+    const grouped = entry as GroupedLibraryEntry
+    const seasonCount = grouped.__franchiseSeasons ?? 0
+    const totals = sumFranchiseProgress(grouped.__franchiseMembers, m => m.listData?.progress, m => m.media?.episodes)
+
     return (
         <MediaEntryCard
-            media={entry.media!}
-            listData={entry.listData}
+            media={totals ? { ...entry.media!, episodes: totals.episodes } : entry.media!}
+            listData={totals && entry.listData ? { ...entry.listData, progress: totals.progress } : entry.listData}
             libraryData={entry.libraryData}
             nakamaLibraryData={entry.nakamaLibraryData}
             showListDataButton
@@ -190,6 +199,11 @@ export const LibraryCollectionEntryItem = React.memo(({ entry, streamingMediaIds
             type="anime"
             containerClassName={type === "carousel" ? "basis-[200px] md:basis-[250px] mx-2 mt-8 mb-0" : undefined}
             showLibraryBadge={!!streamingMediaIds?.length && !streamingMediaIds.includes(entry.mediaId) && entry.listData?.status === "CURRENT"}
+            overlay={seasonCount > 1 ? (
+                <p className="font-semibold text-white bg-gray-950 z-[5] absolute left-0 top-0 w-fit px-3 py-1 !bg-opacity-90 text-sm rounded-none rounded-br-lg">
+                    {seasonCount} seasons
+                </p>
+            ) : undefined}
         />
     )
 })

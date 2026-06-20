@@ -312,6 +312,32 @@ export const API_ENDPOINTS = {
             endpoint: "/api/v1/library/anime-entry/update-repeat",
         },
     },
+    ANIME_FRANCHISE: {
+        /**
+         *  @description
+         *  Route returns the franchise (seasons + extras + watch order) for an AniList anime media id.
+         *  Presentation-only season grouping (Stremio-style). Walks the SEQUEL/PREQUEL
+         *  relation tree, resolves each member's TMDB id + season number, and returns one
+         *  grouped anime.FranchiseGroup. Tracking is untouched — each season stays its own
+         *  AniList entry.
+         */
+        GetAnimeFranchise: {
+            key: "ANIME-FRANCHISE-get-anime-franchise",
+            methods: ["GET"],
+            endpoint: "/api/v1/library/anime-entry/{id}/franchise",
+        },
+        /**
+         *  @description
+         *  Route resolves franchise grouping refs (TMDB id + season number) for many AniList ids.
+         *  Cheap bulk lookup (metadata only, no relation walk) used to collapse the library
+         *  into one card per franchise. Heavily cached per id.
+         */
+        GetFranchiseRefs: {
+            key: "ANIME-FRANCHISE-get-franchise-refs",
+            methods: ["POST"],
+            endpoint: "/api/v1/library/franchise-refs",
+        },
+    },
     AUTH: {
         /**
          *  @description
@@ -1679,8 +1705,8 @@ export const API_ENDPOINTS = {
          *  Route returns the episode list for the given media and provider.
          *  It returns the episode list for the given media and provider.
          *  The episodes are cached using a file cache.
-         *  The episode list is just a list of episodes with no video sources, it's what the client uses to display the episodes and subsequently
-         *     fetch the sources. The episode list might be nil or empty if nothing could be found, but the media will always be returned.
+         *  The episode list is just a list of episodes with no video sources, it's what the client uses to display the episodes and subsequently fetch the sources.
+         *  The episode list might be nil or empty if nothing could be found, but the media will always be returned.
          */
         GetOnlineStreamEpisodeList: {
             key: "ONLINESTREAM-get-online-stream-episode-list",

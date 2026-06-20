@@ -6,6 +6,7 @@ import {
     DETAILED_LIBRARY_DEFAULT_PARAMS,
     useHandleDetailedLibraryCollection,
 } from "@/app/(main)/_features/anime-library/_lib/handle-detailed-library-collection.ts"
+import { GroupedLibraryEntry, sumFranchiseProgress, useGroupedCollectionList, useGroupedEntries } from "@/app/(main)/_features/anime-library/_lib/group-seasons"
 import { __home_currentView } from "@/app/(main)/_features/home/home-screen"
 import { MediaCardLazyGrid } from "@/app/(main)/_features/media/_components/media-card-grid"
 import { MediaEntryCard } from "@/app/(main)/_features/media/_components/media-entry-card"
@@ -80,6 +81,9 @@ export function DetailedLibraryView(props: LibraryViewProps) {
         libraryGenres,
         libraryEntries,
     } = useHandleDetailedLibraryCollection()
+
+    const groupedCollectionList = useGroupedCollectionList(libraryCollectionList)
+    const groupedEntries = useGroupedEntries(libraryEntries)
 
     const [selectedList, setSelectedList] = useAtom(__library_selectedListAtom)
 
@@ -157,12 +161,12 @@ export function DetailedLibraryView(props: LibraryViewProps) {
 
             <GenreSelector genres={libraryGenres} />
 
-            {selectedList !== "all" && libraryCollectionList.map(collection => {
+            {selectedList !== "all" && groupedCollectionList.map(collection => {
                 if (!collection.entries?.length) return null
                 return <LibraryCollectionListItem key={collection.type} list={collection} streamingMediaIds={streamingMediaIds} type={type} />
             })}
 
-            {selectedList === "all" && <MergedLibraryCollectionList entries={libraryEntries} streamingMediaIds={streamingMediaIds} type={type} />}
+            {selectedList === "all" && <MergedLibraryCollectionList entries={groupedEntries} streamingMediaIds={streamingMediaIds} type={type} />}
         </PageWrapper>
     )
 }
@@ -245,10 +249,13 @@ const LibraryCollectionEntryItem = React.memo(({ entry, streamingMediaIds, type 
     streamingMediaIds: number[]
     type: "grid" | "carousel"
 }) => {
+    const grouped = entry as GroupedLibraryEntry
+    const seasonCount = grouped.__franchiseSeasons ?? 0
+    const totals = sumFranchiseProgress(grouped.__franchiseMembers, m => m.listData?.progress, m => m.media?.episodes)
     return (
         <MediaEntryCard
-            media={entry.media!}
-            listData={entry.listData}
+            media={totals ? { ...entry.media!, episodes: totals.episodes } : entry.media!}
+            listData={totals && entry.listData ? { ...entry.listData, progress: totals.progress } : entry.listData}
             libraryData={entry.libraryData}
             nakamaLibraryData={entry.nakamaLibraryData}
             showListDataButton
@@ -256,6 +263,11 @@ const LibraryCollectionEntryItem = React.memo(({ entry, streamingMediaIds, type 
             type="anime"
             containerClassName={type === "carousel" ? "basis-[200px] md:basis-[250px] mx-2 mt-8 mb-0" : undefined}
             // showLibraryBadge={!!streamingMediaIds?.length && !streamingMediaIds.includes(entry.mediaId)}
+            overlay={seasonCount > 1 ? (
+                <p className="font-semibold text-white bg-gray-950 z-[5] absolute left-0 top-0 w-fit px-3 py-1 !bg-opacity-90 text-sm rounded-none rounded-br-lg">
+                    {seasonCount} seasons
+                </p>
+            ) : undefined}
         />
     )
 })

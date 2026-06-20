@@ -24876,7 +24876,7 @@
     "comments": []
   },
   {
-    "filepath": "../internal/api/anilist/tags.go",
+    "filepath": "..\\internal\\api\\anilist\\tags.go",
     "filename": "tags.go",
     "name": "MediaTagMap",
     "formattedName": "AL_MediaTagMap",
@@ -27900,7 +27900,7 @@
     "comments": []
   },
   {
-    "filepath": "../internal/continuity/history.go",
+    "filepath": "..\\internal\\continuity\\history.go",
     "filename": "history.go",
     "name": "WatchHistory",
     "formattedName": "Continuity_WatchHistory",
@@ -30838,12 +30838,21 @@
         "comments": [
           " \"\", \"library\", \"torrentstream\", \"debridstream\", \"onlinestream\", \"ext:[extensionId]\""
         ]
+      },
+      {
+        "name": "GroupSeasons",
+        "jsonName": "groupSeasons",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": []
   },
   {
-    "filepath": "../internal/database/models/models.go",
+    "filepath": "..\\internal\\database\\models\\models.go",
     "filename": "models.go",
     "name": "LibraryPaths",
     "formattedName": "Models_LibraryPaths",
@@ -30959,7 +30968,7 @@
     "comments": []
   },
   {
-    "filepath": "../internal/database/models/models.go",
+    "filepath": "..\\internal\\database\\models\\models.go",
     "filename": "models.go",
     "name": "IntSlice",
     "formattedName": "Models_IntSlice",
@@ -33116,6 +33125,15 @@
         "required": true,
         "public": true,
         "comments": []
+      },
+      {
+        "name": "PreloadNextStream",
+        "jsonName": "preloadNextStream",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": [],
@@ -33321,7 +33339,7 @@
     ]
   },
   {
-    "filepath": "../internal/database/models/models.go",
+    "filepath": "..\\internal\\database\\models\\models.go",
     "filename": "models.go",
     "name": "StringSlice",
     "formattedName": "Models_StringSlice",
@@ -34659,6 +34677,37 @@
         "required": false,
         "public": false,
         "comments": []
+      },
+      {
+        "name": "preloadMu",
+        "jsonName": "preloadMu",
+        "goType": "sync.Mutex",
+        "typescriptType": "Mutex",
+        "usedTypescriptType": "Mutex",
+        "usedStructName": "sync.Mutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "preloadCancelFunc",
+        "jsonName": "preloadCancelFunc",
+        "goType": "context.CancelFunc",
+        "typescriptType": "CancelFunc",
+        "usedTypescriptType": "CancelFunc",
+        "usedStructName": "context.CancelFunc",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "preloadedStream",
+        "jsonName": "preloadedStream",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": false,
+        "comments": []
       }
     ],
     "comments": []
@@ -34860,6 +34909,15 @@
         "usedTypescriptType": "HibikeTorrent_BatchEpisodeFiles",
         "usedStructName": "hibiketorrent.BatchEpisodeFiles",
         "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Preload",
+        "jsonName": "Preload",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
         "public": true,
         "comments": []
       }
@@ -41581,6 +41639,15 @@
       {
         "name": "InfoHash",
         "jsonName": "infoHash",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "StreamUrl",
+        "jsonName": "streamUrl",
         "goType": "string",
         "typescriptType": "string",
         "required": false,
@@ -49424,6 +49491,249 @@
       }
     ],
     "comments": []
+  },
+  {
+    "filepath": "../internal/library/anime/franchise.go",
+    "filename": "franchise.go",
+    "name": "FranchiseRef",
+    "formattedName": "Anime_FranchiseRef",
+    "package": "anime",
+    "fields": [
+      {
+        "name": "TmdbId",
+        "jsonName": "tmdbId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "SeasonNumber",
+        "jsonName": "seasonNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": [
+          " -1 if unknown"
+        ]
+      }
+    ],
+    "comments": []
+  },
+  {
+    "filepath": "../internal/library/anime/franchise.go",
+    "filename": "franchise.go",
+    "name": "FranchiseRefEntry",
+    "formattedName": "Anime_FranchiseRefEntry",
+    "package": "anime",
+    "fields": [
+      {
+        "name": "MediaId",
+        "jsonName": "mediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "TmdbId",
+        "jsonName": "tmdbId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "SeasonNumber",
+        "jsonName": "seasonNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": []
+  },
+  {
+    "filepath": "../internal/library/anime/franchise.go",
+    "filename": "franchise.go",
+    "name": "GroupedEntry",
+    "formattedName": "Anime_GroupedEntry",
+    "package": "anime",
+    "fields": [
+      {
+        "name": "Media",
+        "jsonName": "media",
+        "goType": "anilist.BaseAnime",
+        "typescriptType": "AL_BaseAnime",
+        "usedTypescriptType": "AL_BaseAnime",
+        "usedStructName": "anilist.BaseAnime",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "MediaId",
+        "jsonName": "mediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "SeasonNumber",
+        "jsonName": "seasonNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": [
+          " -1 if unknown"
+        ]
+      },
+      {
+        "name": "IsExtra",
+        "jsonName": "isExtra",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": [
+          " movie/OVA/special (TMDB season 0 or non-TV format)"
+        ]
+      }
+    ],
+    "comments": []
+  },
+  {
+    "filepath": "../internal/library/anime/franchise.go",
+    "filename": "franchise.go",
+    "name": "FranchiseGroup",
+    "formattedName": "Anime_FranchiseGroup",
+    "package": "anime",
+    "fields": [
+      {
+        "name": "TmdbId",
+        "jsonName": "tmdbId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "RootMediaId",
+        "jsonName": "rootMediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "RootMedia",
+        "jsonName": "rootMedia",
+        "goType": "anilist.BaseAnime",
+        "typescriptType": "AL_BaseAnime",
+        "usedTypescriptType": "AL_BaseAnime",
+        "usedStructName": "anilist.BaseAnime",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Seasons",
+        "jsonName": "seasons",
+        "goType": "[]GroupedEntry",
+        "typescriptType": "Array\u003cAnime_GroupedEntry\u003e",
+        "usedTypescriptType": "Anime_GroupedEntry",
+        "usedStructName": "anime.GroupedEntry",
+        "required": false,
+        "public": true,
+        "comments": [
+          " TV, sorted by season number"
+        ]
+      },
+      {
+        "name": "Extras",
+        "jsonName": "extras",
+        "goType": "[]GroupedEntry",
+        "typescriptType": "Array\u003cAnime_GroupedEntry\u003e",
+        "usedTypescriptType": "Anime_GroupedEntry",
+        "usedStructName": "anime.GroupedEntry",
+        "required": false,
+        "public": true,
+        "comments": [
+          " movie/OVA/special, sorted by air date"
+        ]
+      },
+      {
+        "name": "WatchOrder",
+        "jsonName": "watchOrder",
+        "goType": "[]GroupedEntry",
+        "typescriptType": "Array\u003cAnime_GroupedEntry\u003e",
+        "usedTypescriptType": "Anime_GroupedEntry",
+        "usedStructName": "anime.GroupedEntry",
+        "required": false,
+        "public": true,
+        "comments": [
+          " seasons ∪ extras, sorted by air date"
+        ]
+      }
+    ],
+    "comments": []
+  },
+  {
+    "filepath": "../internal/library/anime/franchise.go",
+    "filename": "franchise.go",
+    "name": "FranchiseResolver",
+    "formattedName": "Anime_FranchiseResolver",
+    "package": "anime",
+    "fields": [
+      {
+        "name": "provider",
+        "jsonName": "provider",
+        "goType": "metadata_provider.Provider",
+        "typescriptType": "Provider",
+        "usedTypescriptType": "Provider",
+        "usedStructName": "metadata_provider.Provider",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "cacher",
+        "jsonName": "cacher",
+        "goType": "filecache.Cacher",
+        "typescriptType": "Filecache_Cacher",
+        "usedTypescriptType": "Filecache_Cacher",
+        "usedStructName": "filecache.Cacher",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "logger",
+        "jsonName": "logger",
+        "goType": "zerolog.Logger",
+        "typescriptType": "Logger",
+        "usedTypescriptType": "Logger",
+        "usedStructName": "zerolog.Logger",
+        "required": false,
+        "public": false,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " FranchiseResolver resolves and caches FranchiseRef per AniList id using the",
+      " metadata provider (which already fetches animap's TMDB id + season numbers)."
+    ]
   },
   {
     "filepath": "../internal/library/anime/hook_events.go",
@@ -57689,7 +57999,7 @@
     ]
   },
   {
-    "filepath": "../internal/local/database_models.go",
+    "filepath": "..\\internal\\local\\database_models.go",
     "filename": "database_models.go",
     "name": "StringMap",
     "formattedName": "Local_StringMap",
@@ -57703,7 +58013,7 @@
     "comments": null
   },
   {
-    "filepath": "../internal/local/database_models.go",
+    "filepath": "..\\internal\\local\\database_models.go",
     "filename": "database_models.go",
     "name": "LocalMangaChapterContainers",
     "formattedName": "Local_LocalMangaChapterContainers",
@@ -59175,7 +59485,7 @@
     "comments": []
   },
   {
-    "filepath": "../internal/manga/download.go",
+    "filepath": "..\\internal\\manga\\download.go",
     "filename": "download.go",
     "name": "MediaMap",
     "formattedName": "Manga_MediaMap",
@@ -59190,7 +59500,7 @@
     "comments": null
   },
   {
-    "filepath": "../internal/manga/download.go",
+    "filepath": "..\\internal\\manga\\download.go",
     "filename": "download.go",
     "name": "ProviderDownloadMap",
     "formattedName": "Manga_ProviderDownloadMap",
@@ -59618,7 +59928,7 @@
     "comments": []
   },
   {
-    "filepath": "../internal/manga/downloader/chapter_downloader.go",
+    "filepath": "..\\internal\\manga\\downloader\\chapter_downloader.go",
     "filename": "chapter_downloader.go",
     "name": "Registry",
     "formattedName": "ChapterDownloader_Registry",
@@ -71150,7 +71460,7 @@
     "comments": []
   },
   {
-    "filepath": "../internal/nakama/share.go",
+    "filepath": "..\\internal\\nakama\\share.go",
     "filename": "share.go",
     "name": "NakamaCustomSourceMap",
     "formattedName": "Nakama_NakamaCustomSourceMap",
@@ -90363,6 +90673,49 @@
         "required": true,
         "public": false,
         "comments": []
+      },
+      {
+        "name": "shared",
+        "jsonName": "shared",
+        "goType": "SharedContext",
+        "typescriptType": "SharedContext",
+        "usedTypescriptType": "SharedContext",
+        "usedStructName": "torrent_analyzer.SharedContext",
+        "required": false,
+        "public": false,
+        "comments": []
+      }
+    ],
+    "comments": []
+  },
+  {
+    "filepath": "../internal/torrents/analyzer/analyzer.go",
+    "filename": "analyzer.go",
+    "name": "SharedContext",
+    "formattedName": "SharedContext",
+    "package": "torrent_analyzer",
+    "fields": [
+      {
+        "name": "mediaContainer",
+        "jsonName": "mediaContainer",
+        "goType": "scanner.MediaContainer",
+        "typescriptType": "Scanner_MediaContainer",
+        "usedTypescriptType": "Scanner_MediaContainer",
+        "usedStructName": "scanner.MediaContainer",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "cache",
+        "jsonName": "cache",
+        "goType": "anilist.CompleteAnimeCache",
+        "typescriptType": "AL_CompleteAnimeCache",
+        "usedTypescriptType": "AL_CompleteAnimeCache",
+        "usedStructName": "anilist.CompleteAnimeCache",
+        "required": false,
+        "public": false,
+        "comments": []
       }
     ],
     "comments": []
@@ -90519,6 +90872,17 @@
         "goType": "bool",
         "typescriptType": "boolean",
         "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Shared",
+        "jsonName": "Shared",
+        "goType": "SharedContext",
+        "typescriptType": "SharedContext",
+        "usedTypescriptType": "SharedContext",
+        "usedStructName": "torrent_analyzer.SharedContext",
+        "required": false,
         "public": true,
         "comments": []
       }

@@ -61,6 +61,15 @@ export function AnimeLibrarySettings(props: LibrarySettingsProps) {
                 />
             </SettingsCard>
 
+            <SettingsCard title="Season grouping">
+                <Field.Switch
+                    side="right"
+                    name="groupSeasons"
+                    label="Group seasons"
+                    help="Show multi-season anime as one entry with a season switcher (like Stremio), and collapse seasons into one card in your lists. Presentation only — AniList tracking is unchanged."
+                />
+            </SettingsCard>
+
             {/*<SettingsCard title="Advanced">*/}
 
             <Accordion

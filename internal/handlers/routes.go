@@ -261,6 +261,8 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1Library.GET("/upcoming-episodes", h.HandleGetUpcomingEpisodes)
 
 	v1Library.GET("/anime-entry/:id", h.HandleGetAnimeEntry)
+	v1Library.GET("/anime-entry/:id/franchise", h.HandleGetAnimeFranchise)
+	v1Library.POST("/franchise-refs", h.HandleGetFranchiseRefs)
 	v1Library.POST("/anime-entry/suggestions", h.HandleFetchAnimeEntrySuggestions)
 	v1Library.POST("/anime-entry/manual-match", h.HandleAnimeEntryManualMatch)
 	v1Library.PATCH("/anime-entry/bulk-action", h.HandleAnimeEntryBulkAction)
