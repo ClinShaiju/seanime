@@ -559,6 +559,40 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 	})
 }
 
+func TestAutoSelect_LanguageDemotion(t *testing.T) {
+	s := newTestAutoSelect()
+
+	// Profile mirrors the user's config: English preferred, then Japanese.
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
+	}
+
+	eng := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [English].mkv", InfoHash: "eng", Seeders: 10}
+	jpru := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese] [Russian].mkv", InfoHash: "jpru", Seeders: 20}
+	ruOnly := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Russian].mkv", InfoHash: "ru", Seeders: 500}
+
+	// ru-only is the only cached one and has by far the most seeders. Without the demotion,
+	// cache-first would float it to the top; the demotion must sink it below the uncached
+	// preferred-language releases. jp/ru matches "jp" and stays alongside jp-tier.
+	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+		for _, tr := range torrents {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: tr.InfoHash == "ru"})
+		}
+		return out
+	}
+
+	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{ruOnly, jpru, eng}, profile, -1, postSearchSort)
+
+	names := make([]string, len(sorted))
+	for i, r := range sorted {
+		names[i] = r.Name
+	}
+	assert.Equal(t, []string{eng.Name, jpru.Name, ruOnly.Name}, names,
+		"ru-only must be demoted below preferred-language releases even when cached; eng outranks jp/ru")
+}
+
 func TestAutoSelect_SeasonGate(t *testing.T) {
 	s := newTestAutoSelect()
 

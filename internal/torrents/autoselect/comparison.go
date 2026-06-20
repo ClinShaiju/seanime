@@ -24,6 +24,10 @@ const (
 	scoreSourceDecay       = 5
 	scoreLanguageBase      = 20
 	scoreLanguageDecay     = 2
+	// Penalty for releases that declare language(s), none of which is preferred
+	// (e.g. Russian-only). Sized ~= resolution weight so they sink below every
+	// preferred-language release and below the cached-first quality threshold.
+	scoreLanguageUnpreferred = 100
 	scoreMultiAudio        = 15
 	scoreMultiSubs         = 10
 	scoreBatch             = 20
@@ -583,21 +587,31 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 
 	// Language
 	if len(profile.PreferredLanguages) > 0 {
+		langMatched := false
 		for i, languages := range profile.PreferredLanguages {
-			matched := false
 			for _, lang := range strings.Split(languages, ",") {
 				lang = strings.TrimSpace(lang)
+				if lang == "" {
+					continue
+				}
 				if slices.ContainsFunc(parsed.Language, func(pl string) bool {
 					return strings.EqualFold(pl, lang)
 				}) || containsBoundedTerm(c.lowerName, lang) {
 					priority += scoreLanguageBase - (i * scoreLanguageDecay)
-					matched = true
+					langMatched = true
 					break
 				}
 			}
-			if matched {
+			if langMatched {
 				break
 			}
+		}
+
+		// Demote releases that explicitly declare language(s), none of which is preferred
+		// (e.g. Russian-only). A jp/ru release matches "jp" and is not demoted; a release
+		// with no parsed language tag is left neutral (can't tell, often eng-subbed raws).
+		if !langMatched && len(parsed.Language) > 0 {
+			priority -= scoreLanguageUnpreferred
 		}
 	}
 
