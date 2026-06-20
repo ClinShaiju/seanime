@@ -114,6 +114,7 @@ export function SeasonSwitcher({ mediaId }: { mediaId: string | number | null | 
     return (
         <div className="px-4 md:px-8 mb-4" data-season-switcher>
             <DropdownMenu
+                align="start"
                 trigger={
                     <button
                         data-season-switcher-trigger
