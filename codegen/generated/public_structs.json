@@ -49736,7 +49736,29 @@
         "required": true,
         "public": true,
         "comments": [
-          " movie/OVA/special (TMDB season 0 or non-TV format)"
+          " movie/OVA/special/side-story (not a main-line season)"
+        ]
+      },
+      {
+        "name": "RelationType",
+        "jsonName": "relationType",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " AniList relation to the main line (SIDE_STORY, SEQUEL, …)"
+        ]
+      },
+      {
+        "name": "Tag",
+        "jsonName": "tag",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " display tag: \"\", \"MOVIE\", \"OVA\", \"SIDE STORY\", …"
         ]
       }
     ],

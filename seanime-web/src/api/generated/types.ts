@@ -1677,9 +1677,17 @@ export type Anime_GroupedEntry = {
      */
     seasonNumber: number
     /**
-     * movie/OVA/special (TMDB season 0 or non-TV format)
+     * movie/OVA/special/side-story (not a main-line season)
      */
     isExtra: boolean
+    /**
+     * AniList relation to the main line (SIDE_STORY, SEQUEL, …)
+     */
+    relationType: string
+    /**
+     * display tag: "", "MOVIE", "OVA", "SIDE STORY", …
+     */
+    tag: string
 }
 
 /**

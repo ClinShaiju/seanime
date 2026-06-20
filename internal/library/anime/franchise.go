@@ -86,7 +86,9 @@ type (
 		MediaId      int                `json:"mediaId"`
 		TmdbId       string             `json:"tmdbId"`       // for distinguishing cours of the same season from mislabeled siblings
 		SeasonNumber int                `json:"seasonNumber"` // -1 if unknown
-		IsExtra      bool               `json:"isExtra"`      // movie/OVA/special (TMDB season 0 or non-TV format)
+		IsExtra      bool               `json:"isExtra"`      // movie/OVA/special/side-story (not a main-line season)
+		RelationType string             `json:"relationType"` // AniList relation to the main line (SIDE_STORY, SEQUEL, …)
+		Tag          string             `json:"tag"`          // display tag: "", "MOVIE", "OVA", "SIDE STORY", …
 	}
 
 	// FranchiseGroup is one show: its ordered seasons + extras + a flat watch order.
@@ -129,7 +131,7 @@ func GroupEntriesByFranchise(medias []*anilist.BaseAnime, refs map[int]Franchise
 			MediaId:      m.GetID(),
 			TmdbId:       ref.TmdbId,
 			SeasonNumber: ref.SeasonNumber,
-			IsExtra:      isExtra(m, ref.SeasonNumber),
+			IsExtra:      isExtra(m, ref.SeasonNumber, ""),
 		})
 	}
 
@@ -144,19 +146,22 @@ func GroupEntriesByFranchise(medias []*anilist.BaseAnime, refs map[int]Franchise
 // (e.g. a SEQUEL/PREQUEL relation tree). Unlike GroupEntriesByFranchise it does NOT
 // bucket by TMDB id — the caller has already established these media are one
 // franchise — so cross-TMDB movies/OVAs land in Extras of the same group.
-func BuildFranchiseFromMembers(medias []*anilist.BaseAnime, refs map[int]FranchiseRef) *FranchiseGroup {
+func BuildFranchiseFromMembers(medias []*anilist.BaseAnime, refs map[int]FranchiseRef, relationOf map[int]string) *FranchiseGroup {
 	entries := make([]*GroupedEntry, 0, len(medias))
 	for _, m := range medias {
 		if m == nil {
 			continue
 		}
 		ref := refs[m.GetID()]
+		rel := relationOf[m.GetID()]
 		entries = append(entries, &GroupedEntry{
 			Media:        m,
 			MediaId:      m.GetID(),
 			TmdbId:       ref.TmdbId,
 			SeasonNumber: ref.SeasonNumber,
-			IsExtra:      isExtra(m, ref.SeasonNumber),
+			IsExtra:      isExtra(m, ref.SeasonNumber, rel),
+			RelationType: rel,
+			Tag:          FranchiseTag(m, rel),
 		})
 	}
 	g := buildFranchiseGroup("", entries)
@@ -241,7 +246,21 @@ func (g *FranchiseGroup) NextWatch(progress map[int]int) (*GroupedEntry, bool) {
 // isExtra classifies a media as an extra (movie/OVA/special) rather than a season.
 // TMDB season 0 is specials; a positive season is a real season; with no season
 // number we fall back to the AniList format.
-func isExtra(m *anilist.BaseAnime, season int) bool {
+// sideStoryRelations are relation types whose members are never main-line seasons.
+var sideStoryRelations = map[string]bool{
+	"SIDE_STORY": true,
+	"SPIN_OFF":   true,
+	"SUMMARY":    true,
+	"PARENT":     true,
+	"ALTERNATIVE": true,
+}
+
+func isExtra(m *anilist.BaseAnime, season int, relationType string) bool {
+	// Side-stories / spin-offs are extras regardless of format (a spin-off TV series
+	// is not a "season" of the main show).
+	if sideStoryRelations[relationType] {
+		return true
+	}
 	// Format wins: movies/OVAs/specials are always extras, even when metadata gave
 	// them a positive season number (e.g. Initial D Battle Stage OVAs tagged season 1).
 	if f := m.GetFormat(); f != nil {
@@ -252,6 +271,32 @@ func isExtra(m *anilist.BaseAnime, season int) bool {
 	}
 	// TV-like (or unknown format): TMDB season 0 = specials.
 	return season == 0
+}
+
+// FranchiseTag returns a display tag for a franchise member based on its relation to
+// the main line and its format. Main-line seasons get "" (no tag).
+func FranchiseTag(m *anilist.BaseAnime, relationType string) string {
+	switch relationType {
+	case "SIDE_STORY":
+		return "SIDE STORY"
+	case "SPIN_OFF":
+		return "SPIN-OFF"
+	case "SUMMARY":
+		return "RECAP"
+	case "ALTERNATIVE":
+		return "ALT"
+	}
+	if f := m.GetFormat(); f != nil {
+		switch *f {
+		case anilist.MediaFormatMovie:
+			return "MOVIE"
+		case anilist.MediaFormatOva:
+			return "OVA"
+		case anilist.MediaFormatSpecial:
+			return "SPECIAL"
+		}
+	}
+	return ""
 }
 
 // mediaDateKey returns a sortable YYYYMMDD int; unknown dates sort last.

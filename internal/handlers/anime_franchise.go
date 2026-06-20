@@ -81,38 +81,39 @@ func (h *Handler) resolveFranchiseGroup(c echo.Context, mId int) (*anime.Franchi
 
 	members := make([]*anilist.BaseAnime, 0)
 	seen := make(map[int]bool)
-	addMember := func(m *anilist.BaseAnime) {
+	relationOf := make(map[int]string) // member id -> AniList relation to the main line
+	addMember := func(m *anilist.BaseAnime, rel string) {
 		if m == nil || m.GetID() == 0 || seen[m.GetID()] {
-			return
+			return // first add wins: main-line members keep their "" relation
 		}
 		seen[m.GetID()] = true
 		members = append(members, m)
+		relationOf[m.GetID()] = rel
 	}
 
-	// Seasons (the sequel/prequel spine).
+	// Seasons (the sequel/prequel spine) — main line, no tag.
 	tree.Range(func(_ int, v *anilist.CompleteAnime) bool {
-		addMember(v.ToBaseAnime())
+		addMember(v.ToBaseAnime(), "")
 		return true
 	})
 
-	// Extras: movies/OVAs/specials linked to a member via side-story/spin-off/etc.
-	// These are read straight from already-fetched relation edges — no extra calls.
+	// Extras: side-stories / spin-offs / movies / OVAs / specials linked to a member.
+	// Read straight from already-fetched relation edges — no extra calls. Any format is
+	// allowed (a side-story TV is an extra, not a season); the relation type drives its tag.
 	tree.Range(func(_ int, v *anilist.CompleteAnime) bool {
 		for _, edge := range v.GetRelations().GetEdges() {
 			node := edge.GetNode()
 			if node == nil || node.GetFormat() == nil || edge.GetRelationType() == nil {
 				continue
 			}
+			rel := edge.GetRelationType().String()
 			if !extraRelationTypes[*edge.GetRelationType()] {
 				continue
 			}
-			switch *node.GetFormat() {
-			case anilist.MediaFormatMovie, anilist.MediaFormatOva, anilist.MediaFormatSpecial:
-				if node.GetStatus() != nil && *node.GetStatus() == anilist.MediaStatusNotYetReleased {
-					continue
-				}
-				addMember(node)
+			if node.GetStatus() != nil && *node.GetStatus() == anilist.MediaStatusNotYetReleased {
+				continue
 			}
+			addMember(node, rel)
 		}
 		return true
 	})
@@ -123,7 +124,7 @@ func (h *Handler) resolveFranchiseGroup(c echo.Context, mId int) (*anime.Franchi
 		if e != nil {
 			return nil, e
 		}
-		addMember(res.GetMedia().ToBaseAnime())
+		addMember(res.GetMedia().ToBaseAnime(), "")
 	}
 
 	resolver := anime.NewFranchiseResolver(h.App.MetadataProviderRef.Get(), h.App.FileCacher, h.App.Logger)
@@ -142,6 +143,9 @@ func (h *Handler) resolveFranchiseGroup(c echo.Context, mId int) (*anime.Franchi
 		}
 	}
 	members = lo.Filter(members, func(m *anilist.BaseAnime, _ int) bool {
+		if relationOf[m.GetID()] != "" {
+			return true // side-stories / spin-offs are extras — keep regardless of TMDB
+		}
 		f := m.GetFormat()
 		isTV := f != nil && (*f == anilist.MediaFormatTv || *f == anilist.MediaFormatTvShort || *f == anilist.MediaFormatOna)
 		if !isTV {
@@ -159,7 +163,7 @@ func (h *Handler) resolveFranchiseGroup(c echo.Context, mId int) (*anime.Franchi
 		return memStem != "" && (strings.Contains(memStem, rootStem) || strings.Contains(rootStem, memStem))
 	})
 
-	group := anime.BuildFranchiseFromMembers(members, refs)
+	group := anime.BuildFranchiseFromMembers(members, refs, relationOf)
 	anime.CacheFranchiseGroup(h.App.FileCacher, group)
 
 	return group, nil

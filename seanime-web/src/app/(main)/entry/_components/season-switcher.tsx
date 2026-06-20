@@ -129,14 +129,14 @@ export function SeasonSwitcher({ mediaId }: { mediaId: string | number | null | 
                         >
                             <span className="opacity-50 tabular-nums w-5">{i + 1}.</span>
                             <span className="line-clamp-1 flex-1">{entryTitle(e)}</span>
-                            {e.isExtra && <span className="ml-2 text-xs opacity-50 uppercase">extra</span>}
+                            {e.tag && <span className="ml-2 text-xs opacity-50 uppercase">{e.tag}</span>}
                         </DropdownMenuItem>
                     ))}
                 </DropdownMenu>
             )}
 
             {extras.length > 0 && (
-                <span className="ml-1 text-xs opacity-50">+{extras.length} movie/OVA</span>
+                <span className="ml-1 text-xs opacity-50">+{extras.length} extra{extras.length > 1 ? "s" : ""}</span>
             )}
         </div>
     )
