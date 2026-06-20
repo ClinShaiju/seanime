@@ -108,7 +108,10 @@ func (s *AutoSelect) selectFileFromTorrentClient(
 	defer util.HandlePanicInModuleWithError("autoselect/selectFileFromTorrentClient", &err)
 
 	s.logger.Trace().Msgf("autoselect: Getting torrent magnet")
-	magnet, err := providerExt.GetProvider().GetTorrentMagnetLink(t)
+	// ResolveMagnetLink returns an already-embedded magnet (t.MagnetLink/t.Link) before
+	// scraping — needed for aggregator providers (AIOStreams/SeaDex) that supply the magnet
+	// directly and don't implement GetTorrentMagnetLink. Mirrors manual selection.
+	magnet, err := s.torrentRepository.ResolveMagnetLink(t)
 	if err != nil {
 		s.logger.Warn().Err(err).Msgf("autoselect: Error scraping magnet link for %s", t.Link)
 		return nil, err
@@ -206,7 +209,10 @@ func (s *AutoSelect) selectFileFromDebrid(
 ) (*Result, error) {
 
 	s.logger.Trace().Msgf("autoselect: Getting torrent magnet")
-	magnet, err := providerExt.GetProvider().GetTorrentMagnetLink(t)
+	// ResolveMagnetLink returns an already-embedded magnet (t.MagnetLink/t.Link) before
+	// scraping — needed for aggregator providers (AIOStreams/SeaDex) that supply the magnet
+	// directly and don't implement GetTorrentMagnetLink. Mirrors manual selection.
+	magnet, err := s.torrentRepository.ResolveMagnetLink(t)
 	if err != nil {
 		s.logger.Warn().Err(err).Msgf("autoselect: Error scraping magnet link for %s", t.Link)
 		return nil, err
