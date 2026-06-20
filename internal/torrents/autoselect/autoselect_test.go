@@ -600,9 +600,9 @@ func TestAutoSelect_LanguageTiers(t *testing.T) {
 		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
 	}
 
-	// en-only, explicit jp/en, and dual-audio (orig + en dub) must all share the top tier;
-	// jp-only and jp/ru share the lower tier. Seeders only break ties within a tier, so the
-	// jp releases get the most seeders to prove language tier wins over seeders.
+	// en-only and explicit jp/en form the top (en) tier. Dual-audio implies the JP original, so
+	// dual-no-flag and jp-only and jp/ru share the JP tier — dual is NOT assumed to be en. Seeders
+	// only break ties within a tier, so the jp releases get the most seeders to prove tier wins.
 	enOnly := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [English].mkv", InfoHash: "en", Seeders: 1}
 	jpEn := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese] [English].mkv", InfoHash: "jpen", Seeders: 2}
 	dual := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Dual Audio].mkv", InfoHash: "dual", Seeders: 3}
@@ -614,12 +614,13 @@ func TestAutoSelect_LanguageTiers(t *testing.T) {
 	for i, r := range sorted {
 		pos[r.InfoHash] = i
 	}
-	// Top three (any order) are the en-tier; bottom two are the jp-tier.
-	top3 := map[string]bool{sorted[0].InfoHash: true, sorted[1].InfoHash: true, sorted[2].InfoHash: true}
-	assert.True(t, top3["en"] && top3["jpen"] && top3["dual"],
-		"en-only, jp/en, and dual-audio must form the top tier; got %v", sorted[0].Name+","+sorted[1].Name+","+sorted[2].Name)
+	// Top two (any order) are the en-tier; dual/jp/jpru are below them.
+	top2 := map[string]bool{sorted[0].InfoHash: true, sorted[1].InfoHash: true}
+	assert.True(t, top2["en"] && top2["jpen"],
+		"en-only and jp/en must form the top tier; got %v / %v", sorted[0].Name, sorted[1].Name)
+	assert.Greater(t, pos["dual"], pos["en"], "dual-audio (implied jp) ranks below the en tier")
+	assert.Greater(t, pos["dual"], pos["jpen"], "dual-audio ranks below jp/en")
 	assert.Greater(t, pos["jp"], pos["en"], "jp-only must rank below the en tier despite more seeders")
-	assert.Greater(t, pos["jpru"], pos["jpen"], "jp/ru must rank below jp/en")
 }
 
 func TestAutoSelect_FlagLanguages(t *testing.T) {
@@ -629,20 +630,23 @@ func TestAutoSelect_FlagLanguages(t *testing.T) {
 		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
 	}
 
-	// Aggregator names carry language only as flag emoji. EN-flagged (and jp/en) must rank above
-	// jp-only; a FR-only "Dual Audio" release must be demoted (the dual-audio lift must NOT save
-	// it once a non-preferred flag is present), despite the most seeders.
-	enFlag := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] Dual Audio 🌐 🇬🇧 / 🇯🇵", InfoHash: "en", Seeders: 1}
+	// Aggregator names carry language only as flag emoji. An EN flag → en tier (top). A dual/fr
+	// release is jp/fr (dual implies the JP original), so it sits in the JP tier — NOT demoted.
+	// A SINGLE french release (no dual) has no preferred language and is demoted to the bottom,
+	// even with the most seeders.
+	enFlag := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] 🌐 🇬🇧 / 🇯🇵", InfoHash: "en", Seeders: 1}
 	jpFlag := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] 🌐 🇯🇵", InfoHash: "jp", Seeders: 5}
-	frDual := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] Dual Audio 🌐 🇫🇷", InfoHash: "fr", Seeders: 900}
+	frDual := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] Dual Audio 🌐 🇫🇷", InfoHash: "frdual", Seeders: 50}
+	frSingle := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] 🌐 🇫🇷", InfoHash: "fr", Seeders: 900}
 
-	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{frDual, jpFlag, enFlag}, profile, -1, 10, nil)
-	names := make([]string, len(sorted))
+	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{frSingle, frDual, jpFlag, enFlag}, profile, -1, 10, nil)
+	pos := map[string]int{}
 	for i, r := range sorted {
-		names[i] = r.Name
+		pos[r.InfoHash] = i
 	}
-	assert.Equal(t, []string{enFlag.Name, jpFlag.Name, frDual.Name}, names,
-		"EN-flag top, jp-flag middle, FR-flag dual demoted last despite most seeders; got %v", names)
+	assert.Equal(t, "en", sorted[0].InfoHash, "EN-flag must be top")
+	assert.Equal(t, "fr", sorted[len(sorted)-1].InfoHash, "single french demoted last despite most seeders")
+	assert.Less(t, pos["frdual"], pos["fr"], "dual/fr (jp/fr) ranks above single french")
 }
 
 func TestAutoSelect_EpisodeRelevance(t *testing.T) {

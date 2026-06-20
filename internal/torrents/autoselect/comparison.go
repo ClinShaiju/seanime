@@ -197,6 +197,16 @@ func (s *AutoSelect) sort(torrents []*hibiketorrent.AnimeTorrent, profile *anime
 	}
 }
 
+// isJapaneseToken reports whether a preferred-language token refers to Japanese. Used to treat
+// dual/multi-audio releases as containing the Japanese original (anime's source language).
+func isJapaneseToken(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "jp", "jpn", "ja", "japanese":
+		return true
+	}
+	return false
+}
+
 func containsMultiOrDual(terms []string) bool {
 	for _, s := range terms {
 		lower := strings.ToLower(s)
@@ -620,9 +630,12 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	}
 
 	// Language. Best-language-wins: preferred languages are checked in priority order, matching
-	// the parsed language, the name, OR flag emoji decoded from the name (aggregators express
-	// language only as flags). So jp/en scores as en, jp/ru scores as jp.
+	// the parsed language, decoded flag emoji, the name, OR — for dual/multi-audio — the implied
+	// Japanese original. A "Dual Audio" release carries the original (JP) + a dub whose language
+	// is given by the flags, NOT assumed to be English: so dual/fr ranks as jp/fr, dual/en as
+	// jp/en, dual with no flag as jp. jp/ru ranks as jp; a single fr/es/ru release is demoted.
 	if len(profile.PreferredLanguages) > 0 {
+		isDual := containsMultiOrDual(parsed.AudioTerm) || containsMultiOrDual([]string{c.lowerName})
 		langMatched := false
 		for i, languages := range profile.PreferredLanguages {
 			for _, lang := range strings.Split(languages, ",") {
@@ -634,7 +647,7 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 					return strings.EqualFold(pl, lang)
 				}) || slices.ContainsFunc(c.flagLanguages, func(fl string) bool {
 					return strings.EqualFold(fl, lang)
-				}) || containsBoundedTerm(c.lowerName, lang) {
+				}) || containsBoundedTerm(c.lowerName, lang) || (isDual && isJapaneseToken(lang)) {
 					priority += scoreLanguageBase - (i * scoreLanguageDecay)
 					langMatched = true
 					break
@@ -645,21 +658,13 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 			}
 		}
 
-		// A release "declares" a language if it has a parsed language tag or flag emoji.
-		hasDeclaredLang := len(parsed.Language) > 0 || len(c.flagLanguages) > 0
-
-		if !langMatched {
-			if !hasDeclaredLang && (containsMultiOrDual(parsed.AudioTerm) || containsMultiOrDual([]string{c.lowerName})) {
-				// Dual/multi-audio with no declared language: assume it carries the top preferred
-				// dub (anime dual audio is ~always orig + the dub), so it ranks alongside en-only.
-				// Only when nothing contradicts it — a release flagged FR/ES is handled below.
-				priority += scoreLanguageBase
-				langMatched = true
-			} else if hasDeclaredLang {
-				// Declared a language, none preferred (e.g. Russian-/French-only) → demote below
-				// every preferred-language release and the cached-first quality threshold.
-				priority -= scoreLanguageUnpreferred
-			}
+		// A release "declares" a language via a parsed tag, a flag, or being dual-audio (which
+		// implies the Japanese original). Demote only when something is declared and none match
+		// — e.g. a single French/Spanish/Russian release (a dual/fr release matches the implied
+		// JP and is not demoted).
+		hasDeclaredLang := len(parsed.Language) > 0 || len(c.flagLanguages) > 0 || isDual
+		if !langMatched && hasDeclaredLang {
+			priority -= scoreLanguageUnpreferred
 		}
 	}
 
