@@ -125,21 +125,28 @@ export function TorrentSearchContainer({ type, entry }: { type: TorrentSelection
         }
     }, [searchType, entry.media?.title])
 
+    // Debrid-stream selection is ranked server-side (auto-select rules + cache), so keep that order.
+    const useServerOrder = type === "debridstream-select" || type === "debridstream-select-file"
+
     const torrents = React.useMemo(() => {
-        return [...(data?.torrents ?? [])].sort((a, b) => {
+        const arr = [...(data?.torrents ?? [])]
+        if (useServerOrder) return arr
+        return arr.sort((a, b) => {
             if (a.isBestRelease && !b.isBestRelease) return -1
             if (!a.isBestRelease && b.isBestRelease) return 1
             return 0
         })
-    }, [data?.torrents])
+    }, [data?.torrents, useServerOrder])
 
     const previews = React.useMemo(() => {
-        return [...(data?.previews ?? [])].sort((a, b) => {
+        const arr = [...(data?.previews ?? [])]
+        if (useServerOrder) return arr
+        return arr.sort((a, b) => {
             if (a.torrent?.isBestRelease && !b.torrent?.isBestRelease) return -1
             if (!a.torrent?.isBestRelease && b.torrent?.isBestRelease) return 1
             return 0
         })
-    }, [data?.previews])
+    }, [data?.previews, useServerOrder])
 
     const debridInstantAvailability = React.useMemo(() => serverStatus?.debridSettings?.enabled ? data?.debridInstantAvailability ?? {} : {},
         [data?.debridInstantAvailability, serverStatus?.debridSettings?.enabled])
@@ -555,6 +562,7 @@ export function TorrentSearchContainer({ type, entry }: { type: TorrentSelection
                                         includedSpecialProviders={data?.includedSpecialProviders}
                                         searchAcrossProviders={searchAcrossProviders}
                                         isSpoiler={spoiler.isSpoiler}
+                                        allowAutoSort={useServerOrder}
                                         // animeMetadata={data?.animeMetadata}
                                     />
                                 </>
@@ -580,6 +588,7 @@ export function TorrentSearchContainer({ type, entry }: { type: TorrentSelection
                                         includedSpecialProviders={data?.includedSpecialProviders}
                                         searchAcrossProviders={searchAcrossProviders}
                                         isSpoiler={spoiler.isSpoiler}
+                                        allowAutoSort={useServerOrder}
                                     />
                                 </>
                             )}

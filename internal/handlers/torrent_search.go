@@ -7,6 +7,7 @@ import (
 	"seanime/internal/library/anime"
 	"seanime/internal/torrents/torrent"
 	"seanime/internal/util/result"
+	"sort"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -35,6 +36,9 @@ func (h *Handler) HandleSearchTorrent(c echo.Context) error {
 		Resolution              string            `json:"resolution,omitempty"`
 		BestRelease             bool              `json:"bestRelease,omitempty"`
 		IncludeSpecialProviders bool              `json:"includeSpecialProviders,omitempty"`
+		// When true (debrid-stream selection), results are ordered by the auto-select rules
+		// (profile scoring, season match) and cache prioritization, without dropping any.
+		SortByAutoSelect bool `json:"sortByAutoSelect,omitempty"`
 	}
 
 	var b body
@@ -77,6 +81,42 @@ func (h *Handler) HandleSearchTorrent(c echo.Context) error {
 				instantAvail := provider.GetInstantAvailability(hashes)
 				data.DebridInstantAvailability = instantAvail
 				debridInstantAvailabilityCache.Set(hashesKey, instantAvail)
+			}
+		}
+
+		// Order the manual selection list like the auto-selector would (profile scoring,
+		// season match, cached-first), layering source cache flags on top of the API map.
+		if b.SortByAutoSelect {
+			ordered, cachedHashes := h.App.DebridClientRepository.RankTorrentsForDisplay(&b.Media, data.Torrents, data.DebridInstantAvailability)
+			data.Torrents = ordered
+
+			if len(data.Previews) > 0 {
+				rank := make(map[string]int, len(ordered))
+				for i, t := range ordered {
+					rank[t.InfoHash] = i
+				}
+				previewRank := func(p *torrent.Preview) int {
+					if p == nil || p.Torrent == nil {
+						return 1 << 30
+					}
+					if rk, ok := rank[p.Torrent.InfoHash]; ok {
+						return rk
+					}
+					return 1 << 30
+				}
+				sort.SliceStable(data.Previews, func(i, j int) bool {
+					return previewRank(data.Previews[i]) < previewRank(data.Previews[j])
+				})
+			}
+
+			// Surface flag-derived cache (RealDebrid/AllDebrid/flagged sources) as badges.
+			if data.DebridInstantAvailability == nil {
+				data.DebridInstantAvailability = make(map[string]debrid.TorrentItemInstantAvailability)
+			}
+			for hash := range cachedHashes {
+				if _, ok := data.DebridInstantAvailability[hash]; !ok {
+					data.DebridInstantAvailability[hash] = debrid.TorrentItemInstantAvailability{}
+				}
 			}
 		}
 	}

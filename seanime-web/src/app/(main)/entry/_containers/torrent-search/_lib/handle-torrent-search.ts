@@ -39,6 +39,7 @@ export function useHandleTorrentSearch(props: TorrentSearchHookProps) {
         downloadInfo,
         entry,
         isAdult,
+        type,
     } = props
 
     const serverStatus = useServerStatus()
@@ -164,6 +165,8 @@ export function useHandleTorrentSearch(props: TorrentSearchHookProps) {
             type: searchType,
         provider: searchProvider,
             bestRelease: searchType === Torrent_SearchType.SMART && smartSearchBest,
+            // Debrid-stream selection: have the server order results by the auto-select rules + cache.
+            sortByAutoSelect: type === "debridstream-select" || type === "debridstream-select-file",
         },
         !(searchType === Torrent_SearchType.SIMPLE && debouncedGlobalFilter.length === 0) // If simple search, user input must not be empty
         && !warnings.noProvider

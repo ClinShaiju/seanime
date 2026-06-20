@@ -271,7 +271,9 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		return fmt.Errorf("debridstream: Failed to add torrent: %w", err)
 	}
 
-	time.Sleep(1 * time.Second)
+	// ponytail: brief settle after AddTorrent so the item is queryable; GetTorrentStreamUrl
+	// polls anyway (the preload path skips this entirely). Was 1s; 250ms shaves selection time.
+	time.Sleep(250 * time.Millisecond)
 
 	// Save the current torrent item id
 	s.currentTorrentItemId = torrentItemId

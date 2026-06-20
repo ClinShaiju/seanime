@@ -42,28 +42,48 @@ func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.Co
 		}
 	}
 
-	// Prioritize cached torrents
+	providerID := provider.GetSettings().ID
+
+	// Prioritize cached torrents. Cache status is resolved in two steps:
+	//  1. From a flag the source embedded in the torrent name (free, no network). This is
+	//     also the only signal for RealDebrid/AllDebrid (their availability APIs are dead).
+	//  2. Provider instant-availability API, but only for torrents whose name had no
+	//     recognizable flag — so a fully-flagged source (e.g. AIOStreams) skips the call.
 	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*autoselect.TorrentWithCacheStatus {
 		if len(torrents) == 0 {
 			return []*autoselect.TorrentWithCacheStatus{}
 		}
 
-		// Check cached status
-		hashes := make([]string, 0)
-		for _, t := range torrents {
+		cacheKey := func(t *hibiketorrent.AnimeTorrent) string {
 			if t.InfoHash != "" {
-				hashes = append(hashes, t.InfoHash)
+				return t.InfoHash
+			}
+			return t.Name
+		}
+
+		cached := make(map[string]bool, len(torrents))
+		unknownHashes := make([]string, 0)
+		for _, t := range torrents {
+			if isCached, known := parseDebridCacheFlag(t.Name, providerID); known {
+				cached[cacheKey(t)] = isCached
+			} else if t.InfoHash != "" {
+				unknownHashes = append(unknownHashes, t.InfoHash)
 			}
 		}
 
-		instantAvail := provider.GetInstantAvailability(hashes)
+		// Only query the API for torrents we couldn't resolve from the name.
+		if len(unknownHashes) > 0 {
+			instantAvail := provider.GetInstantAvailability(unknownHashes)
+			for h := range instantAvail {
+				cached[h] = true
+			}
+		}
 
 		result := make([]*autoselect.TorrentWithCacheStatus, 0, len(torrents))
 		for _, t := range torrents {
-			_, isCached := instantAvail[t.InfoHash]
 			result = append(result, &autoselect.TorrentWithCacheStatus{
 				Torrent:  t,
-				IsCached: isCached,
+				IsCached: cached[cacheKey(t)],
 			})
 		}
 
@@ -103,6 +123,60 @@ func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.Co
 	}
 
 	return ret, nil
+}
+
+// RankTorrentsForDisplay orders search results for the manual debrid-stream selection screen
+// using the auto-select profile scoring, season match, and cache prioritization — without
+// dropping any. It layers the source's embedded cache flags on top of the already-fetched
+// instant-availability map (no extra API call). Returns the ordered torrents and the set of
+// cached infohashes so the UI can badge them (covers RealDebrid/AllDebrid/flagged sources
+// whose availability the API can't report).
+func (r *Repository) RankTorrentsForDisplay(
+	media *anilist.BaseAnime,
+	torrents []*hibiketorrent.AnimeTorrent,
+	instantAvail map[string]debrid.TorrentItemInstantAvailability,
+) (ordered []*hibiketorrent.AnimeTorrent, cachedHashes map[string]struct{}) {
+
+	cachedHashes = make(map[string]struct{})
+	if len(torrents) == 0 {
+		return torrents, cachedHashes
+	}
+
+	providerID := ""
+	if provider, err := r.GetProvider(); err == nil {
+		providerID = provider.GetSettings().ID
+	}
+
+	statuses := make([]*autoselect.TorrentWithCacheStatus, 0, len(torrents))
+	for _, t := range torrents {
+		cached := false
+		if isCached, known := parseDebridCacheFlag(t.Name, providerID); known {
+			cached = isCached
+		} else if t.InfoHash != "" {
+			_, cached = instantAvail[t.InfoHash]
+		}
+		statuses = append(statuses, &autoselect.TorrentWithCacheStatus{Torrent: t, IsCached: cached})
+		if cached && t.InfoHash != "" {
+			cachedHashes[t.InfoHash] = struct{}{}
+		}
+	}
+
+	profile, found := db_bridge.FindAutoSelectProfile(r.db)
+	if !found {
+		resolution := "1080p"
+		if r.settings != nil && r.settings.StreamPreferredResolution != "" {
+			resolution = r.settings.StreamPreferredResolution
+		}
+		profile = &anime.AutoSelectProfile{Resolutions: []string{resolution}, MinSeeders: 0}
+	}
+
+	// statuses already cover the full set; return them regardless of the slice passed in.
+	postSearchSort := func(_ []*hibiketorrent.AnimeTorrent) []*autoselect.TorrentWithCacheStatus {
+		return statuses
+	}
+
+	ordered = r.autoSelect.Rank(torrents, profile, media.GetPossibleSeasonNumber(), postSearchSort)
+	return ordered, cachedHashes
 }
 
 // findBestTorrentFromManualSelection is like findBestTorrent but for a pre-selected torrent

@@ -37,6 +37,10 @@ func (s *AutoSelect) selectFile(
 
 	analyzedCount := 0
 
+	// Build the media container once and share it across all candidate analyses
+	// (same media), so we don't refetch the AniList media tree per candidate.
+	shared := torrentanalyzer.PrepareSharedContext(media, s.platform, s.logger)
+
 	for i := 0; i < limit; i++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -63,14 +67,14 @@ func (s *AutoSelect) selectFile(
 		switch mode {
 		case SelectionModeDebrid:
 			if debridClient != nil {
-				res, err = s.selectFileFromDebrid(media, episodeNumber, t, providerExt, debridClient)
+				res, err = s.selectFileFromDebrid(media, episodeNumber, t, providerExt, debridClient, shared)
 			} else {
 				s.logger.Error().Msg("autoselect: Debrid client is nil but mode is Debrid")
 				continue
 			}
 		case SelectionModeTorrent:
 			if torrentClient != nil {
-				res, err = s.selectFileFromTorrentClient(ctx, media, episodeNumber, t, providerExt, torrentClient)
+				res, err = s.selectFileFromTorrentClient(ctx, media, episodeNumber, t, providerExt, torrentClient, shared)
 			} else {
 				s.logger.Error().Msg("autoselect: Torrent client is nil but mode is Torrent")
 				continue
@@ -99,6 +103,7 @@ func (s *AutoSelect) selectFileFromTorrentClient(
 	t *hibiketorrent.AnimeTorrent,
 	providerExt extension.AnimeTorrentProviderExtension,
 	client TorrentClient,
+	shared *torrentanalyzer.SharedContext,
 ) (res *Result, err error) {
 	defer util.HandlePanicInModuleWithError("autoselect/selectFileFromTorrentClient", &err)
 
@@ -157,6 +162,7 @@ func (s *AutoSelect) selectFileFromTorrentClient(
 		PlatformRef:         s.platform,
 		MetadataProviderRef: s.metadataProvider,
 		ForceMatch:          true,
+		Shared:              shared,
 	})
 
 	analysis, err := analyzer.AnalyzeTorrentFiles()
@@ -196,6 +202,7 @@ func (s *AutoSelect) selectFileFromDebrid(
 	t *hibiketorrent.AnimeTorrent,
 	providerExt extension.AnimeTorrentProviderExtension,
 	client debrid.Provider,
+	shared *torrentanalyzer.SharedContext,
 ) (*Result, error) {
 
 	s.logger.Trace().Msgf("autoselect: Getting torrent magnet")
@@ -234,6 +241,7 @@ func (s *AutoSelect) selectFileFromDebrid(
 		PlatformRef:         s.platform,
 		MetadataProviderRef: s.metadataProvider,
 		ForceMatch:          true,
+		Shared:              shared,
 	})
 
 	analysis, err := analyzer.AnalyzeTorrentFiles()

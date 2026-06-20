@@ -33,6 +33,7 @@ type TorrentPreviewList = {
     includedSpecialProviders?: string[]
     searchAcrossProviders: boolean
     isSpoiler: boolean
+    allowAutoSort?: boolean
 }
 
 export const TorrentPreviewList = React.memo((
@@ -48,9 +49,10 @@ export const TorrentPreviewList = React.memo((
         includedSpecialProviders = [],
         searchAcrossProviders,
         isSpoiler,
+        allowAutoSort = false,
     }: TorrentPreviewList) => {
     // Use hooks for sorting and filtering
-    const { sortField, sortDirection, handleSortChange } = useTorrentSorting()
+    const { sortField, sortDirection, handleSortChange } = useTorrentSorting(allowAutoSort)
     const { filters, handleFilterChange } = useTorrentFiltering()
     const { data: extensions } = useAnimeListTorrentProviderExtensions()
 
@@ -81,6 +83,7 @@ export const TorrentPreviewList = React.memo((
                 filters={filters}
                 onSortChange={handleSortChange}
                 onFilterChange={handleFilterChange}
+                allowAutoSort={allowAutoSort}
             />
             <ScrollAreaBox
                 className={cn(

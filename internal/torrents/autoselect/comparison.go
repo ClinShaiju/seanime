@@ -28,15 +28,17 @@ const (
 	scoreMultiSubs         = 10
 	scoreBatch             = 20
 	scoreBestRelease       = 20
+	scoreSeasonMatch       = 60
 )
 
 type candidate struct {
-	torrent   *hibiketorrent.AnimeTorrent
-	parsed    *habari.Metadata
-	lowerName string
-	priority  int
-	bonus     int
-	score     int
+	torrent        *hibiketorrent.AnimeTorrent
+	parsed         *habari.Metadata
+	lowerName      string
+	expectedSeason int // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
+	priority       int
+	bonus          int
+	score          int
 }
 
 type TorrentWithCacheStatus struct {
@@ -45,7 +47,7 @@ type TorrentWithCacheStatus struct {
 }
 
 // filterAndSort filters and sorts the torrents based on the profile or defaults.
-func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile, postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus) []*hibiketorrent.AnimeTorrent {
+func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile, expectedSeason int, postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus) []*hibiketorrent.AnimeTorrent {
 	s.log("Filtering and sorting torrents")
 	s.logger.Debug().Int("count", len(torrents)).Msg("autoselect: Filtering and sorting torrents")
 
@@ -54,14 +56,7 @@ func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profi
 	}
 
 	// Optimize: Parse metadata once
-	candidates := make([]*candidate, len(torrents))
-	for i, t := range torrents {
-		candidates[i] = &candidate{
-			torrent:   t,
-			parsed:    habari.Parse(t.Name),
-			lowerName: strings.ToLower(t.Name),
-		}
-	}
+	candidates := buildCandidates(torrents, expectedSeason)
 
 	// Filter
 	candidates = s.filterCandidates(candidates, profile)
@@ -87,6 +82,47 @@ func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profi
 	}
 
 	return filteredTorrents
+}
+
+// buildCandidates parses metadata once for each torrent.
+func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int) []*candidate {
+	candidates := make([]*candidate, len(torrents))
+	for i, t := range torrents {
+		candidates[i] = &candidate{
+			torrent:        t,
+			parsed:         habari.Parse(t.Name),
+			lowerName:      strings.ToLower(t.Name),
+			expectedSeason: expectedSeason,
+		}
+	}
+	return candidates
+}
+
+// Rank orders torrents using the same scoring (profile + season match) and cache
+// prioritization as auto-select, but WITHOUT dropping any. It backs the manual selection
+// screen, so the list mirrors what auto-select would pick while still showing every result.
+func (s *AutoSelect) Rank(
+	torrents []*hibiketorrent.AnimeTorrent,
+	profile *anime.AutoSelectProfile,
+	expectedSeason int,
+	postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus,
+) []*hibiketorrent.AnimeTorrent {
+	if len(torrents) == 0 {
+		return torrents
+	}
+
+	candidates := buildCandidates(torrents, expectedSeason)
+	s.sortCandidates(candidates, profile)
+
+	sorted := make([]*hibiketorrent.AnimeTorrent, len(candidates))
+	for i, c := range candidates {
+		sorted[i] = c.torrent
+	}
+
+	if postSearchSort != nil {
+		return s.smartCachedPrioritization(sorted, candidates, profile, postSearchSort)
+	}
+	return sorted
 }
 
 // filter is a shim for testing or legacy usage.
@@ -216,6 +252,22 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 	for _, c := range candidates {
 		t := c.torrent
 		parsed := c.parsed
+
+		// Season gate (sequels only): drop torrents that explicitly declare seasons,
+		// none of which is the requested season. Season-less releases and combined
+		// batches that include the requested season pass through.
+		if c.expectedSeason >= 2 && len(parsed.SeasonNumber) > 0 {
+			matched := false
+			for _, sn := range parsed.SeasonNumber {
+				if n, ok := util.StringToInt(sn); ok && n == c.expectedSeason {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
 
 		// Exclude terms
 		if len(excludeTerms) > 0 {
@@ -574,6 +626,23 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	}
 	if profile.BatchPreference == anime.AutoSelectPreferenceAvoid && isBatch {
 		bonus -= scoreBatch
+	}
+
+	// Season match (sequels only): reward releases that declare the requested season,
+	// penalize ones that declare a different season (the hard gate already drops most).
+	if c.expectedSeason >= 2 && len(parsed.SeasonNumber) > 0 {
+		matched := false
+		for _, sn := range parsed.SeasonNumber {
+			if n, ok := util.StringToInt(sn); ok && n == c.expectedSeason {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			bonus += scoreSeasonMatch
+		} else {
+			bonus -= scoreSeasonMatch
+		}
 	}
 
 	// Best release preference (prefer/avoid)

@@ -475,7 +475,7 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			testTorrents := make([]*hibiketorrent.AnimeTorrent, len(tt.torrents))
 			copy(testTorrents, tt.torrents)
 
-			sorted := s.filterAndSort(testTorrents, tt.profile, postSearchSort)
+			sorted := s.filterAndSort(testTorrents, tt.profile, -1, postSearchSort)
 
 			var sortedNames []string
 			for _, st := range sorted {
@@ -495,7 +495,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			return []*TorrentWithCacheStatus{}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{}, nil, postSearchSort)
+		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{}, nil, -1, postSearchSort)
 		assert.Empty(t, result)
 	})
 
@@ -510,7 +510,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			return []*TorrentWithCacheStatus{{Torrent: torrents[0], IsCached: true}}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, postSearchSort)
+		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, -1, postSearchSort)
 		assert.Len(t, result, 1)
 		assert.Equal(t, torrent.Name, result[0].Name)
 	})
@@ -522,7 +522,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			Seeders:  100,
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, nil)
+		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, -1, nil)
 		assert.Len(t, result, 1)
 		assert.Equal(t, torrent.Name, result[0].Name)
 	})
@@ -553,8 +553,34 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{highQuality, thresholdQuality}, profile, postSearchSort)
+		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{highQuality, thresholdQuality}, profile, -1, postSearchSort)
 		assert.Len(t, result, 2)
 		assert.NotNil(t, result[0])
 	})
+}
+
+func TestAutoSelect_SeasonGate(t *testing.T) {
+	s := newTestAutoSelect()
+
+	s1 := &hibiketorrent.AnimeTorrent{Name: "[Group] Wistoria Wand and Sword S1 - 01 [1080p].mkv", InfoHash: "s1", Seeders: 500}
+	s2 := &hibiketorrent.AnimeTorrent{Name: "[Group] Wistoria Wand and Sword S2 - 01 [1080p].mkv", InfoHash: "s2", Seeders: 50}
+	noSeason := &hibiketorrent.AnimeTorrent{Name: "[Group] Wistoria Wand and Sword - 01 [1080p].mkv", InfoHash: "ns", Seeders: 80}
+	combined := &hibiketorrent.AnimeTorrent{Name: "[Group] Wistoria Wand and Sword S1-S2 Batch [1080p].mkv", InfoHash: "cb", Seeders: 30, IsBatch: true}
+
+	torrents := []*hibiketorrent.AnimeTorrent{s1, s2, noSeason, combined}
+	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}
+
+	// expectedSeason = 2: the S1-only release must be dropped; S2 / season-less / combined kept.
+	result := s.filterAndSort(torrents, profile, 2, nil)
+
+	names := make([]string, len(result))
+	for i, r := range result {
+		names[i] = r.Name
+	}
+	assert.NotContains(t, names, s1.Name, "S1 release should be dropped for a S2 request")
+	assert.Contains(t, names, s2.Name)
+	assert.Contains(t, names, noSeason.Name, "season-less release should pass the gate")
+	assert.Contains(t, names, combined.Name, "combined S1-S2 batch should pass the gate")
+	// Despite far fewer seeders, the declared-S2 release should outrank the season-less one.
+	assert.Equal(t, s2.Name, names[0], "declared-correct season should score highest")
 }

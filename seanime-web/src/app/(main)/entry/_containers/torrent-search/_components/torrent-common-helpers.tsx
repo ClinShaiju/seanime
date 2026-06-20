@@ -1,6 +1,7 @@
 import { Torrent_TorrentMetadata } from "@/api/generated/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { cn } from "@/components/ui/core/styling"
 import { Popover } from "@/components/ui/popover"
 import { Separator } from "@/components/ui/separator"
 import { useAtom } from "jotai/react"
@@ -8,10 +9,11 @@ import { atomWithStorage } from "jotai/utils"
 import React, { useState } from "react"
 import { LiaMicrophoneSolid } from "react-icons/lia"
 import { PiChatCircleDotsDuotone } from "react-icons/pi"
-import { TbArrowsSort, TbFilter, TbSortAscending, TbSortDescending } from "react-icons/tb"
+import { TbArrowsSort, TbFilter, TbSortAscending, TbSortDescending, TbSparkles } from "react-icons/tb"
 
 // Define sort types
-export type SortField = "seeders" | "size" | "date" | "resolution" | null
+// "auto" = keep the server-provided order (auto-select rules + cache prioritization).
+export type SortField = "auto" | "seeders" | "size" | "date" | "resolution" | null
 export type SortDirection = "asc" | "desc" | null
 
 // Define filter types
@@ -49,6 +51,12 @@ export const handleSort = (
     setSortField: (field: SortField) => void,
     setSortDirection: (direction: SortDirection) => void,
 ) => {
+    // "auto" has no direction; selecting it is exclusive with the column sorts.
+    if (field === "auto") {
+        setSortField("auto")
+        setSortDirection(null)
+        return
+    }
     if (sortField === field) {
         if (sortDirection === "desc") {
             setSortDirection("asc")
@@ -143,7 +151,9 @@ export function sortItems<T extends TorrentLike | PreviewLike>(
     sortField: SortField,
     sortDirection: SortDirection,
 ): T[] {
-    if (!sortField || !sortDirection) return items
+    // "auto" (or unset) preserves the incoming order, which for debrid-stream selection
+    // is the server's auto-select ranking (profile scoring + cache-first).
+    if (sortField === "auto" || !sortField || !sortDirection) return items
 
     return [...items].sort((a, b) => {
         let valueA: number, valueB: number
@@ -223,10 +233,23 @@ export function filterItems<T extends TorrentLike | PreviewLike>(
 const sortAtom = atomWithStorage<SortField>("sea-torrent-list-sort", "seeders", undefined, { getOnInit: true })
 const sortDirectionAtom = atomWithStorage<SortDirection>("sea-torrent-list-sort-direction", "desc", undefined, { getOnInit: true })
 
-// Hook for managing sorting state
-export function useTorrentSorting() {
-    const [sortField, setSortField] = useAtom(sortAtom)
-    const [sortDirection, setSortDirection] = useAtom(sortDirectionAtom)
+// Separate persisted sort for auto-ranked screens (debrid-stream selection), so they default to
+// "Auto" (server order) without changing the "seeders" default used everywhere else.
+const streamSortAtom = atomWithStorage<SortField>("sea-torrent-list-stream-sort", "auto", undefined, { getOnInit: true })
+const streamSortDirectionAtom = atomWithStorage<SortDirection>("sea-torrent-list-stream-sort-direction", null, undefined, { getOnInit: true })
+
+// Hook for managing sorting state. When allowAuto is true (server-ranked screens), it uses a
+// separate persisted atom that defaults to "auto".
+export function useTorrentSorting(allowAuto = false) {
+    const [normalField, setNormalField] = useAtom(sortAtom)
+    const [normalDir, setNormalDir] = useAtom(sortDirectionAtom)
+    const [streamField, setStreamField] = useAtom(streamSortAtom)
+    const [streamDir, setStreamDir] = useAtom(streamSortDirectionAtom)
+
+    const sortField = allowAuto ? streamField : normalField
+    const sortDirection = allowAuto ? streamDir : normalDir
+    const setSortField = allowAuto ? setStreamField : setNormalField
+    const setSortDirection = allowAuto ? setStreamDir : setNormalDir
 
     const handleSortChange = (field: SortField) => {
         handleSort(field, sortField, sortDirection, setSortField, setSortDirection)
@@ -280,7 +303,8 @@ export const TorrentFilterSortControls: React.FC<{
     sortDirection: SortDirection,
     filters: TorrentFilters,
     onSortChange: (field: SortField) => void,
-    onFilterChange: (filterName: keyof TorrentFilters, value: boolean | "indeterminate") => void
+    onFilterChange: (filterName: keyof TorrentFilters, value: boolean | "indeterminate") => void,
+    allowAutoSort?: boolean,
 }> = ({
     resultCount,
     sortField,
@@ -288,6 +312,7 @@ export const TorrentFilterSortControls: React.FC<{
     filters,
     onSortChange,
     onFilterChange,
+    allowAutoSort = false,
 }) => {
     const isAnyFilterActive = anyFilterActive(filters)
 
@@ -401,6 +426,14 @@ export const TorrentFilterSortControls: React.FC<{
                         </div>
                     </div>
                 </Popover>
+                {allowAutoSort && <Button
+                    size="xs"
+                    intent="gray-basic"
+                    leftIcon={<TbSparkles className={cn("text-lg", sortField === "auto" ? "text-brand-200" : "opacity-50")} />}
+                    onClick={() => onSortChange("auto")}
+                >
+                    Auto
+                </Button>}
                 <Button
                     size="xs"
                     intent="gray-basic"

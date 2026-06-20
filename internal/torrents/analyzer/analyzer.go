@@ -25,6 +25,15 @@ type (
 		logger              *zerolog.Logger
 		metadataProviderRef *util.Ref[metadata_provider.Provider]
 		forceMatch          bool
+		shared              *SharedContext
+	}
+
+	// SharedContext holds per-media analysis state (media tree + cache) that can be
+	// reused across multiple AnalyzeTorrentFiles calls for the same media, avoiding
+	// redundant AniList media-tree fetches when checking several torrent candidates.
+	SharedContext struct {
+		mediaContainer *scanner.MediaContainer
+		cache          *anilist.CompleteAnimeCache
 	}
 
 	// Analysis contains the results of the analysis.
@@ -52,6 +61,8 @@ type (
 		// This basically skips the matching process and forces the media ID to be set.
 		// Used for the auto-select feature because the media is already known.
 		ForceMatch bool
+		// Optional: reuse a prebuilt media container across analyses for the same media.
+		Shared *SharedContext
 	}
 )
 
@@ -66,7 +77,39 @@ func NewAnalyzer(opts *NewAnalyzerOptions) *Analyzer {
 		logger:              opts.Logger,
 		metadataProviderRef: opts.MetadataProviderRef,
 		forceMatch:          opts.ForceMatch,
+		shared:              opts.Shared,
 	}
+}
+
+// PrepareSharedContext builds the media container once so it can be shared across
+// several AnalyzeTorrentFiles calls for the same media (via NewAnalyzerOptions.Shared).
+// Returns nil on failure; callers fall back to per-analysis building.
+func PrepareSharedContext(media *anilist.CompleteAnime, platformRef *util.Ref[platform.Platform], logger *zerolog.Logger) *SharedContext {
+	if media == nil || platformRef == nil || platformRef.IsAbsent() {
+		return nil
+	}
+	mc, cache, err := buildMediaContainer(media, platformRef)
+	if err != nil {
+		if logger != nil {
+			logger.Warn().Err(err).Msg("torrent analyzer: Failed to prepare shared media container")
+		}
+		return nil
+	}
+	return &SharedContext{mediaContainer: mc, cache: cache}
+}
+
+// buildMediaContainer fetches the media tree and builds the normalized media container.
+func buildMediaContainer(media *anilist.CompleteAnime, platformRef *util.Ref[platform.Platform]) (*scanner.MediaContainer, *anilist.CompleteAnimeCache, error) {
+	cache := anilist.NewCompleteAnimeCache()
+	rl := limiter.NewAnilistLimiter()
+	tree := anilist.NewCompleteAnimeRelationTree()
+	if err := media.FetchMediaTree(anilist.FetchMediaTreeAll, platformRef.Get().GetAnilistClient(), rl, tree, cache); err != nil {
+		return nil, nil, err
+	}
+	mc := scanner.NewMediaContainer(&scanner.MediaContainerOptions{
+		AllMedia: scanner.NormalizedMediaFromAnilistComplete(tree.Values()),
+	})
+	return mc, cache, nil
 }
 
 // AnalyzeTorrentFiles scans the files and returns an Analysis struct containing methods to get the results.
@@ -200,7 +243,6 @@ func (f *File) GetPath() string {
 // scanFiles scans the files and matches them with the media.
 func (a *Analyzer) scanFiles() error {
 
-	completeAnimeCache := anilist.NewCompleteAnimeCache()
 	anilistRateLimiter := limiter.NewAnilistLimiter()
 
 	lfs := a.getLocalFiles() // Extract local files from the Files
@@ -209,16 +251,23 @@ func (a *Analyzer) scanFiles() error {
 	// |   MediaContainer    |
 	// +---------------------+
 
-	tree := anilist.NewCompleteAnimeRelationTree()
-	if err := a.media.FetchMediaTree(anilist.FetchMediaTreeAll, a.platformRef.Get().GetAnilistClient(), anilistRateLimiter, tree, completeAnimeCache); err != nil {
-		return err
+	// Reuse a prebuilt media container/cache when provided (avoids refetching the
+	// AniList media tree for every torrent candidate of the same media).
+	var mc *scanner.MediaContainer
+	var completeAnimeCache *anilist.CompleteAnimeCache
+	if a.shared != nil && a.shared.mediaContainer != nil && a.shared.cache != nil {
+		mc = a.shared.mediaContainer
+		completeAnimeCache = a.shared.cache
+	} else {
+		completeAnimeCache = anilist.NewCompleteAnimeCache()
+		tree := anilist.NewCompleteAnimeRelationTree()
+		if err := a.media.FetchMediaTree(anilist.FetchMediaTreeAll, a.platformRef.Get().GetAnilistClient(), anilistRateLimiter, tree, completeAnimeCache); err != nil {
+			return err
+		}
+		mc = scanner.NewMediaContainer(&scanner.MediaContainerOptions{
+			AllMedia: scanner.NormalizedMediaFromAnilistComplete(tree.Values()),
+		})
 	}
-
-	allMedia := tree.Values()
-
-	mc := scanner.NewMediaContainer(&scanner.MediaContainerOptions{
-		AllMedia: scanner.NormalizedMediaFromAnilistComplete(allMedia),
-	})
 
 	//scanLogger, _ := scanner.NewScanLogger("./logs")
 

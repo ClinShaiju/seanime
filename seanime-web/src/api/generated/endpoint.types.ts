@@ -2029,6 +2029,7 @@ export type SearchTorrent_Variables = {
     resolution?: string
     bestRelease?: boolean
     includeSpecialProviders?: boolean
+    sortByAutoSelect?: boolean
 }
 
 /**
