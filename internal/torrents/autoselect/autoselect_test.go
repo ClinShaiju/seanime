@@ -593,6 +593,35 @@ func TestAutoSelect_LanguageDemotion(t *testing.T) {
 		"ru-only must be demoted below preferred-language releases even when cached; eng outranks jp/ru")
 }
 
+func TestAutoSelect_LanguageTiers(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
+	}
+
+	// en-only, explicit jp/en, and dual-audio (orig + en dub) must all share the top tier;
+	// jp-only and jp/ru share the lower tier. Seeders only break ties within a tier, so the
+	// jp releases get the most seeders to prove language tier wins over seeders.
+	enOnly := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [English].mkv", InfoHash: "en", Seeders: 1}
+	jpEn := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese] [English].mkv", InfoHash: "jpen", Seeders: 2}
+	dual := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Dual Audio].mkv", InfoHash: "dual", Seeders: 3}
+	jpOnly := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese].mkv", InfoHash: "jp", Seeders: 900}
+	jpRu := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese] [Russian].mkv", InfoHash: "jpru", Seeders: 901}
+
+	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{jpOnly, jpRu, dual, jpEn, enOnly}, profile, -1, 0, nil)
+	pos := map[string]int{}
+	for i, r := range sorted {
+		pos[r.InfoHash] = i
+	}
+	// Top three (any order) are the en-tier; bottom two are the jp-tier.
+	top3 := map[string]bool{sorted[0].InfoHash: true, sorted[1].InfoHash: true, sorted[2].InfoHash: true}
+	assert.True(t, top3["en"] && top3["jpen"] && top3["dual"],
+		"en-only, jp/en, and dual-audio must form the top tier; got %v", sorted[0].Name+","+sorted[1].Name+","+sorted[2].Name)
+	assert.Greater(t, pos["jp"], pos["en"], "jp-only must rank below the en tier despite more seeders")
+	assert.Greater(t, pos["jpru"], pos["jpen"], "jp/ru must rank below jp/en")
+}
+
 func TestAutoSelect_EpisodeRelevance(t *testing.T) {
 	s := newTestAutoSelect()
 	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}

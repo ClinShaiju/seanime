@@ -639,6 +639,16 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 			}
 		}
 
+		// jp/en handling: an explicit en tag is already matched above (best-language-wins, so a
+		// jp/en release scores as en). A dual/multi-audio (or dubbed) release carries an extra
+		// dub on top of the original; treat it as containing the top preferred language
+		// (typically English) so it ranks alongside en-only and above jp-only — mirroring how
+		// jp/ru ranks as jp. ponytail: heuristic — anime "dual audio" is ~always orig + the dub.
+		if !langMatched && (containsMultiOrDual(parsed.AudioTerm) || containsMultiOrDual([]string{c.lowerName})) {
+			priority += scoreLanguageBase
+			langMatched = true
+		}
+
 		// Demote releases that explicitly declare language(s), none of which is preferred
 		// (e.g. Russian-only). A jp/ru release matches "jp" and is not demoted; a release
 		// with no parsed language tag is left neutral (can't tell, often eng-subbed raws).
