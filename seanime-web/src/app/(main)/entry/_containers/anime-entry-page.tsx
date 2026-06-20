@@ -17,6 +17,7 @@ import { useSeaCommandInject } from "@/app/(main)/_features/sea-command/use-inje
 
 import { vc_isFullscreen } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
+import { MergedSeasonSection, __entry_mergedSeasonAtom } from "@/app/(main)/entry/_components/merged-season-section"
 import { MetaSection } from "@/app/(main)/entry/_components/meta-section"
 import { RelationsRecommendationsSection } from "@/app/(main)/entry/_components/relations-recommendations-section"
 import { SeasonSwitcher } from "@/app/(main)/entry/_components/season-switcher"
@@ -119,6 +120,12 @@ export function AnimeEntryPage() {
     const { data: animeDetails, isLoading: animeDetailsLoading } = useGetAnilistAnimeDetails(mediaId)
     const { data: registeredEpisodeTabExtensions, isFetched: registeredEpisodeTabExtensionsFetched } = useListAnimeEntryEpisodeTabExtensions()
     const vc_fullscreen = useAtomValue(vc_isFullscreen)
+
+    const [mergedSeason, setMergedSeason] = useAtom(__entry_mergedSeasonAtom)
+    // Clear the merged-season view whenever the entry changes.
+    React.useEffect(() => {
+        setMergedSeason(null)
+    }, [mediaId, setMergedSeason])
 
     const { currentView, setView } = useAnimeEntryPageView()
     const switchedView = React.useRef(false)
@@ -342,7 +349,18 @@ export function AnimeEntryPage() {
 
                     <AnimatePresence mode="wait" initial={false}>
 
-                        {(currentView === "library") && <PageWrapper
+                        {mergedSeason != null && <PageWrapper
+                            data-anime-entry-page-merged-season-view
+                            key="merged-season"
+                            className="relative 2xl:order-first pb-10"
+                            {...ENTRY_VIEW_TRANSITION}
+                        >
+                            <div className="h-10" />
+                            <MergedSeasonSection rootId={Number(mediaId)} seasonNumber={mergedSeason} />
+                            {bottomSection}
+                        </PageWrapper>}
+
+                        {(mergedSeason == null && currentView === "library") && <PageWrapper
                             data-anime-entry-page-episode-list-view
                             key="episode-list"
                             className="relative 2xl:order-first pb-10"
@@ -356,21 +374,21 @@ export function AnimeEntryPage() {
                             />
                         </PageWrapper>}
 
-                        {currentView === "torrentstream" &&
+                        {mergedSeason == null && currentView === "torrentstream" &&
                             <TorrentStreamPage
                                 key="torrent-streaming-episodes"
                                 entry={animeEntry}
                                 bottomSection={bottomSection}
                             />}
 
-                        {currentView === "debridstream" &&
+                        {mergedSeason == null && currentView === "debridstream" &&
                             <DebridStreamPage
                                 key="debrid-streaming-episodes"
                                 entry={animeEntry}
                                 bottomSection={bottomSection}
                             />}
 
-                        {pluginEpisodeTabs.selectedTab && currentView === pluginEpisodeTabs.selectedTab.viewId && <PageWrapper
+                        {mergedSeason == null && pluginEpisodeTabs.selectedTab && currentView === pluginEpisodeTabs.selectedTab.viewId && <PageWrapper
                             data-anime-entry-page-plugin-episode-tab-view
                             key={pluginEpisodeTabs.selectedTab.viewId}
                             className="relative 2xl:order-first pb-10"
@@ -385,7 +403,7 @@ export function AnimeEntryPage() {
                             />
                         </PageWrapper>}
 
-                        {currentView === "onlinestream" && <PageWrapper
+                        {mergedSeason == null && currentView === "onlinestream" && <PageWrapper
                             data-anime-entry-page-online-streaming-view
                             key="online-streaming-episodes"
                             className={cn(

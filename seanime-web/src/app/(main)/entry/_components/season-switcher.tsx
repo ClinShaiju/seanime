@@ -1,44 +1,27 @@
 import { Anime_GroupedEntry } from "@/api/generated/types"
 import { useGetAnimeFranchise } from "@/api/hooks/anime_franchise.hooks"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
+import { __entry_mergedSeasonAtom } from "@/app/(main)/entry/_components/merged-season-section"
 import { cn } from "@/components/ui/core/styling"
 import { DropdownMenu, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { useRouter } from "@/lib/navigation"
+import { useAtom } from "jotai/react"
 import React from "react"
 import { LuChevronDown, LuListOrdered } from "react-icons/lu"
 
-// Stremio-style season switcher. Presentation-only: each item navigates to that
-// season's own AniList entry page — tracking/progress stay per-entry. Rendered only
-// when the user enables "Group seasons". See season-select-support.md.
+// Stremio-style season switcher. One chip per season number; split-cour seasons
+// (multiple AniList entries sharing a TMDB season number) collapse into a single
+// "Season N" chip that opens a merged continuous episode list. Single-cour seasons
+// navigate to their entry. Rendered only when "Group seasons" is enabled.
 
 function entryTitle(e: Anime_GroupedEntry) {
     return e.media?.title?.userPreferred || e.media?.title?.romaji || e.media?.title?.english || `#${e.mediaId}`
 }
 
-// Label seasons, disambiguating split-cours: two entries sharing the same TMDB
-// season number (e.g. S4 Part 1 / Part 2) become "Season 4 Part 1" / "Season 4 Part 2"
-// instead of two identical "Season 4" chips. (seasons[] is already season-number then
-// air-date ordered, so parts come out in release order.)
-function seasonLabels(seasons: Anime_GroupedEntry[]): string[] {
-    const counts = new Map<number, number>()
-    for (const e of seasons) {
-        if (e.seasonNumber > 0) counts.set(e.seasonNumber, (counts.get(e.seasonNumber) ?? 0) + 1)
-    }
-    const partIdx = new Map<number, number>()
-    return seasons.map((e, i) => {
-        const num = e.seasonNumber > 0 ? e.seasonNumber : i + 1
-        if (e.seasonNumber > 0 && (counts.get(e.seasonNumber) ?? 0) > 1) {
-            const part = (partIdx.get(e.seasonNumber) ?? 0) + 1
-            partIdx.set(e.seasonNumber, part)
-            return `Season ${num} Part ${part}`
-        }
-        return `Season ${num}`
-    })
-}
-
 export function SeasonSwitcher({ mediaId }: { mediaId: string | number | null | undefined }) {
     const serverStatus = useServerStatus()
     const router = useRouter()
+    const [mergedSeason, setMergedSeason] = useAtom(__entry_mergedSeasonAtom)
 
     const groupSeasons = !!serverStatus?.settings?.library?.groupSeasons
 
@@ -58,24 +41,53 @@ export function SeasonSwitcher({ mediaId }: { mediaId: string | number | null | 
         if (id && id !== currentId) router.push(`/entry?id=${id}`)
     }
 
-    const labels = seasonLabels(seasons)
+    // Collapse cours: one chip per distinct season number, in order.
+    const order: number[] = []
+    const coursByNum = new Map<number, Anime_GroupedEntry[]>()
+    for (const s of seasons) {
+        if (!coursByNum.has(s.seasonNumber)) {
+            coursByNum.set(s.seasonNumber, [])
+            order.push(s.seasonNumber)
+        }
+        coursByNum.get(s.seasonNumber)!.push(s)
+    }
+    const currentSeasonNum = seasons.find(s => s.mediaId === currentId)?.seasonNumber
+
+    const selectSeason = (num: number) => {
+        const cours = coursByNum.get(num) ?? []
+        if (cours.length > 1) {
+            setMergedSeason(num) // show merged continuous episode list in place
+        } else if (cours[0]) {
+            setMergedSeason(null)
+            go(cours[0].mediaId)
+        }
+    }
 
     return (
         <div className="px-4 md:px-8 mb-4 flex flex-wrap items-center gap-2" data-season-switcher data-mode="seasons">
-            {seasons.map((e, i) => (
-                <button
-                    key={e.mediaId}
-                    data-current={e.mediaId === currentId}
-                    onClick={() => go(e.mediaId)}
-                    title={entryTitle(e)}
-                    className={cn(
-                        "px-3 py-1.5 rounded-lg border border-gray-800 text-sm hover:bg-gray-800 transition",
-                        e.mediaId === currentId && "bg-gray-800 border-transparent font-semibold",
-                    )}
-                >
-                    {labels[i]}
-                </button>
-            ))}
+            {order.map((num, idx) => {
+                const cours = coursByNum.get(num)!
+                const isMerged = cours.length > 1
+                const label = num > 0 ? `Season ${num}` : `Season ${idx + 1}`
+                const isCurrent = mergedSeason != null
+                    ? mergedSeason === num
+                    : (isMerged ? currentSeasonNum === num : cours[0].mediaId === currentId)
+                return (
+                    <button
+                        key={num}
+                        data-current={isCurrent}
+                        onClick={() => selectSeason(num)}
+                        title={cours.map(entryTitle).join(" + ")}
+                        className={cn(
+                            "px-3 py-1.5 rounded-lg border border-gray-800 text-sm hover:bg-gray-800 transition",
+                            isCurrent && "bg-gray-800 border-transparent font-semibold",
+                        )}
+                    >
+                        {label}
+                        {isMerged && <span className="ml-1.5 opacity-50 text-xs">{cours.length} cours</span>}
+                    </button>
+                )
+            })}
 
             {watchOrder.length > 1 && (
                 <DropdownMenu
