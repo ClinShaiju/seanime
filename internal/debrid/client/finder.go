@@ -21,6 +21,9 @@ type (
 		torrent  *hibiketorrent.AnimeTorrent
 		fileId   string
 		filepath string
+		// streamUrl is set for pre-resolved direct streams (StreamUrl on the result). When
+		// non-empty, startStream skips AddTorrent/GetTorrentStreamUrl and plays it directly.
+		streamUrl string
 	}
 )
 
@@ -55,16 +58,16 @@ func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.Co
 		}
 
 		cacheKey := func(t *hibiketorrent.AnimeTorrent) string {
-			if t.InfoHash != "" {
-				return t.InfoHash
-			}
-			return t.Name
+			return t.Identity()
 		}
 
 		cached := make(map[string]bool, len(torrents))
 		unknownHashes := make([]string, 0)
 		for _, t := range torrents {
-			if isCached, known := parseDebridCacheFlag(t.Name, providerID); known {
+			if t.StreamUrl != "" {
+				// Pre-resolved direct stream — implicitly cached, no infohash to look up.
+				cached[cacheKey(t)] = true
+			} else if isCached, known := parseDebridCacheFlag(t.Name, providerID); known {
 				cached[cacheKey(t)] = isCached
 			} else if t.InfoHash != "" {
 				unknownHashes = append(unknownHashes, t.InfoHash)
@@ -106,6 +109,16 @@ func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.Co
 			return nil, fmt.Errorf("no torrents found, please select manually")
 		}
 		return nil, err
+	}
+
+	// Pre-resolved direct stream: no debrid torrent / file analysis, just play the URL.
+	if result.OriginalTorrent != nil && result.OriginalTorrent.StreamUrl != "" {
+		r.logger.Info().Msgf("debridstream: Auto-selected direct stream: %s", result.OriginalTorrent.Name)
+		return &playbackTorrent{
+			torrent:   result.OriginalTorrent,
+			streamUrl: result.OriginalTorrent.StreamUrl,
+			filepath:  result.OriginalTorrent.Name, // filename hint only; episode is resolved from metadata
+		}, nil
 	}
 
 	if result.DebridTorrent == nil {
@@ -151,7 +164,9 @@ func (r *Repository) RankTorrentsForDisplay(
 	statuses := make([]*autoselect.TorrentWithCacheStatus, 0, len(torrents))
 	for _, t := range torrents {
 		cached := false
-		if isCached, known := parseDebridCacheFlag(t.Name, providerID); known {
+		if t.StreamUrl != "" {
+			cached = true // pre-resolved direct stream is implicitly cached
+		} else if isCached, known := parseDebridCacheFlag(t.Name, providerID); known {
 			cached = isCached
 		} else if t.InfoHash != "" {
 			_, cached = instantAvail[t.InfoHash]

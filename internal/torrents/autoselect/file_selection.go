@@ -223,6 +223,15 @@ func (s *AutoSelect) selectFileFromDebrid(
 	shared *torrentanalyzer.SharedContext,
 ) (*Result, error) {
 
+	// Pre-resolved direct stream: aggregators (AIOStreams) hand back a ready URL with no
+	// infohash/magnet. Skip the magnet → GetTorrentInfo → file-analysis pipeline entirely;
+	// the result is already episode-specific, so there's no file to disambiguate.
+	if t.StreamUrl != "" {
+		s.logger.Debug().Msgf("autoselect: Direct stream URL for %s, skipping debrid analysis", t.Name)
+		s.log(fmt.Sprintf("Selected direct stream: %s", t.Name))
+		return &Result{OriginalTorrent: t}, nil
+	}
+
 	s.logger.Trace().Msgf("autoselect: Getting torrent magnet")
 	// ResolveMagnetLink returns an already-embedded magnet (t.MagnetLink/t.Link) before
 	// scraping — needed for aggregator providers (AIOStreams/SeaDex) that supply the magnet

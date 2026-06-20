@@ -57,6 +57,9 @@ declare interface AnimeTorrent {
     downloadUrl: string
     magnetLink?: string
     infoHash?: string
+    // Pre-resolved, ready-to-play direct stream URL (debrid-cached / http / usenet / external / live).
+    // When set, Seanime streams it directly and skips the magnet/infohash torrent pipeline.
+    streamUrl?: string
     resolution?: string
     isBatch?: boolean
     episodeNumber?: number

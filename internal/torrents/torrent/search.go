@@ -301,7 +301,11 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 	other := make([]*hibiketorrent.AnimeTorrent, 0)
 	for _, t := range torrents {
 		if t.InfoHash == "" { // make sure it's never empty
-			t.InfoHash = t.Name
+			// Prefer the pre-resolved StreamUrl over Name so distinct URL-only debrid results
+			// (often same release name, different source) don't collapse in UniqBy below.
+			// ponytail: reuse InfoHash as the identity/React key; URL-only results never hit a
+			// debrid API (stream.go bypasses AddTorrent/GetTorrentStreamUrl when StreamUrl is set).
+			t.InfoHash = t.Identity()
 		}
 		if t.IsBestRelease {
 			bestReleases = append(bestReleases, t)

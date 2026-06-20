@@ -150,6 +150,11 @@ type (
 		// InfoHash of the torrent.
 		// Leave empty if it should be scraped later.
 		InfoHash string `json:"infoHash,omitempty"`
+		// StreamUrl is a pre-resolved, ready-to-play direct stream URL (e.g. a debrid-cached
+		// file, http/usenet/external/live source). When set, Seanime streams it directly and
+		// skips the magnet → GetTorrentInfo → AddTorrent → GetTorrentStreamUrl pipeline.
+		// Leave empty for ordinary torrents that must be resolved via infohash/magnet.
+		StreamUrl string `json:"streamUrl,omitempty"`
 		// Resolution of the video.
 		// e.g. "1080p", "720p"
 		Resolution string `json:"resolution,omitempty"`
@@ -182,3 +187,16 @@ type (
 		Files                []*AnimeTorrentFile `json:"files"`
 	}
 )
+
+// Identity returns a stable dedup/identity key for a result: the InfoHash when present,
+// else the pre-resolved StreamUrl (URL-only debrid/http results have no infohash), else the
+// Name. Without this, every infohash-less result collapses to the same empty key on dedup.
+func (t *AnimeTorrent) Identity() string {
+	if t.InfoHash != "" {
+		return t.InfoHash
+	}
+	if t.StreamUrl != "" {
+		return t.StreamUrl
+	}
+	return t.Name
+}

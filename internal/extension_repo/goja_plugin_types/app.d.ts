@@ -3710,6 +3710,7 @@ declare namespace $app {
         downloadUrl: string;
         magnetLink?: string;
         infoHash?: string;
+        streamUrl?: string;
         resolution?: string;
         isBatch?: boolean;
         episodeNumber?: number;
@@ -3871,6 +3872,7 @@ declare namespace $app {
         downloadUrl: string;
         magnetLink?: string;
         infoHash?: string;
+        streamUrl?: string;
         resolution?: string;
         isBatch?: boolean;
         episodeNumber?: number;

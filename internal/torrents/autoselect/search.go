@@ -130,9 +130,12 @@ func (s *AutoSelect) searchFromProviders(
 		}
 
 		for _, t := range result.torrents {
-			if _, exists := infohashes[t.InfoHash]; !exists {
+			// Use Identity() not InfoHash: URL-only debrid results have no infohash and would
+			// all collapse to the empty key, dropping every direct-stream result but the first.
+			id := t.Identity()
+			if _, exists := infohashes[id]; !exists {
 				allTorrents = append(allTorrents, t)
-				infohashes[t.InfoHash] = struct{}{}
+				infohashes[id] = struct{}{}
 			}
 		}
 	}

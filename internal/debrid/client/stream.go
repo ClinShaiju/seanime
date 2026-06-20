@@ -174,6 +174,9 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 	selectedTorrent := opts.Torrent
 	fileId := opts.FileId
 	filepath := ""
+	// directStreamUrl is non-empty for pre-resolved direct streams (StreamUrl on the result).
+	// When set, we skip AddTorrent/GetTorrentStreamUrl below and play the URL directly.
+	directStreamUrl := ""
 
 	if opts.AutoSelect {
 
@@ -199,6 +202,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		selectedTorrent = pt.torrent
 		fileId = pt.fileId
 		filepath = pt.filepath
+		directStreamUrl = pt.streamUrl
 	} else {
 		// Manual selection
 		if selectedTorrent == nil {
@@ -212,8 +216,12 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			Message:     "Analyzing selected torrent...",
 		})
 
-		// If no fileId is provided, we need to analyze the torrent to find the correct file
-		if fileId == "" {
+		if selectedTorrent.StreamUrl != "" {
+			// Pre-resolved direct stream — nothing to analyze.
+			directStreamUrl = selectedTorrent.StreamUrl
+			filepath = selectedTorrent.Name
+		} else if fileId == "" {
+			// If no fileId is provided, we need to analyze the torrent to find the correct file
 			var chosenFileIndex *int
 			if opts.FileIndex != nil {
 				chosenFileIndex = opts.FileIndex
@@ -249,31 +257,36 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		return nil
 	}
 
-	s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
-		Status:      StreamStatusDownloading,
-		TorrentName: selectedTorrent.Name,
-		Message:     "Adding torrent...",
-	})
-
-	// Add the torrent to the debrid service
-	torrentItemId, err := provider.AddTorrent(debrid.AddTorrentOptions{
-		MagnetLink:   selectedTorrent.MagnetLink,
-		InfoHash:     selectedTorrent.InfoHash,
-		SelectFileId: fileId, // RD-only, download only the selected file
-	})
-	if err != nil {
+	// Pre-resolved direct streams have no torrent to add — torrentItemId stays empty and the
+	// goroutine below uses directStreamUrl instead of polling GetTorrentStreamUrl.
+	torrentItemId := ""
+	if directStreamUrl == "" {
 		s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
-			Status:      StreamStatusFailed,
+			Status:      StreamStatusDownloading,
 			TorrentName: selectedTorrent.Name,
-			Message:     fmt.Sprintf("Failed to add torrent, %v", err),
+			Message:     "Adding torrent...",
 		})
-		s.repository.wsEventManager.SendEvent(events.HideIndefiniteLoader, "debridstream")
-		return fmt.Errorf("debridstream: Failed to add torrent: %w", err)
-	}
 
-	// ponytail: brief settle after AddTorrent so the item is queryable; GetTorrentStreamUrl
-	// polls anyway (the preload path skips this entirely). Was 1s; 250ms shaves selection time.
-	time.Sleep(250 * time.Millisecond)
+		// Add the torrent to the debrid service
+		torrentItemId, err = provider.AddTorrent(debrid.AddTorrentOptions{
+			MagnetLink:   selectedTorrent.MagnetLink,
+			InfoHash:     selectedTorrent.InfoHash,
+			SelectFileId: fileId, // RD-only, download only the selected file
+		})
+		if err != nil {
+			s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
+				Status:      StreamStatusFailed,
+				TorrentName: selectedTorrent.Name,
+				Message:     fmt.Sprintf("Failed to add torrent, %v", err),
+			})
+			s.repository.wsEventManager.SendEvent(events.HideIndefiniteLoader, "debridstream")
+			return fmt.Errorf("debridstream: Failed to add torrent: %w", err)
+		}
+
+		// ponytail: brief settle after AddTorrent so the item is queryable; GetTorrentStreamUrl
+		// polls anyway (the preload path skips this entirely). Was 1s; 250ms shaves selection time.
+		time.Sleep(250 * time.Millisecond)
+	}
 
 	// Save the current torrent item id
 	s.currentTorrentItemId = torrentItemId
@@ -305,62 +318,70 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 		s.repository.logger.Debug().Msg("debridstream: Listening to torrent status")
 
-		s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
-			Status:      StreamStatusDownloading,
-			TorrentName: selectedTorrent.Name,
-			Message:     fmt.Sprintf("Downloading torrent..."),
-		})
+		var streamUrl string
+		if directStreamUrl != "" {
+			// Pre-resolved direct stream — no download to await.
+			streamUrl = directStreamUrl
+		} else {
+			s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
+				Status:      StreamStatusDownloading,
+				TorrentName: selectedTorrent.Name,
+				Message:     fmt.Sprintf("Downloading torrent..."),
+			})
 
-		itemCh := make(chan debrid.TorrentItem, 1)
+			itemCh := make(chan debrid.TorrentItem, 1)
 
-		go func() {
-			for item := range itemCh {
-				if opts.PlaybackType == PlaybackTypeNativePlayer {
-					if !s.repository.directStreamManager.UpdateOpenStep(opts.ClientId, fmt.Sprintf("Awaiting stream: %d%%", item.CompletionPercentage)) {
-						return
+			go func() {
+				for item := range itemCh {
+					if opts.PlaybackType == PlaybackTypeNativePlayer {
+						if !s.repository.directStreamManager.UpdateOpenStep(opts.ClientId, fmt.Sprintf("Awaiting stream: %d%%", item.CompletionPercentage)) {
+							return
+						}
 					}
+
+					s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
+						Status:      StreamStatusDownloading,
+						TorrentName: item.Name,
+						Message:     fmt.Sprintf("Downloading torrent: %d%%", item.CompletionPercentage),
+					})
 				}
+			}()
 
-				s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
-					Status:      StreamStatusDownloading,
-					TorrentName: item.Name,
-					Message:     fmt.Sprintf("Downloading torrent: %d%%", item.CompletionPercentage),
-				})
+			// Await the stream URL
+			// For Torbox, this will wait until the entire torrent is downloaded
+			url, err := provider.GetTorrentStreamUrl(ctx, debrid.StreamTorrentOptions{
+				ID:     torrentItemId,
+				FileId: fileId,
+			}, itemCh)
+
+			go func() {
+				close(itemCh)
+			}()
+
+			if ctx.Err() != nil {
+				s.repository.logger.Debug().Msg("debridstream: Context cancelled, stopping stream")
+				ready()
+				return
 			}
-		}()
-
-		// Await the stream URL
-		// For Torbox, this will wait until the entire torrent is downloaded
-		streamUrl, err := provider.GetTorrentStreamUrl(ctx, debrid.StreamTorrentOptions{
-			ID:     torrentItemId,
-			FileId: fileId,
-		}, itemCh)
-
-		go func() {
-			close(itemCh)
-		}()
-
-		if ctx.Err() != nil {
-			s.repository.logger.Debug().Msg("debridstream: Context cancelled, stopping stream")
-			ready()
-			return
-		}
-		if opts.PlaybackType == PlaybackTypeNativePlayer && !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
-			ready()
-			return
-		}
-
-		if err != nil {
-			s.repository.logger.Err(err).Msg("debridstream: Failed to get stream URL")
-			if !errors.Is(err, context.Canceled) {
-				s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
-					Status:      StreamStatusFailed,
-					TorrentName: selectedTorrent.Name,
-					Message:     fmt.Sprintf("Failed to get stream URL, %v", err),
-				})
+			if opts.PlaybackType == PlaybackTypeNativePlayer && !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+				ready()
+				return
 			}
-			ready()
-			return
+
+			if err != nil {
+				s.repository.logger.Err(err).Msg("debridstream: Failed to get stream URL")
+				if !errors.Is(err, context.Canceled) {
+					s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
+						Status:      StreamStatusFailed,
+						TorrentName: selectedTorrent.Name,
+						Message:     fmt.Sprintf("Failed to get stream URL, %v", err),
+					})
+				}
+				ready()
+				return
+			}
+
+			streamUrl = url
 		}
 
 		skipCheckEvent := &DebridSkipStreamCheckEvent{
@@ -701,6 +722,7 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 		selectedTorrent := opts.Torrent
 		fileId := opts.FileId
 		filepath := ""
+		directStreamUrl := ""
 
 		if opts.AutoSelect {
 			pt, err := s.repository.findBestTorrent(provider, media, opts.EpisodeNumber)
@@ -708,12 +730,15 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 				s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to select torrent")
 				return
 			}
-			selectedTorrent, fileId, filepath = pt.torrent, pt.fileId, pt.filepath
+			selectedTorrent, fileId, filepath, directStreamUrl = pt.torrent, pt.fileId, pt.filepath, pt.streamUrl
 		} else {
 			if selectedTorrent == nil {
 				return
 			}
-			if fileId == "" {
+			if selectedTorrent.StreamUrl != "" {
+				directStreamUrl = selectedTorrent.StreamUrl
+				filepath = selectedTorrent.Name
+			} else if fileId == "" {
 				pt, err := s.repository.findBestTorrentFromManualSelection(provider, selectedTorrent, media, opts.EpisodeNumber, opts.FileIndex)
 				if err != nil {
 					s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to analyze torrent")
@@ -727,34 +752,40 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 			return
 		}
 
-		torrentItemId, err := provider.AddTorrent(debrid.AddTorrentOptions{
-			MagnetLink:   selectedTorrent.MagnetLink,
-			InfoHash:     selectedTorrent.InfoHash,
-			SelectFileId: fileId,
-		})
-		if err != nil {
-			s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to add torrent")
-			return
-		}
-
-		// Drain progress updates silently while the debrid service caches the torrent.
-		itemCh := make(chan debrid.TorrentItem, 1)
-		go func() {
-			for range itemCh { //nolint:revive
+		// Pre-resolved direct stream — nothing to add or poll, cache the URL as-is.
+		torrentItemId := ""
+		streamUrl := directStreamUrl
+		if directStreamUrl == "" {
+			var err error
+			torrentItemId, err = provider.AddTorrent(debrid.AddTorrentOptions{
+				MagnetLink:   selectedTorrent.MagnetLink,
+				InfoHash:     selectedTorrent.InfoHash,
+				SelectFileId: fileId,
+			})
+			if err != nil {
+				s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to add torrent")
+				return
 			}
-		}()
-		streamUrl, err := provider.GetTorrentStreamUrl(preloadCtx, debrid.StreamTorrentOptions{
-			ID:     torrentItemId,
-			FileId: fileId,
-		}, itemCh)
-		close(itemCh)
 
-		if preloadCtx.Err() != nil {
-			return
-		}
-		if err != nil || streamUrl == "" {
-			s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to resolve stream URL")
-			return
+			// Drain progress updates silently while the debrid service caches the torrent.
+			itemCh := make(chan debrid.TorrentItem, 1)
+			go func() {
+				for range itemCh { //nolint:revive
+				}
+			}()
+			streamUrl, err = provider.GetTorrentStreamUrl(preloadCtx, debrid.StreamTorrentOptions{
+				ID:     torrentItemId,
+				FileId: fileId,
+			}, itemCh)
+			close(itemCh)
+
+			if preloadCtx.Err() != nil {
+				return
+			}
+			if err != nil || streamUrl == "" {
+				s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to resolve stream URL")
+				return
+			}
 		}
 
 		s.preloadMu.Lock()
