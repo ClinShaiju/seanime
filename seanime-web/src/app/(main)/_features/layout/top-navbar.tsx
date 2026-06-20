@@ -38,8 +38,10 @@ export function TopNavbar(props: TopNavbarProps) {
                 data-top-navbar
                 className={cn(
                     "w-full h-[5rem] relative overflow-hidden flex items-center",
-                    (ts.hideTopNavbar || __isDesktop__) && "lg:hidden",
-                    // __isDesktop__ && "absolute top-0 left-0 z-[-1]"
+                    ts.hideTopNavbar && "lg:hidden",
+                    // On desktop the content column carries 2rem of title-bar padding (AppLayout pt-4 ×2);
+                    // pull the navbar back up so the tabs sit at the top, aligned with the sidebar logo.
+                    __isDesktop__ && "-mt-8",
                 )}
             >
                 {/*{__isDesktop__ && (*/}
@@ -94,7 +96,7 @@ export function SidebarNavbar(props: SidebarNavbarProps) {
     const openDownloadQueue = useSetAtom(__manga_chapterDownloadsDrawerIsOpenAtom)
     const isMangaPage = pathname.startsWith("/manga")
 
-    if (!ts.hideTopNavbar && !__isDesktop__) return null
+    if (!ts.hideTopNavbar) return null
 
     return (
         <div data-sidebar-navbar className="flex flex-col gap-1">

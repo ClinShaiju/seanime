@@ -6,24 +6,21 @@ import { useSyncIsActive } from "@/app/(main)/_atoms/sync.atoms"
 import { ElectronUpdateModal } from "@/app/(main)/_electron/electron-update-modal"
 import { SidebarNavbar } from "@/app/(main)/_features/layout/top-navbar"
 import { usePluginSidebarItems } from "@/app/(main)/_features/plugin/webview/plugin-sidebar"
-import { useSeaCommand } from "@/app/(main)/_features/sea-command/sea-command"
 import { UpdateModal } from "@/app/(main)/_features/update/update-modal"
 import { useAutoDownloaderQueueCount } from "@/app/(main)/_hooks/autodownloader-queue-count"
 import { useWebsocketMessageListener } from "@/app/(main)/_hooks/handle-websockets"
-import { useMissingEpisodeCount } from "@/app/(main)/_hooks/missing-episodes-loader"
 import { useCurrentUser, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
 import { SeaLink } from "@/components/shared/sea-link"
 import { AppSidebar, useAppSidebarContext } from "@/components/ui/app-layout"
 import { Avatar } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { Button, IconButton } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/components/ui/core/styling"
 import { DropdownMenu, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { defineSchema, Field, Form } from "@/components/ui/form"
-import { HoverCard } from "@/components/ui/hover-card"
 import { Modal } from "@/components/ui/modal"
-import { VerticalMenu, VerticalMenuItem } from "@/components/ui/vertical-menu"
+import { VerticalMenu } from "@/components/ui/vertical-menu"
 import { openTab } from "@/lib/helpers/browser"
 import { usePathname, useRouter } from "@/lib/navigation"
 import { ANILIST_OAUTH_URL, ANILIST_PIN_URL } from "@/lib/server/config"
@@ -33,14 +30,11 @@ import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { __isDesktop__, __isElectronDesktop__ } from "@/types/constants"
 import { useAtom } from "jotai"
 import React from "react"
-import { BiChevronRight, BiExtension, BiLogIn, BiLogOut } from "react-icons/bi"
-import { FiLogIn, FiSearch } from "react-icons/fi"
-import { HiOutlineServerStack } from "react-icons/hi2"
+import { BiExtension, BiLogIn, BiLogOut } from "react-icons/bi"
+import { FiLogIn } from "react-icons/fi"
 import { IoCloudOfflineOutline, IoHomeOutline } from "react-icons/io5"
-import { LuBookOpen, LuCalendar, LuCompass, LuRefreshCw, LuRss, LuSettings } from "react-icons/lu"
+import { LuRefreshCw, LuRss, LuSettings } from "react-icons/lu"
 import { MdOutlineConnectWithoutContact } from "react-icons/md"
-import { PiArrowCircleLeftDuotone, PiArrowCircleRightDuotone } from "react-icons/pi"
-import { RiListCheck3 } from "react-icons/ri"
 import { SiBittorrent, SiQbittorrent, SiTransmission } from "react-icons/si"
 import { TbReportSearch } from "react-icons/tb"
 import { nakamaModalOpenAtom, useNakamaStatus } from "../nakama/nakama-manager"
@@ -144,7 +138,6 @@ export function MainSidebar() {
 
                 <SidebarNavigation
                     isCollapsed={isCollapsed}
-                    containerRef={containerRef}
                 />
 
                 <div className="flex w-full gap-2 flex-col px-4 shrink-0 pb-2">
@@ -159,284 +152,36 @@ export function MainSidebar() {
 }
 
 
-function SidebarNavigation({ isCollapsed, containerRef }: { isCollapsed: boolean, containerRef: React.RefObject<HTMLDivElement | null> }) {
+function SidebarNavigation({ isCollapsed }: { isCollapsed: boolean }) {
     const ctx = useAppSidebarContext()
-    const ts = useThemeSettings()
-    const router = useRouter()
     const pathname = usePathname()
-    const serverStatus = useServerStatus()
-
-    // Commands
-    const { setSeaCommandOpen } = useSeaCommand()
-
-    // Data
-    const missingEpisodeCount = useMissingEpisodeCount()
-    const autoDownloaderQueueCount = useAutoDownloaderQueueCount()
-
-    // Torrents
-    const [activeTorrentCount, setActiveTorrentCount] = React.useState({ downloading: 0, paused: 0, seeding: 0 })
-    useWebsocketMessageListener<{ downloading: number, paused: number, seeding: number }>({
-        type: WSEvents.ACTIVE_TORRENT_COUNT_UPDATED,
-        onMessage: data => {
-            setActiveTorrentCount(data)
-        },
-    })
-
-    // Refresh AniList
-    const { mutate: refreshAC, isPending: isRefreshingAC } = useRefreshAnimeCollection()
-
-    // Items
-    const items = React.useMemo(() => [
-        {
-            id: "home",
-            iconType: IoHomeOutline,
-            name: "Home",
-            href: "/",
-            isCurrent: pathname === "/",
-        },
-        // ...(import.meta.env.MODE === "development" ? [{
-        //     id: "test",
-        //     iconType: GrTest,
-        //     name: "Test",
-        //     href: "/test",
-        //     isCurrent: pathname === "/test",
-        // }] : []),
-        {
-            id: "schedule",
-            iconType: LuCalendar,
-            name: "Schedule",
-            href: "/schedule",
-            isCurrent: pathname === "/schedule",
-            addon: missingEpisodeCount > 0 ? <Badge
-                className="absolute right-0 top-0" size="sm"
-                intent="alert-solid"
-            >{missingEpisodeCount}</Badge> : undefined,
-        },
-        ...serverStatus?.settings?.library?.enableManga ? [{
-            id: "manga",
-            iconType: LuBookOpen,
-            name: "Manga",
-            href: "/manga",
-            isCurrent: pathname.startsWith("/manga"),
-        }] : [],
-        {
-            id: "lists",
-            iconType: RiListCheck3,
-            name: "My lists",
-            href: "/lists",
-            isCurrent: pathname === "/lists",
-        },
-        {
-            id: "discover",
-            iconType: LuCompass,
-            name: "Discover",
-            href: "/discover",
-            isCurrent: pathname === "/discover",
-        },
-        {
-            id: "search",
-            iconType: FiSearch,
-            name: "Search",
-            href: "/search",
-            isCurrent: pathname === "/search",
-            // onClick: () => {
-            //     ctx.setOpen(false)
-            //     setGlobalSearchIsOpen(true)
-            // },
-        },
-        ...(
-            serverStatus?.settings?.library?.torrentProvider !== TORRENT_PROVIDER.NONE
-            && serverStatus?.settings?.torrent?.defaultTorrentClient !== TORRENT_CLIENT.NONE)
-            ? [{
-                id: "torrent-list",
-                iconType: serverStatus?.settings?.torrent?.defaultTorrentClient === TORRENT_CLIENT.QBITTORRENT
-                    ? SiQbittorrent
-                    : serverStatus?.settings?.torrent?.defaultTorrentClient === TORRENT_CLIENT.SEANIME ? SiBittorrent : SiTransmission,
-                name: (activeTorrentCount.seeding === 0 || !serverStatus?.settings?.torrent?.showActiveTorrentCount)
-                    ? "Torrent list"
-                    : `Torrent list (${activeTorrentCount.seeding} seeding)`,
-                href: serverStatus?.settings?.torrent?.defaultTorrentClient === TORRENT_CLIENT.SEANIME ? "/torrent-client" : "/torrent-list",
-                isCurrent: pathname === "/torrent-list" || pathname === "/torrent-client",
-                addon: ((activeTorrentCount.downloading + activeTorrentCount.paused) > 0 && serverStatus?.settings?.torrent?.showActiveTorrentCount)
-                    ? <Badge
-                        className="absolute right-0 top-0 bg-green-500" size="sm"
-                        intent="alert-solid"
-                    >{activeTorrentCount.downloading + activeTorrentCount.paused}</Badge>
-                    : undefined,
-            }] : [],
-        ...(serverStatus?.debridSettings?.enabled && !!serverStatus?.debridSettings?.provider) ? [{
-            id: "debrid",
-            iconType: HiOutlineServerStack,
-            name: "Debrid",
-            href: "/debrid",
-            isCurrent: pathname === "/debrid",
-        }] : [],
-        ...(!!serverStatus?.settings?.library?.libraryPath) ? [{
-            id: "scan-summaries",
-            iconType: TbReportSearch,
-            name: "Scan summaries",
-            href: "/scan-summaries",
-            isCurrent: pathname === "/scan-summaries",
-        }] : [],
-        ...(serverStatus?.settings?.library?.torrentProvider !== TORRENT_PROVIDER.NONE && !!serverStatus?.settings?.library?.libraryPath) ? [{
-            id: "auto-downloader",
-            iconType: LuRss,
-            name: "Auto Downloader",
-            href: "/auto-downloader",
-            isCurrent: pathname === "/auto-downloader",
-            addon: autoDownloaderQueueCount > 0 ? <Badge
-                className="absolute right-0 top-0" size="sm"
-                intent="alert-solid"
-            >{autoDownloaderQueueCount}</Badge> : undefined,
-        }] : [],
-    ], [
-        pathname,
-        missingEpisodeCount,
-        serverStatus?.settings?.library?.enableManga,
-        serverStatus?.settings?.library?.torrentProvider,
-        serverStatus?.settings?.torrent?.defaultTorrentClient,
-        serverStatus?.settings?.torrent?.showActiveTorrentCount,
-        serverStatus?.debridSettings?.enabled,
-        serverStatus?.debridSettings?.provider,
-        serverStatus?.settings?.library?.libraryPath,
-        activeTorrentCount.seeding,
-        activeTorrentCount.downloading,
-        activeTorrentCount.paused,
-        autoDownloaderQueueCount,
-    ])
-
-    // Plugins
-    const pluginWebviewItems = usePluginSidebarItems()
-
-    // Overflow logic
-    const [autoUnpinnedIds, setAutoUnpinnedIds] = React.useState<string[]>([])
-    const overflowCheckTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-
-    React.useEffect(() => {
-        const handleResize = () => setAutoUnpinnedIds([])
-        window.addEventListener("resize", handleResize)
-        return () => window.removeEventListener("resize", handleResize)
-    }, [])
-
-    const allPinnedItems = React.useMemo(() => {
-        return items.filter(item => !ts.unpinnedMenuItems?.includes(item.id))
-    }, [items, ts.unpinnedMenuItems])
-
-    const displayedPinnedItems = React.useMemo(() => {
-        return allPinnedItems.filter(item => !autoUnpinnedIds.includes(item.id))
-    }, [allPinnedItems, autoUnpinnedIds])
-
-    const displayedPluginItems = React.useMemo(() => {
-        return pluginWebviewItems.filter((item: any) => !autoUnpinnedIds.includes(item.id))
-    }, [pluginWebviewItems, autoUnpinnedIds])
-
-    const checkOverflow = React.useCallback(() => {
-        if (!containerRef.current) return
-
-        const { scrollHeight, clientHeight } = containerRef.current
-        if (scrollHeight > clientHeight + 2) {
-            if (displayedPluginItems.length > 0) {
-                const lastPlugin = displayedPluginItems[displayedPluginItems.length - 1] as any
-                if (lastPlugin?.id) {
-                    setAutoUnpinnedIds(prev => {
-                        if (prev.includes(lastPlugin.id)) return prev
-                        return [...prev, lastPlugin.id]
-                    })
-                    return
-                }
-            }
-
-            if (displayedPinnedItems.length > 1) {
-                const lastItem = displayedPinnedItems[displayedPinnedItems.length - 1]
-                setAutoUnpinnedIds(prev => {
-                    if (prev.includes(lastItem.id)) return prev
-                    return [...prev, lastItem.id]
-                })
-            }
-        }
-    }, [displayedPinnedItems, displayedPluginItems])
-
-    React.useEffect(() => {
-        if (!containerRef.current) return
-
-        const observer = new ResizeObserver(() => {
-            if (overflowCheckTimeoutRef.current) {
-                clearTimeout(overflowCheckTimeoutRef.current)
-            }
-            overflowCheckTimeoutRef.current = setTimeout(() => {
-                checkOverflow()
-            }, 16)
-        })
-
-        observer.observe(containerRef.current)
-        checkOverflow()
-
-        return () => {
-            observer.disconnect()
-            if (overflowCheckTimeoutRef.current) {
-                clearTimeout(overflowCheckTimeoutRef.current)
-            }
-        }
-    }, [checkOverflow])
-
-    const unpinnedMenuItems = React.useMemo(() => {
-        const manuallyUnpinned = items.filter(item => ts.unpinnedMenuItems?.includes(item.id))
-        const forcedUnpinned = items.filter(item => autoUnpinnedIds.includes(item.id))
-        const forcedUnpinnedPlugins = pluginWebviewItems.filter(item => autoUnpinnedIds.includes(item.id))
-
-        const allHidden = [...manuallyUnpinned, ...forcedUnpinnedPlugins, ...forcedUnpinned]
-
-        if (allHidden.length === 0) return []
-
-        return [
-            {
-                iconType: BiChevronRight,
-                name: "More",
-                subContent: <VerticalMenu
-                    items={allHidden}
-                    isSidebar
-                />,
-            } as VerticalMenuItem,
-        ]
-    }, [items, ts.unpinnedMenuItems, autoUnpinnedIds, pluginWebviewItems])
 
     return (
         <div>
-            <div
-                className={cn(
-                    "mb-4 p-4 pb-0 flex justify-center w-full",
-                    __isDesktop__ && "mt-2",
-                )}
-            >
+            {/* Center the logo in the same h-[5rem] band as the top navbar so they line up. */}
+            <div className="flex h-[5rem] shrink-0 items-center justify-center px-4">
                 <img
                     src="/seanime-logo.png"
                     alt="logo"
                     className="w-15 h-10 transition-all duration-300"
                 />
             </div>
+
+            {/* Persistent Home link — the top navbar isn't shown on every page */}
             <VerticalMenu
                 className="px-4"
                 collapsed={isCollapsed}
                 itemClass="relative"
-                itemChevronClass="hidden"
-                itemIconClass="transition-transform group-data-[state=open]/verticalMenu_parentItem:rotate-90"
-                items={[
-                    ...displayedPinnedItems,
-                    ...displayedPluginItems,
-                    ...unpinnedMenuItems,
-                    {
-                        iconType: LuRefreshCw,
-                        name: "Refresh AniList",
-                        onClick: () => {
-                            ctx.setOpen(false)
-                            if (isRefreshingAC) return
-                            refreshAC()
-                        },
-                    },
-                ]}
-                subContentClass={cn((ts.hideTopNavbar || __isDesktop__) && "border-transparent !border-b-0")}
                 onLinkItemClick={() => ctx.setOpen(false)}
                 isSidebar
+                items={[
+                    {
+                        iconType: IoHomeOutline,
+                        name: "Home",
+                        href: "/",
+                        isCurrent: pathname === "/",
+                    },
+                ]}
             />
 
             <SidebarNavbar
@@ -444,33 +189,6 @@ function SidebarNavigation({ isCollapsed, containerRef }: { isCollapsed: boolean
                 handleExpandSidebar={() => { }}
                 handleUnexpandedSidebar={() => { }}
             />
-            {__isDesktop__ && <div className="w-full flex justify-center px-4">
-                <HoverCard
-                    side="right"
-                    sideOffset={-8}
-                    className="bg-transparent border-none"
-                    trigger={<IconButton
-                        intent="gray-basic"
-                        className="!text-[--muted] hover:!text-[--foreground]"
-                        icon={<PiArrowCircleLeftDuotone />}
-                        onClick={() => {
-                            router.back()
-                        }}
-                    />}
-                >
-                    <IconButton
-                        icon={<PiArrowCircleRightDuotone />}
-                        intent="gray-subtle"
-                        className="opacity-50 hover:opacity-100"
-                        onClick={() => {
-                            router.forward()
-                        }}
-                    />
-                </HoverCard>
-            </div>}
-
-            <PluginSidebarTray place="sidebar" />
-
         </div>
     )
 }
@@ -500,6 +218,73 @@ function SidebarFooter({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogo
     const [nakamaModalOpen, setNakamaModalOpen] = useAtom(nakamaModalOpenAtom)
     const nakamaStatus = useNakamaStatus()
 
+    // Auto Downloader
+    const autoDownloaderQueueCount = useAutoDownloaderQueueCount()
+
+    // Torrents
+    const [activeTorrentCount, setActiveTorrentCount] = React.useState({ downloading: 0, paused: 0, seeding: 0 })
+    useWebsocketMessageListener<{ downloading: number, paused: number, seeding: number }>({
+        type: WSEvents.ACTIVE_TORRENT_COUNT_UPDATED,
+        onMessage: data => {
+            setActiveTorrentCount(data)
+        },
+    })
+
+    // Refresh AniList
+    const { mutate: refreshAC, isPending: isRefreshingAC } = useRefreshAnimeCollection()
+
+    // Plugins
+    const pluginWebviewItems = usePluginSidebarItems()
+
+    // Library/tool items that have no top-tab equivalent (moved here from the top section)
+    const toolItems = React.useMemo(() => [
+        ...(
+            serverStatus?.settings?.library?.torrentProvider !== TORRENT_PROVIDER.NONE
+            && serverStatus?.settings?.torrent?.defaultTorrentClient !== TORRENT_CLIENT.NONE)
+            ? [{
+                iconType: serverStatus?.settings?.torrent?.defaultTorrentClient === TORRENT_CLIENT.QBITTORRENT
+                    ? SiQbittorrent
+                    : serverStatus?.settings?.torrent?.defaultTorrentClient === TORRENT_CLIENT.SEANIME ? SiBittorrent : SiTransmission,
+                name: (activeTorrentCount.seeding === 0 || !serverStatus?.settings?.torrent?.showActiveTorrentCount)
+                    ? "Torrent list"
+                    : `Torrent list (${activeTorrentCount.seeding} seeding)`,
+                href: serverStatus?.settings?.torrent?.defaultTorrentClient === TORRENT_CLIENT.SEANIME ? "/torrent-client" : "/torrent-list",
+                isCurrent: pathname === "/torrent-list" || pathname === "/torrent-client",
+                addon: ((activeTorrentCount.downloading + activeTorrentCount.paused) > 0 && serverStatus?.settings?.torrent?.showActiveTorrentCount)
+                    ? <Badge
+                        className="absolute right-0 top-0 bg-green-500" size="sm"
+                        intent="alert-solid"
+                    >{activeTorrentCount.downloading + activeTorrentCount.paused}</Badge>
+                    : undefined,
+            }] : [],
+        ...(!!serverStatus?.settings?.library?.libraryPath) ? [{
+            iconType: TbReportSearch,
+            name: "Scan summaries",
+            href: "/scan-summaries",
+            isCurrent: pathname === "/scan-summaries",
+        }] : [],
+        ...(serverStatus?.settings?.library?.torrentProvider !== TORRENT_PROVIDER.NONE && !!serverStatus?.settings?.library?.libraryPath) ? [{
+            iconType: LuRss,
+            name: "Auto Downloader",
+            href: "/auto-downloader",
+            isCurrent: pathname === "/auto-downloader",
+            addon: autoDownloaderQueueCount > 0 ? <Badge
+                className="absolute right-0 top-0" size="sm"
+                intent="alert-solid"
+            >{autoDownloaderQueueCount}</Badge> : undefined,
+        }] : [],
+    ], [
+        pathname,
+        serverStatus?.settings?.library?.torrentProvider,
+        serverStatus?.settings?.torrent?.defaultTorrentClient,
+        serverStatus?.settings?.torrent?.showActiveTorrentCount,
+        serverStatus?.settings?.library?.libraryPath,
+        activeTorrentCount.seeding,
+        activeTorrentCount.downloading,
+        activeTorrentCount.paused,
+        autoDownloaderQueueCount,
+    ])
+
     // Sign out
     const confirmSignOut = useConfirmationDialog({
         title: "Sign out",
@@ -522,13 +307,26 @@ function SidebarFooter({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogo
                 onLinkItemClick={() => ctx.setOpen(false)}
                 isSidebar
                 items={[
-                    // {
-                    //     iconType: RiSlashCommands2,
-                    //     name: "Command palette",
-                    //     onClick: () => {
-                    //         setSeaCommandOpen(true)
-                    //     }
-                    // },
+                    ...toolItems,
+                    ...pluginWebviewItems,
+                    {
+                        iconType: LuRefreshCw,
+                        name: "Refresh AniList",
+                        onClick: () => {
+                            ctx.setOpen(false)
+                            if (isRefreshingAC) return
+                            refreshAC()
+                        },
+                    },
+                ]}
+            />
+            <PluginSidebarTray place="sidebar" />
+            <VerticalMenu
+                collapsed={isCollapsed}
+                itemClass="relative"
+                onLinkItemClick={() => ctx.setOpen(false)}
+                isSidebar
+                items={[
                     ...serverStatus?.settings?.nakama?.enabled ? [{
                         iconType: MdOutlineConnectWithoutContact,
                         iconClass: "size-6",

@@ -112,14 +112,19 @@ export function LibraryHeader({ list }: { list: Anime_Episode[] }) {
                     )}
                 >
 
+                    <div
+                        data-library-header-banner-inner-container-left-gradient
+                        className="hidden lg:block max-w-[80rem] w-full z-[2] h-full absolute left-0 top-0 opacity-70 bg-gradient-to-r from-[--background] from-20% via-[--background] transition-opacity via-opacity-50 via-5% to-transparent"
+                    />
+
                     {!ts.disableSidebarTransparency && <div
-                        data-library-header-banner-inner-container-top-gradient
-                        className="hidden lg:block h-full absolute z-[2] w-[20%] opacity-70 left-0 top-0 bg-gradient bg-gradient-to-r from-[var(--background)] to-transparent"
+                        data-library-header-banner-inner-container-left-gradient-transparency
+                        className="hidden lg:block max-w-[10rem] w-full z-[2] h-full absolute left-0 top-0 opacity-70 bg-gradient-to-r from-[--background] via-[--background] transition-opacity via-opacity-50 via-5% to-transparent"
                     />}
 
                     <div
                         data-library-header-banner-inner-container-bottom-gradient
-                        className="w-full z-[3] opacity-50 absolute top-0 h-[5rem] bg-gradient-to-b from-[--background] via-transparent via-100% to-transparent"
+                        className="w-full absolute z-[3] top-0 h-[10rem] opacity-50 bg-gradient-to-b from-[--background] to-transparent"
                     />
 
                     {/*<div*/}

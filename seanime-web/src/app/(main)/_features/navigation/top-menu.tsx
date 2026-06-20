@@ -52,8 +52,14 @@ export const TopMenu: React.FC<TopMenuProps> = (props) => {
             {
                 href: "/discover",
                 icon: null,
-                isCurrent: pathname.startsWith("/discover") || pathname.startsWith("/search"),
+                isCurrent: pathname.startsWith("/discover"),
                 name: "Discover",
+            },
+            {
+                href: "/search",
+                icon: null,
+                isCurrent: pathname.startsWith("/search"),
+                name: "Search",
             },
         ].filter(Boolean)
     }, [pathname, missingEpisodeCount, serverStatus?.settings?.library?.enableManga])
