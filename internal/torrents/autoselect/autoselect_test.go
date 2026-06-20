@@ -667,6 +667,21 @@ func TestAutoSelect_SizeUnitNotLanguage(t *testing.T) {
 	assert.Equal(t, "es", sorted[1].InfoHash, "the GB size must not make the Spanish release English")
 }
 
+func TestAutoSelect_SizeTiebreak(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{
+		PreferredLanguages:      []string{"en, eng, english", "jp, jpn, japanese"},
+		MultipleAudioPreference: anime.AutoSelectPreferencePrefer,
+	}
+	// Two equal-tier English dubs (dual audio, same resolution, neither matches a preferred codec
+	// or source). The higher-bitrate (larger) one wins the tie.
+	small := &hibiketorrent.AnimeTorrent{Name: "[Lat] Show S01 E10 [1080p] WEB-DL Dual Audio", InfoHash: "small", Seeders: 0, Size: 651 * 1024 * 1024}
+	big := &hibiketorrent.AnimeTorrent{Name: "[ToonsHub] Show S01 E10 [1080p] WEB-DL AVC AAC Dual Audio", InfoHash: "big", Seeders: 0, Size: 1490 * 1024 * 1024}
+
+	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{small, big}, profile, -1, 10, nil)
+	assert.Equal(t, "big", sorted[0].InfoHash, "larger (higher-bitrate) release wins the tie")
+}
+
 func TestAutoSelect_EpisodeRelevance(t *testing.T) {
 	s := newTestAutoSelect()
 	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}

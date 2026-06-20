@@ -536,7 +536,10 @@ func (s *AutoSelect) sortCandidates(candidates []*candidate, profile *anime.Auto
 			return cmp.Compare(b.score, a.score)
 		}
 
-		// If the scores are the same, sort by seeders
+		// Tie-break by size (higher bitrate ≈ better quality at the same resolution), then seeders.
+		if a.torrent.Size != b.torrent.Size {
+			return cmp.Compare(b.torrent.Size, a.torrent.Size)
+		}
 		return cmp.Compare(b.torrent.Seeders, a.torrent.Seeders)
 	})
 }
@@ -591,6 +594,10 @@ func (s *AutoSelect) smartCachedPrioritization(
 		}
 		if a.score != b.score {
 			return cmp.Compare(b.score, a.score)
+		}
+		// Tie-break by size (higher bitrate ≈ better quality at the same resolution), then seeders.
+		if a.torrent.Size != b.torrent.Size {
+			return cmp.Compare(b.torrent.Size, a.torrent.Size)
 		}
 		return cmp.Compare(b.torrent.Seeders, a.torrent.Seeders)
 	})
