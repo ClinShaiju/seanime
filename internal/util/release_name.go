@@ -37,3 +37,51 @@ func CleanReleaseName(name string) string {
 	name = wsRe.ReplaceAllString(name, " ")
 	return strings.TrimSpace(name)
 }
+
+// flagCountryToLangTokens maps ISO country codes (from flag emoji) to language tokens that a
+// preferred-languages list might use. Aggregator providers (AIOStreams) encode a release's
+// languages as flag emoji in the name (🇬🇧 🇯🇵 🇫🇷), which name parsers can't read.
+var flagCountryToLangTokens = map[string][]string{
+	"GB": {"en", "eng", "english"}, "US": {"en", "eng", "english"}, "AU": {"en", "eng", "english"},
+	"CA": {"en", "eng", "english"}, "NZ": {"en", "eng", "english"}, "IE": {"en", "eng", "english"},
+	"JP": {"jp", "jpn", "ja", "japanese"},
+	"FR": {"fr", "fre", "fra", "french"},
+	"ES": {"es", "spa", "spanish"}, "MX": {"es", "spa", "spanish"}, "AR": {"es", "spa", "spanish"},
+	"RU": {"ru", "rus", "russian"},
+	"DE": {"de", "ger", "deu", "german"}, "AT": {"de", "ger", "deu", "german"},
+	"IT": {"it", "ita", "italian"},
+	"BR": {"pt", "por", "portuguese", "brazilian"}, "PT": {"pt", "por", "portuguese"},
+	"CN": {"zh", "chi", "zho", "chinese"}, "TW": {"zh", "chi", "zho", "chinese"}, "HK": {"zh", "chi", "zho", "chinese"},
+	"KR": {"ko", "kor", "korean"},
+}
+
+// LanguagesFromFlags decodes flag emoji (regional-indicator pairs) in a release name into
+// language tokens, so language scoring can see languages that are only expressed as flags.
+// Unknown countries fall back to their lowercase code so they still count as a declared
+// (non-preferred) language. Returns deduplicated lowercase tokens.
+func LanguagesFromFlags(name string) []string {
+	runes := []rune(name)
+	seen := make(map[string]bool)
+	var out []string
+	add := func(toks []string) {
+		for _, t := range toks {
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+	}
+	for i := 0; i+1 < len(runes); i++ {
+		a, b := runes[i], runes[i+1]
+		if a >= 0x1F1E6 && a <= 0x1F1FF && b >= 0x1F1E6 && b <= 0x1F1FF {
+			cc := string(rune('A'+(a-0x1F1E6))) + string(rune('A'+(b-0x1F1E6)))
+			if toks, ok := flagCountryToLangTokens[cc]; ok {
+				add(toks)
+			} else {
+				add([]string{strings.ToLower(cc)})
+			}
+			i++ // consume the second indicator of the pair
+		}
+	}
+	return out
+}

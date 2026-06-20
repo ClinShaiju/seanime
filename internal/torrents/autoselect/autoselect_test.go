@@ -622,6 +622,29 @@ func TestAutoSelect_LanguageTiers(t *testing.T) {
 	assert.Greater(t, pos["jpru"], pos["jpen"], "jp/ru must rank below jp/en")
 }
 
+func TestAutoSelect_FlagLanguages(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
+	}
+
+	// Aggregator names carry language only as flag emoji. EN-flagged (and jp/en) must rank above
+	// jp-only; a FR-only "Dual Audio" release must be demoted (the dual-audio lift must NOT save
+	// it once a non-preferred flag is present), despite the most seeders.
+	enFlag := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] Dual Audio 🌐 🇬🇧 / 🇯🇵", InfoHash: "en", Seeders: 1}
+	jpFlag := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] 🌐 🇯🇵", InfoHash: "jp", Seeders: 5}
+	frDual := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] Dual Audio 🌐 🇫🇷", InfoHash: "fr", Seeders: 900}
+
+	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{frDual, jpFlag, enFlag}, profile, -1, 10, nil)
+	names := make([]string, len(sorted))
+	for i, r := range sorted {
+		names[i] = r.Name
+	}
+	assert.Equal(t, []string{enFlag.Name, jpFlag.Name, frDual.Name}, names,
+		"EN-flag top, jp-flag middle, FR-flag dual demoted last despite most seeders; got %v", names)
+}
+
 func TestAutoSelect_EpisodeRelevance(t *testing.T) {
 	s := newTestAutoSelect()
 	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}

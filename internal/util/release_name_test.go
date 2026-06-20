@@ -43,3 +43,11 @@ func TestCleanReleaseName_AggregatorName(t *testing.T) {
 	assert.Equal(t, []string{"12"}, m.EpisodeNumber, "episode recovered")
 	assert.Equal(t, []string{"01"}, m.SeasonNumber, "season recovered")
 }
+
+func TestLanguagesFromFlags(t *testing.T) {
+	assert.Contains(t, LanguagesFromFlags("Show E10 🌐 🇬🇧 / 🇯🇵"), "english")
+	assert.Contains(t, LanguagesFromFlags("Show E10 🌐 🇬🇧 / 🇯🇵"), "japanese")
+	assert.Contains(t, LanguagesFromFlags("Show E10 🌐 🇫🇷"), "french")
+	assert.Contains(t, LanguagesFromFlags("Show E10 🌐 🇪🇸"), "spanish")
+	assert.Empty(t, LanguagesFromFlags("Show E10 1080p no flags here"))
+}

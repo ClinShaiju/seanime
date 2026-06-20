@@ -43,8 +43,9 @@ type candidate struct {
 	torrent        *hibiketorrent.AnimeTorrent
 	parsed         *habari.Metadata
 	lowerName       string
-	expectedSeason  int // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
-	expectedEpisode int // Requested episode number, <=0 = unknown (skip episode scoring)
+	flagLanguages   []string // languages decoded from flag emoji in the raw name (aggregators)
+	expectedSeason  int      // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
+	expectedEpisode int      // Requested episode number, <=0 = unknown (skip episode scoring)
 	priority        int
 	bonus          int
 	score          int
@@ -101,6 +102,7 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 			torrent:         t,
 			parsed:          habari.Parse(util.CleanReleaseName(t.Name)),
 			lowerName:       strings.ToLower(t.Name),
+			flagLanguages:   util.LanguagesFromFlags(t.Name),
 			expectedSeason:  expectedSeason,
 			expectedEpisode: expectedEpisode,
 		}
@@ -617,7 +619,9 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 		}
 	}
 
-	// Language
+	// Language. Best-language-wins: preferred languages are checked in priority order, matching
+	// the parsed language, the name, OR flag emoji decoded from the name (aggregators express
+	// language only as flags). So jp/en scores as en, jp/ru scores as jp.
 	if len(profile.PreferredLanguages) > 0 {
 		langMatched := false
 		for i, languages := range profile.PreferredLanguages {
@@ -628,6 +632,8 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 				}
 				if slices.ContainsFunc(parsed.Language, func(pl string) bool {
 					return strings.EqualFold(pl, lang)
+				}) || slices.ContainsFunc(c.flagLanguages, func(fl string) bool {
+					return strings.EqualFold(fl, lang)
 				}) || containsBoundedTerm(c.lowerName, lang) {
 					priority += scoreLanguageBase - (i * scoreLanguageDecay)
 					langMatched = true
@@ -639,21 +645,21 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 			}
 		}
 
-		// jp/en handling: an explicit en tag is already matched above (best-language-wins, so a
-		// jp/en release scores as en). A dual/multi-audio (or dubbed) release carries an extra
-		// dub on top of the original; treat it as containing the top preferred language
-		// (typically English) so it ranks alongside en-only and above jp-only — mirroring how
-		// jp/ru ranks as jp. ponytail: heuristic — anime "dual audio" is ~always orig + the dub.
-		if !langMatched && (containsMultiOrDual(parsed.AudioTerm) || containsMultiOrDual([]string{c.lowerName})) {
-			priority += scoreLanguageBase
-			langMatched = true
-		}
+		// A release "declares" a language if it has a parsed language tag or flag emoji.
+		hasDeclaredLang := len(parsed.Language) > 0 || len(c.flagLanguages) > 0
 
-		// Demote releases that explicitly declare language(s), none of which is preferred
-		// (e.g. Russian-only). A jp/ru release matches "jp" and is not demoted; a release
-		// with no parsed language tag is left neutral (can't tell, often eng-subbed raws).
-		if !langMatched && len(parsed.Language) > 0 {
-			priority -= scoreLanguageUnpreferred
+		if !langMatched {
+			if !hasDeclaredLang && (containsMultiOrDual(parsed.AudioTerm) || containsMultiOrDual([]string{c.lowerName})) {
+				// Dual/multi-audio with no declared language: assume it carries the top preferred
+				// dub (anime dual audio is ~always orig + the dub), so it ranks alongside en-only.
+				// Only when nothing contradicts it — a release flagged FR/ES is handled below.
+				priority += scoreLanguageBase
+				langMatched = true
+			} else if hasDeclaredLang {
+				// Declared a language, none preferred (e.g. Russian-/French-only) → demote below
+				// every preferred-language release and the cached-first quality threshold.
+				priority -= scoreLanguageUnpreferred
+			}
 		}
 	}
 
