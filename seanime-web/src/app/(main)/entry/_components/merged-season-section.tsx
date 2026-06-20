@@ -2,7 +2,10 @@ import { Anime_Episode } from "@/api/generated/types"
 import { useGetMergedSeason } from "@/api/hooks/anime_franchise.hooks"
 import { EpisodeCard } from "@/app/(main)/_features/anime/_components/episode-card"
 import { EpisodeGridItem } from "@/app/(main)/_features/anime/_components/episode-grid-item"
+import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { EpisodeListPaginatedGrid } from "@/app/(main)/entry/_components/episode-list-grid"
+import { useHandleStartDebridStream } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-stream"
+import { useHandlePlayMedia } from "@/app/(main)/entry/_lib/handle-play-media"
 import { episodeCardCarouselItemClass } from "@/components/shared/classnames"
 import { AppLayoutStack } from "@/components/ui/app-layout"
 import { Carousel, CarouselContent, CarouselDotButtons, CarouselItem } from "@/components/ui/carousel"
@@ -24,7 +27,10 @@ export const __entry_mergedSeasonAtom = atom<MergedSeasonSelection | null>(null)
 export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: number, seasonNumber: number, tmdb: string }) {
     const ts = useThemeSettings()
     const router = useRouter()
+    const serverStatus = useServerStatus()
     const { data, isLoading } = useGetMergedSeason(rootId, seasonNumber, tmdb)
+    const { handleAutoSelectStream } = useHandleStartDebridStream()
+    const { playMediaFile } = useHandlePlayMedia()
 
     // Per-cour AniList progress, used to compute per-episode watched status.
     const courProgress = React.useMemo(() => {
@@ -47,10 +53,33 @@ export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: nu
     const unwatched = episodes.filter(ep => !isEpWatched(ep))
     const toWatch = unwatched.length > 0 ? unwatched : [...episodes].reverse()
 
-    // Open the episode's source cour to play (interim until in-place playback is wired).
-    // ?single=1 suppresses auto-merge so the cour shows its own episode list to play.
+    // Open the episode's source cour (fallback for playback methods we don't start in
+    // place). ?single=1 suppresses auto-merge so the cour shows its own list.
     const openCour = (ep: Anime_Episode) => {
         if (ep.baseAnime?.id) router.push(`/entry?id=${ep.baseAnime.id}&single=1`)
+    }
+
+    // Play a merged episode in place, routed to its source cour. AniList progress and
+    // torrent matching stay tied to that cour (mediaId + cour-relative episode number).
+    const playEpisode = (ep: Anime_Episode) => {
+        const courMediaId = ep.baseAnime?.id
+        if (!courMediaId) return
+        // Debrid (auto-select): start the stream for the cour via the global overlay/player.
+        if (serverStatus?.debridSettings?.enabled && serverStatus?.debridSettings?.streamAutoSelect && ep.aniDBEpisode) {
+            handleAutoSelectStream({
+                mediaId: courMediaId,
+                episodeNumber: ep.episodeNumber,
+                aniDBEpisode: ep.aniDBEpisode,
+            })
+            return
+        }
+        // Local library file: play directly.
+        if (ep.localFile?.path) {
+            playMediaFile({ path: ep.localFile.path, mediaId: courMediaId, episode: ep })
+            return
+        }
+        // Other methods (manual debrid file selection, torrent stream): open the cour.
+        openCour(ep)
     }
 
     if (isLoading) return <div className="py-16 flex justify-center"><LoadingSpinner /></div>
@@ -77,7 +106,7 @@ export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: nu
                                     topTitle={ep.episodeTitle || ep.baseAnime?.title?.userPreferred}
                                     title={ep.displayTitle}
                                     length={ep.episodeMetadata?.length}
-                                    onClick={() => openCour(ep)}
+                                    onClick={() => playEpisode(ep)}
                                 />
                             </CarouselItem>
                         ))}
@@ -104,16 +133,13 @@ export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: nu
                                 progressNumber={ep.progressNumber}
                                 isWatched={isEpWatched(ep)}
                                 watchedProgress={courProgress.get(ep.baseAnime?.id ?? -1)}
-                                onClick={() => openCour(ep)}
+                                onClick={() => playEpisode(ep)}
                             />
                         )
                     }}
                 />
             </div>
 
-            <p className="text-xs text-[--muted]">
-                Merged view — clicking an episode opens its season cour to play. In-place playback is being wired next.
-            </p>
         </AppLayoutStack>
     )
 }
