@@ -10,10 +10,25 @@ import (
 	torrentanalyzer "seanime/internal/torrents/analyzer"
 	"seanime/internal/util"
 	"strconv"
+	"strings"
 
 	"github.com/anacrolix/torrent"
 	"github.com/samber/lo"
 )
+
+// infoHashFromMagnet extracts the btih infohash from a magnet URI, or "" if absent.
+func infoHashFromMagnet(magnet string) string {
+	const marker = "urn:btih:"
+	idx := strings.Index(strings.ToLower(magnet), marker)
+	if idx == -1 {
+		return ""
+	}
+	h := magnet[idx+len(marker):]
+	if cut := strings.IndexAny(h, "&/?"); cut != -1 {
+		h = h[:cut]
+	}
+	return h
+}
 
 const (
 	MaxTorrentCandidatesToCheck = 3
@@ -220,6 +235,14 @@ func (s *AutoSelect) selectFileFromDebrid(
 
 	// Override magnet link
 	t.MagnetLink = magnet
+
+	// Prefer the real btih from the magnet. Aggregator providers (AIOStreams/SeaDex) ship a
+	// magnet without a separate infohash, so the search pipeline fills t.InfoHash with the
+	// torrent NAME (torrent/search.go) — which TorBox/RealDebrid can't look up, yielding
+	// "no file found". AnimeTosho/Nyaa carry a real infohash and were unaffected.
+	if h := infoHashFromMagnet(magnet); h != "" {
+		t.InfoHash = h
+	}
 
 	s.logger.Debug().Msgf("autoselect: Checking debrid info for %s", t.Link)
 
