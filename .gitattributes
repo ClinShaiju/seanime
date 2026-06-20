@@ -1,0 +1,9 @@
+# Normalize line endings: store LF in the repo, check out LF on all platforms.
+# One-time renormalization commit accompanies this file. git auto-detects binary
+# files and leaves them untouched.
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF on checkout.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
