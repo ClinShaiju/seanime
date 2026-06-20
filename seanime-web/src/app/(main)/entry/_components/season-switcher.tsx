@@ -80,64 +80,65 @@ export function SeasonSwitcher({ mediaId }: { mediaId: string | number | null | 
         }
     }
 
+    // Build one ordered list (watch order) of selectable items: each season (cours
+    // collapsed into a single entry) plus the tagged extras.
+    type Item = { label: string, sub?: string, tag?: string, isCurrent: boolean, onSelect: () => void }
+    const items: Item[] = []
+    const seenKey = new Set<string>()
+    for (const e of watchOrder) {
+        if (e.isExtra) {
+            items.push({
+                label: entryTitle(e),
+                tag: e.tag || undefined,
+                isCurrent: mergedSeason == null && e.mediaId === currentId,
+                onSelect: () => { setMergedSeason(null); go(e.mediaId) },
+            })
+            continue
+        }
+        const key = e.tmdbId ? `${e.tmdbId}:${e.seasonNumber}` : `id:${e.mediaId}`
+        if (seenKey.has(key)) continue
+        seenKey.add(key)
+        const cours = groups.get(key) ?? [e]
+        const isMerged = cours.length > 1
+        items.push({
+            label: `Season ${order.indexOf(key) + 1}`,
+            sub: isMerged ? `${cours.length} cours` : undefined,
+            isCurrent: mergedSeason != null
+                ? (isMerged && mergedSeason.season === cours[0].seasonNumber && mergedSeason.tmdb === cours[0].tmdbId)
+                : cours.some(c => c.mediaId === currentId),
+            onSelect: () => selectSeason(key),
+        })
+    }
+    const current = items.find(it => it.isCurrent)
+
     return (
-        <div className="px-4 md:px-8 mb-4 flex flex-wrap items-center gap-2" data-season-switcher data-mode="seasons">
-            {order.map((key, idx) => {
-                const cours = groups.get(key)!
-                const isMerged = cours.length > 1
-                const isCurrent = mergedSeason != null
-                    ? (isMerged && mergedSeason.season === cours[0].seasonNumber && mergedSeason.tmdb === cours[0].tmdbId)
-                    : cours.some(c => c.mediaId === currentId)
-                return (
+        <div className="px-4 md:px-8 mb-4" data-season-switcher>
+            <DropdownMenu
+                trigger={
                     <button
-                        key={key}
-                        data-current={isCurrent}
-                        onClick={() => selectSeason(key)}
-                        title={cours.map(entryTitle).join(" + ")}
-                        className={cn(
-                            "px-3 py-1.5 rounded-lg border border-gray-800 text-sm hover:bg-gray-800 transition",
-                            isCurrent && "bg-gray-800 border-transparent font-semibold",
-                        )}
+                        data-season-switcher-trigger
+                        className="px-3 py-1.5 rounded-lg border border-gray-800 text-sm hover:bg-gray-800 transition flex items-center gap-2"
                     >
-                        {`Season ${idx + 1}`}
-                        {isMerged && <span className="ml-1.5 opacity-50 text-xs">{cours.length} cours</span>}
+                        <LuListOrdered className="opacity-70" />
+                        <span className="opacity-60">Season:</span>
+                        <span className="font-semibold line-clamp-1 max-w-[20rem]">{current?.label ?? "Select"}</span>
+                        {current?.sub && <span className="opacity-50 text-xs">{current.sub}</span>}
+                        <LuChevronDown className="opacity-70" />
                     </button>
-                )
-            })}
-
-            {watchOrder.length > 1 && (
-                <DropdownMenu
-                    trigger={
-                        <button
-                            data-season-switcher-watchorder-trigger
-                            className="px-3 py-1.5 rounded-lg border border-gray-800 text-sm hover:bg-gray-800 transition flex items-center gap-1.5"
-                        >
-                            <LuListOrdered className="opacity-70" />
-                            Watch order
-                            <LuChevronDown className="opacity-70" />
-                        </button>
-                    }
-                >
-                    {watchOrder.map((e, i) => (
-                        <DropdownMenuItem
-                            key={e.mediaId}
-                            onClick={() => go(e.mediaId)}
-                            className={cn(
-                                "cursor-pointer gap-2",
-                                e.mediaId === currentId && "bg-gray-800 font-semibold",
-                            )}
-                        >
-                            <span className="opacity-50 tabular-nums w-5">{i + 1}.</span>
-                            <span className="line-clamp-1 flex-1">{entryTitle(e)}</span>
-                            {e.tag && <span className="ml-2 text-xs opacity-50 uppercase">{e.tag}</span>}
-                        </DropdownMenuItem>
-                    ))}
-                </DropdownMenu>
-            )}
-
-            {extras.length > 0 && (
-                <span className="ml-1 text-xs opacity-50">+{extras.length} extra{extras.length > 1 ? "s" : ""}</span>
-            )}
+                }
+            >
+                {items.map((it, i) => (
+                    <DropdownMenuItem
+                        key={i}
+                        onClick={it.onSelect}
+                        className={cn("cursor-pointer gap-2", it.isCurrent && "bg-gray-800 font-semibold")}
+                    >
+                        <span className="line-clamp-1 flex-1">{it.label}</span>
+                        {it.sub && <span className="text-xs opacity-50">{it.sub}</span>}
+                        {it.tag && <span className="ml-2 text-xs opacity-50 uppercase">{it.tag}</span>}
+                    </DropdownMenuItem>
+                ))}
+            </DropdownMenu>
         </div>
     )
 }
