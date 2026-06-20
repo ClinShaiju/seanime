@@ -649,6 +649,22 @@ func TestAutoSelect_FlagLanguages(t *testing.T) {
 	assert.Less(t, pos["frdual"], pos["fr"], "dual/fr (jp/fr) ranks above single french")
 }
 
+func TestAutoSelect_SizeUnitNotLanguage(t *testing.T) {
+	s := newTestAutoSelect()
+	// "gb" is in the preferred list (Great Britain → English). The "GB" in a gigabyte size must
+	// NOT count as English, otherwise every GB-sized release falsely ranks in the en tier.
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, gb, eng, english", "jp, jpn, japanese"},
+	}
+	esBigGB := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] WEBRip 2.32 GB 🌐 🇪🇸", InfoHash: "es", Seeders: 900}
+	enFlag := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] WEBRip 531 MB 🌐 🇬🇧", InfoHash: "en", Seeders: 1}
+
+	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{esBigGB, enFlag}, profile, -1, 10, nil)
+	assert.Equal(t, "en", sorted[0].InfoHash, "actual EN flag must outrank a GB-sized Spanish release")
+	assert.Equal(t, "es", sorted[1].InfoHash, "the GB size must not make the Spanish release English")
+}
+
 func TestAutoSelect_EpisodeRelevance(t *testing.T) {
 	s := newTestAutoSelect()
 	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}

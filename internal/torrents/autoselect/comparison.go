@@ -99,9 +99,12 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 	candidates := make([]*candidate, len(torrents))
 	for i, t := range torrents {
 		candidates[i] = &candidate{
-			torrent:         t,
-			parsed:          habari.Parse(util.CleanReleaseName(t.Name)),
-			lowerName:       strings.ToLower(t.Name),
+			torrent: t,
+			parsed:  habari.Parse(util.CleanReleaseName(t.Name)),
+			// Use the cleaned name (size tokens + emoji stripped) for term matching so a size
+			// unit can't be read as a language — e.g. the "GB" in "2.32 GB" matching a preferred
+			// "gb" (Great Britain → English). Flags are decoded from the raw name separately.
+			lowerName:       strings.ToLower(util.CleanReleaseName(t.Name)),
 			flagLanguages:   util.LanguagesFromFlags(t.Name),
 			expectedSeason:  expectedSeason,
 			expectedEpisode: expectedEpisode,
