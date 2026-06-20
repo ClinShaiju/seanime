@@ -57,8 +57,9 @@ type (
 		// e.g. "FINISHED", "RELEASING", "NOT_YET_RELEASED", "CANCELLED", "HIATUS"
 		// This will be set to "NOT_YET_RELEASED" if the status is unknown.
 		Status string `json:"status,omitempty"`
-		// e.g. "TV", "TV_SHORT", "MOVIE", "SPECIAL", "OVA", "ONA", "MUSIC"
-		// This will be set to "TV" if the format is unknown.
+		// e.g. "TV", "MOVIE", "MUSIC"
+		// Episodic formats (TV_SHORT, ONA, OVA, SPECIAL) are normalized to "TV" so providers
+		// only need to distinguish series ("TV") from films ("MOVIE"). Also "TV" if unknown.
 		Format string `json:"format,omitempty"`
 		// e.g. "Attack on Titan"
 		// This will be undefined if the english title is unknown.
