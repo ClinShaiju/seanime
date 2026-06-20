@@ -99,7 +99,7 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 	for i, t := range torrents {
 		candidates[i] = &candidate{
 			torrent:         t,
-			parsed:          habari.Parse(util.StripSizeTokens(t.Name)),
+			parsed:          habari.Parse(util.CleanReleaseName(t.Name)),
 			lowerName:       strings.ToLower(t.Name),
 			expectedSeason:  expectedSeason,
 			expectedEpisode: expectedEpisode,
@@ -167,7 +167,7 @@ func (s *AutoSelect) filter(torrents []*hibiketorrent.AnimeTorrent, profile *ani
 	for i, t := range torrents {
 		candidates[i] = &candidate{
 			torrent:   t,
-			parsed:    habari.Parse(util.StripSizeTokens(t.Name)),
+			parsed:    habari.Parse(util.CleanReleaseName(t.Name)),
 			lowerName: strings.ToLower(t.Name),
 		}
 	}
@@ -185,7 +185,7 @@ func (s *AutoSelect) sort(torrents []*hibiketorrent.AnimeTorrent, profile *anime
 	for i, t := range torrents {
 		candidates[i] = &candidate{
 			torrent:   t,
-			parsed:    habari.Parse(util.StripSizeTokens(t.Name)),
+			parsed:    habari.Parse(util.CleanReleaseName(t.Name)),
 			lowerName: strings.ToLower(t.Name),
 		}
 	}

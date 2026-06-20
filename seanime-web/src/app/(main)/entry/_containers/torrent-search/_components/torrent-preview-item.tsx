@@ -153,14 +153,21 @@ const TorrentPreviewItem = memo((props: TorrentPreviewItemProps) => {
             return t
         }
 
+        if (!isBatch && !!displayName) return displayName
+
+        // A single parsed episode is an individual episode, even when the provider set the batch
+        // flag (aggregator single episodes often have isBatch=true) — otherwise they mislabel as
+        // "Season X". Multi-season/part packs are caught below before this can apply.
+        if (episodeNumbers?.length === 1 && !(seasonNumbers?.length && seasonNumbers.length > 1) && !(partNumbers?.length && partNumbers.length > 1)) {
+            return `Episode ${parseInt(episodeNumbers[0])}`
+        }
+
         if (!isBatch) {
-            if (!!displayName) return displayName
-            if (episodeNumbers?.length === 1) return `Episode ${parseInt(episodeNumbers[0])}`
             if (metadata?.formatted_title) return metadata.formatted_title
             return "Batch"
         }
 
-        // isBatch with no episode range: fall back to part / season ranges, else generic Batch.
+        // isBatch with no single episode: fall back to part / season ranges, else generic Batch.
         let t = ""
         if (partNumbers?.length && partNumbers.length > 1) {
             const s1 = parseInt(partNumbers[0])

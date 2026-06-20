@@ -31,3 +31,15 @@ func TestStripSizeTokens_FixesEpisodeMisparse(t *testing.T) {
 	assert.Equal(t, []string{"12"}, m.EpisodeNumber)
 	assert.Contains(t, m.VideoTerm, "HEVC")
 }
+
+// The real Debridio/AIOStreams name: multi-line, emoji, "•" separator, trailing size. Raw, habari
+// reads the size as the episode and drops the real one; CleanReleaseName recovers season+episode.
+func TestCleanReleaseName_AggregatorName(t *testing.T) {
+	raw := "Debridio Scraper 1080p\n📁 Witch Hat Atelier (2026) S01 • E12\n🎥 WEB-DL 🏷️ Dual\n📦 833 MB 🔍 DHT\n🌐 EN/JP"
+
+	assert.Equal(t, []string{"833"}, habari.Parse(raw).EpisodeNumber, "raw name misparses the size as episode")
+
+	m := habari.Parse(CleanReleaseName(raw))
+	assert.Equal(t, []string{"12"}, m.EpisodeNumber, "episode recovered")
+	assert.Equal(t, []string{"01"}, m.SeasonNumber, "season recovered")
+}
