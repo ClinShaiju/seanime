@@ -1,8 +1,8 @@
 import { Anime_Episode } from "@/api/generated/types"
 import { useGetMergedSeason } from "@/api/hooks/anime_franchise.hooks"
 import { EpisodeCard } from "@/app/(main)/_features/anime/_components/episode-card"
+import { EpisodeGridItem } from "@/app/(main)/_features/anime/_components/episode-grid-item"
 import { EpisodeListPaginatedGrid } from "@/app/(main)/entry/_components/episode-list-grid"
-import { EpisodeItem } from "@/app/(main)/entry/_containers/episode-list/episode-item"
 import { episodeCardCarouselItemClass } from "@/components/shared/classnames"
 import { AppLayoutStack } from "@/components/ui/app-layout"
 import { Carousel, CarouselContent, CarouselDotButtons, CarouselItem } from "@/components/ui/carousel"
@@ -40,7 +40,10 @@ export function MergedSeasonSection({ rootId, seasonNumber }: { rootId: number, 
     }, [data?.episodes])
 
     const isEpWatched = (ep: Anime_Episode) => (courProgress.get(ep.baseAnime?.id ?? -1) ?? 0) >= ep.progressNumber
-    const toWatch = episodes.filter(ep => !isEpWatched(ep))
+    // Match the default carousel: unwatched while in progress; when fully watched,
+    // show all episodes in reverse (most recent first).
+    const unwatched = episodes.filter(ep => !isEpWatched(ep))
+    const toWatch = unwatched.length > 0 ? unwatched : [...episodes].reverse()
 
     // Open the episode's source cour to play (interim until in-place playback is wired).
     const openCour = (ep: Anime_Episode) => {
@@ -82,16 +85,26 @@ export function MergedSeasonSection({ rootId, seasonNumber }: { rootId: number, 
             <div className="space-y-10" data-merged-season-list>
                 <EpisodeListPaginatedGrid
                     length={episodes.length}
-                    renderItem={(index) => (
-                        <EpisodeItem
-                            key={`${episodes[index].baseAnime?.id}-${episodes[index].progressNumber}-${index}`}
-                            episode={episodes[index]}
-                            media={episodes[index].baseAnime!}
-                            isWatched={isEpWatched(episodes[index])}
-                            watchedProgress={courProgress.get(episodes[index].baseAnime?.id ?? -1)}
-                            onPlay={() => openCour(episodes[index])}
-                        />
-                    )}
+                    renderItem={(index) => {
+                        const ep = episodes[index]
+                        return (
+                            <EpisodeGridItem
+                                key={`${ep.baseAnime?.id}-${ep.progressNumber}-${index}`}
+                                media={ep.baseAnime!}
+                                image={ep.episodeMetadata?.image}
+                                title={ep.displayTitle}
+                                episodeTitle={ep.episodeTitle}
+                                description={ep.episodeMetadata?.summary || ep.episodeMetadata?.overview}
+                                length={ep.episodeMetadata?.length}
+                                isFiller={ep.episodeMetadata?.isFiller}
+                                episodeNumber={ep.episodeNumber}
+                                progressNumber={ep.progressNumber}
+                                isWatched={isEpWatched(ep)}
+                                watchedProgress={courProgress.get(ep.baseAnime?.id ?? -1)}
+                                onClick={() => openCour(ep)}
+                            />
+                        )
+                    }}
                 />
             </div>
 
