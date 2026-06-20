@@ -96,7 +96,7 @@ func (s *AutoSelect) FindBestTorrent(
 	// 2. Filter & sort
 	s.log("Filtering and sorting candidates")
 	expectedSeason := media.GetPossibleSeasonNumber()
-	torrents = s.filterAndSort(torrents, profile, expectedSeason, postSearchSort)
+	torrents = s.filterAndSort(torrents, profile, expectedSeason, episodeNumber, postSearchSort)
 
 	// 3. Select file (iterate top 3)
 	s.log("Selecting best file from top candidates")

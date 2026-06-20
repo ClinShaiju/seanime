@@ -33,14 +33,19 @@ const (
 	scoreBatch             = 20
 	scoreBestRelease       = 20
 	scoreSeasonMatch       = 60
+	// Penalty for results whose declared episodes can't include the requested one
+	// (e.g. an E01-07 batch when episode 10 was asked for). Large enough to bury them
+	// below every relevant result regardless of cache status.
+	scoreEpisodeMismatch = 200
 )
 
 type candidate struct {
 	torrent        *hibiketorrent.AnimeTorrent
 	parsed         *habari.Metadata
-	lowerName      string
-	expectedSeason int // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
-	priority       int
+	lowerName       string
+	expectedSeason  int // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
+	expectedEpisode int // Requested episode number, <=0 = unknown (skip episode scoring)
+	priority        int
 	bonus          int
 	score          int
 }
@@ -51,7 +56,7 @@ type TorrentWithCacheStatus struct {
 }
 
 // filterAndSort filters and sorts the torrents based on the profile or defaults.
-func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile, expectedSeason int, postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus) []*hibiketorrent.AnimeTorrent {
+func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile, expectedSeason int, expectedEpisode int, postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus) []*hibiketorrent.AnimeTorrent {
 	s.log("Filtering and sorting torrents")
 	s.logger.Debug().Int("count", len(torrents)).Msg("autoselect: Filtering and sorting torrents")
 
@@ -60,7 +65,7 @@ func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profi
 	}
 
 	// Optimize: Parse metadata once
-	candidates := buildCandidates(torrents, expectedSeason)
+	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode)
 
 	// Filter
 	candidates = s.filterCandidates(candidates, profile)
@@ -89,17 +94,43 @@ func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profi
 }
 
 // buildCandidates parses metadata once for each torrent.
-func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int) []*candidate {
+func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int, expectedEpisode int) []*candidate {
 	candidates := make([]*candidate, len(torrents))
 	for i, t := range torrents {
 		candidates[i] = &candidate{
-			torrent:        t,
-			parsed:         habari.Parse(t.Name),
-			lowerName:      strings.ToLower(t.Name),
-			expectedSeason: expectedSeason,
+			torrent:         t,
+			parsed:          habari.Parse(t.Name),
+			lowerName:       strings.ToLower(t.Name),
+			expectedSeason:  expectedSeason,
+			expectedEpisode: expectedEpisode,
 		}
 	}
 	return candidates
+}
+
+// episodeCovered reports whether a parsed episode range can contain the requested episode.
+// Empty parsed episodes (full-season batches, movies, or unnumbered releases) are treated as
+// covered so we never bury a valid batch; only releases that clearly declare a different
+// episode/range are flagged. Uses min..max of the parsed numbers (handles "E01-07" ranges).
+func episodeCovered(parsedEpisodes []string, requested int) bool {
+	if requested <= 0 || len(parsedEpisodes) == 0 {
+		return true
+	}
+	lo, hi := -1, -1
+	for _, e := range parsedEpisodes {
+		if n, ok := util.StringToInt(e); ok {
+			if lo == -1 || n < lo {
+				lo = n
+			}
+			if hi == -1 || n > hi {
+				hi = n
+			}
+		}
+	}
+	if lo == -1 { // unparseable -> don't penalize
+		return true
+	}
+	return requested >= lo && requested <= hi
 }
 
 // Rank orders torrents using the same scoring (profile + season match) and cache
@@ -109,13 +140,14 @@ func (s *AutoSelect) Rank(
 	torrents []*hibiketorrent.AnimeTorrent,
 	profile *anime.AutoSelectProfile,
 	expectedSeason int,
+	expectedEpisode int,
 	postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus,
 ) []*hibiketorrent.AnimeTorrent {
 	if len(torrents) == 0 {
 		return torrents
 	}
 
-	candidates := buildCandidates(torrents, expectedSeason)
+	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode)
 	s.sortCandidates(candidates, profile)
 
 	sorted := make([]*hibiketorrent.AnimeTorrent, len(candidates))
@@ -657,6 +689,13 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 		} else {
 			bonus -= scoreSeasonMatch
 		}
+	}
+
+	// Episode relevance: bury results whose declared episodes can't include the requested one
+	// (e.g. an E01-07 batch for an episode-10 request). Full-season batches / unnumbered
+	// releases have no parsed episodes and are left untouched.
+	if c.expectedEpisode > 0 && !episodeCovered(parsed.EpisodeNumber, c.expectedEpisode) {
+		priority -= scoreEpisodeMismatch
 	}
 
 	// Best release preference (prefer/avoid)

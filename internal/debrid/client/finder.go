@@ -133,6 +133,7 @@ func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.Co
 // whose availability the API can't report).
 func (r *Repository) RankTorrentsForDisplay(
 	media *anilist.BaseAnime,
+	episodeNumber int,
 	torrents []*hibiketorrent.AnimeTorrent,
 	instantAvail map[string]debrid.TorrentItemInstantAvailability,
 ) (ordered []*hibiketorrent.AnimeTorrent, cachedHashes map[string]struct{}) {
@@ -175,7 +176,7 @@ func (r *Repository) RankTorrentsForDisplay(
 		return statuses
 	}
 
-	ordered = r.autoSelect.Rank(torrents, profile, media.GetPossibleSeasonNumber(), postSearchSort)
+	ordered = r.autoSelect.Rank(torrents, profile, media.GetPossibleSeasonNumber(), episodeNumber, postSearchSort)
 	return ordered, cachedHashes
 }
 

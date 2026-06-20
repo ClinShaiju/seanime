@@ -35,8 +35,8 @@ export type TorrentFilters = {
 export const getSortIcon = (sortField: SortField, field: SortField, sortDirection: SortDirection) => {
     if (sortField !== field) return <TbArrowsSort className="opacity-50 text-lg" />
     return sortDirection === "asc" ?
-        <TbSortAscending className="text-brand-200 text-lg" /> :
-        <TbSortDescending className="text-brand-200 text-lg" />
+        <TbSortAscending className="text-brand-300 text-lg" /> :
+        <TbSortDescending className="text-brand-300 text-lg" />
 }
 
 export const getFilterIcon = (active: boolean) => {
@@ -429,51 +429,24 @@ export const TorrentFilterSortControls: React.FC<{
                 {allowAutoSort && <Button
                     size="xs"
                     intent="gray-basic"
-                    leftIcon={<TbSparkles className={cn("text-lg", sortField === "auto" ? "text-brand-200" : "opacity-50")} />}
+                    className={cn(sortField === "auto" && "text-brand-300 font-semibold")}
+                    leftIcon={<TbSparkles className={cn("text-lg", sortField === "auto" ? "text-brand-300" : "opacity-50")} />}
                     onClick={() => onSortChange("auto")}
                 >
                     Auto
                 </Button>}
-                <Button
-                    size="xs"
-                    intent="gray-basic"
-                    leftIcon={<>
-                        {getSortIcon(sortField, "seeders", sortDirection)}
-                    </>}
-                    onClick={() => onSortChange("seeders")}
-                >
-                    Seeders
-                </Button>
-                <Button
-                    size="xs"
-                    intent="gray-basic"
-                    leftIcon={<>
-                        {getSortIcon(sortField, "size", sortDirection)}
-                    </>}
-                    onClick={() => onSortChange("size")}
-                >
-                    Size
-                </Button>
-                <Button
-                    size="xs"
-                    intent="gray-basic"
-                    leftIcon={<>
-                        {getSortIcon(sortField, "date", sortDirection)}
-                    </>}
-                    onClick={() => onSortChange("date")}
-                >
-                    Date
-                </Button>
-                <Button
-                    size="xs"
-                    intent="gray-basic"
-                    leftIcon={<>
-                        {getSortIcon(sortField, "resolution", sortDirection)}
-                    </>}
-                    onClick={() => onSortChange("resolution")}
-                >
-                    Resolution
-                </Button>
+                {([["seeders", "Seeders"], ["size", "Size"], ["date", "Date"], ["resolution", "Resolution"]] as [SortField, string][]).map(([field, label]) => (
+                    <Button
+                        key={field}
+                        size="xs"
+                        intent="gray-basic"
+                        className={cn(sortField === field && "text-brand-300 font-semibold")}
+                        leftIcon={<>{getSortIcon(sortField, field, sortDirection)}</>}
+                        onClick={() => onSortChange(field)}
+                    >
+                        {label}
+                    </Button>
+                ))}
             </div>
         </div>
     )

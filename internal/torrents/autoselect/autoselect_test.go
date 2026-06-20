@@ -475,7 +475,7 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			testTorrents := make([]*hibiketorrent.AnimeTorrent, len(tt.torrents))
 			copy(testTorrents, tt.torrents)
 
-			sorted := s.filterAndSort(testTorrents, tt.profile, -1, postSearchSort)
+			sorted := s.filterAndSort(testTorrents, tt.profile, -1, 0, postSearchSort)
 
 			var sortedNames []string
 			for _, st := range sorted {
@@ -495,7 +495,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			return []*TorrentWithCacheStatus{}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{}, nil, -1, postSearchSort)
+		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{}, nil, -1, 0, postSearchSort)
 		assert.Empty(t, result)
 	})
 
@@ -510,7 +510,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			return []*TorrentWithCacheStatus{{Torrent: torrents[0], IsCached: true}}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, -1, postSearchSort)
+		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, -1, 0, postSearchSort)
 		assert.Len(t, result, 1)
 		assert.Equal(t, torrent.Name, result[0].Name)
 	})
@@ -522,7 +522,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			Seeders:  100,
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, -1, nil)
+		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, -1, 0, nil)
 		assert.Len(t, result, 1)
 		assert.Equal(t, torrent.Name, result[0].Name)
 	})
@@ -553,7 +553,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{highQuality, thresholdQuality}, profile, -1, postSearchSort)
+		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{highQuality, thresholdQuality}, profile, -1, 0, postSearchSort)
 		assert.Len(t, result, 2)
 		assert.NotNil(t, result[0])
 	})
@@ -583,7 +583,7 @@ func TestAutoSelect_LanguageDemotion(t *testing.T) {
 		return out
 	}
 
-	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{ruOnly, jpru, eng}, profile, -1, postSearchSort)
+	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{ruOnly, jpru, eng}, profile, -1, 0, postSearchSort)
 
 	names := make([]string, len(sorted))
 	for i, r := range sorted {
@@ -591,6 +591,39 @@ func TestAutoSelect_LanguageDemotion(t *testing.T) {
 	}
 	assert.Equal(t, []string{eng.Name, jpru.Name, ruOnly.Name}, names,
 		"ru-only must be demoted below preferred-language releases even when cached; eng outranks jp/ru")
+}
+
+func TestAutoSelect_EpisodeRelevance(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}
+
+	// Requesting episode 10. The cached E01-07 batch and a single E02 don't contain it and
+	// must sink; the real E10 file and a full-season batch (no episode in name) stay on top.
+	ep10 := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - S01E10 [1080p].mkv", InfoHash: "e10", Seeders: 20}
+	fullBatch := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show S01 [1080p] Batch.mkv", InfoHash: "fb", Seeders: 10, IsBatch: true}
+	wrongBatch := &hibiketorrent.AnimeTorrent{Name: "Show (2026) S01 E01-07 1080p WEBRip HEVC-Rutor", InfoHash: "wb", Seeders: 999}
+	wrongSingle := &hibiketorrent.AnimeTorrent{Name: "Show (2026) S01E02 1080p WEBRip", InfoHash: "ws", Seeders: 999}
+
+	// The wrong-episode ones are cached and have the most seeders — without the episode gate,
+	// cache-first would float them to the top.
+	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+		for _, tr := range torrents {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: tr.InfoHash == "wb" || tr.InfoHash == "ws"})
+		}
+		return out
+	}
+
+	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{wrongBatch, wrongSingle, ep10, fullBatch}, profile, -1, 10, postSearchSort)
+	names := make([]string, len(sorted))
+	for i, r := range sorted {
+		names[i] = r.Name
+	}
+	// Last two must be the wrong-episode releases (order between them not asserted).
+	last2 := map[string]bool{names[len(names)-1]: true, names[len(names)-2]: true}
+	assert.True(t, last2[wrongBatch.Name] && last2[wrongSingle.Name],
+		"wrong-episode releases must be buried at the bottom even when cached; got order %v", names)
+	assert.NotEqual(t, wrongBatch.Name, names[0])
 }
 
 func TestAutoSelect_SeasonGate(t *testing.T) {
@@ -605,7 +638,7 @@ func TestAutoSelect_SeasonGate(t *testing.T) {
 	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}
 
 	// expectedSeason = 2: the S1-only release must be dropped; S2 / season-less / combined kept.
-	result := s.filterAndSort(torrents, profile, 2, nil)
+	result := s.filterAndSort(torrents, profile, 2, 0, nil)
 
 	names := make([]string, len(result))
 	for i, r := range result {

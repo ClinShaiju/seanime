@@ -87,7 +87,7 @@ func (h *Handler) HandleSearchTorrent(c echo.Context) error {
 		// Order the manual selection list like the auto-selector would (profile scoring,
 		// season match, cached-first), layering source cache flags on top of the API map.
 		if b.SortByAutoSelect {
-			ordered, cachedHashes := h.App.DebridClientRepository.RankTorrentsForDisplay(&b.Media, data.Torrents, data.DebridInstantAvailability)
+			ordered, cachedHashes := h.App.DebridClientRepository.RankTorrentsForDisplay(&b.Media, b.EpisodeNumber, data.Torrents, data.DebridInstantAvailability)
 			data.Torrents = ordered
 
 			if len(data.Previews) > 0 {
