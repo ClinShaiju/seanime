@@ -356,7 +356,7 @@ export function AnimeEntryPage() {
                             {...ENTRY_VIEW_TRANSITION}
                         >
                             <div className="h-10" />
-                            <MergedSeasonSection rootId={Number(mediaId)} seasonNumber={mergedSeason} />
+                            <MergedSeasonSection rootId={Number(mediaId)} seasonNumber={mergedSeason.season} tmdb={mergedSeason.tmdb} />
                             {bottomSection}
                         </PageWrapper>}
 

@@ -12,17 +12,19 @@ import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { atom } from "jotai"
 import React from "react"
 
-// Selected merged season number on the entry page (null = normal single-entry view).
-export const __entry_mergedSeasonAtom = atom<number | null>(null)
+// Selected merged season on the entry page (null = normal single-entry view).
+// Carries the TMDB id to distinguish real cours from mislabeled same-season siblings.
+export type MergedSeasonSelection = { season: number, tmdb: string }
+export const __entry_mergedSeasonAtom = atom<MergedSeasonSelection | null>(null)
 
 // MergedSeasonSection renders a split-cour season as one continuous episode list,
 // mirroring the normal episode section (a "to watch" carousel + the full list).
 // Episodes keep their source cour, so watched status is per-cour; clicking an episode
 // opens its cour's entry page to play (full in-place playback is the next stage).
-export function MergedSeasonSection({ rootId, seasonNumber }: { rootId: number, seasonNumber: number }) {
+export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: number, seasonNumber: number, tmdb: string }) {
     const ts = useThemeSettings()
     const router = useRouter()
-    const { data, isLoading } = useGetMergedSeason(rootId, seasonNumber)
+    const { data, isLoading } = useGetMergedSeason(rootId, seasonNumber, tmdb)
 
     // Per-cour AniList progress, used to compute per-episode watched status.
     const courProgress = React.useMemo(() => {
@@ -46,8 +48,9 @@ export function MergedSeasonSection({ rootId, seasonNumber }: { rootId: number, 
     const toWatch = unwatched.length > 0 ? unwatched : [...episodes].reverse()
 
     // Open the episode's source cour to play (interim until in-place playback is wired).
+    // ?single=1 suppresses auto-merge so the cour shows its own episode list to play.
     const openCour = (ep: Anime_Episode) => {
-        if (ep.baseAnime?.id) router.push(`/entry?id=${ep.baseAnime.id}`)
+        if (ep.baseAnime?.id) router.push(`/entry?id=${ep.baseAnime.id}&single=1`)
     }
 
     if (isLoading) return <div className="py-16 flex justify-center"><LoadingSpinner /></div>

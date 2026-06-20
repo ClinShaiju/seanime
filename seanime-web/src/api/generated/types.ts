@@ -1669,6 +1669,10 @@ export type Anime_GroupedEntry = {
     media?: AL_BaseAnime
     mediaId: number
     /**
+     * for distinguishing cours of the same season from mislabeled siblings
+     */
+    tmdbId: string
+    /**
      * -1 if unknown
      */
     seasonNumber: number

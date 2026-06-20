@@ -84,6 +84,7 @@ type (
 	GroupedEntry struct {
 		Media        *anilist.BaseAnime `json:"media"`
 		MediaId      int                `json:"mediaId"`
+		TmdbId       string             `json:"tmdbId"`       // for distinguishing cours of the same season from mislabeled siblings
 		SeasonNumber int                `json:"seasonNumber"` // -1 if unknown
 		IsExtra      bool               `json:"isExtra"`      // movie/OVA/special (TMDB season 0 or non-TV format)
 	}
@@ -126,6 +127,7 @@ func GroupEntriesByFranchise(medias []*anilist.BaseAnime, refs map[int]Franchise
 		buckets[key] = append(buckets[key], &GroupedEntry{
 			Media:        m,
 			MediaId:      m.GetID(),
+			TmdbId:       ref.TmdbId,
 			SeasonNumber: ref.SeasonNumber,
 			IsExtra:      isExtra(m, ref.SeasonNumber),
 		})
@@ -152,6 +154,7 @@ func BuildFranchiseFromMembers(medias []*anilist.BaseAnime, refs map[int]Franchi
 		entries = append(entries, &GroupedEntry{
 			Media:        m,
 			MediaId:      m.GetID(),
+			TmdbId:       ref.TmdbId,
 			SeasonNumber: ref.SeasonNumber,
 			IsExtra:      isExtra(m, ref.SeasonNumber),
 		})

@@ -3,14 +3,16 @@ import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { Anime_FranchiseGroup, Anime_FranchiseRefEntry, Anime_MergedSeason, Nullish } from "@/api/generated/types"
 import React from "react"
 
-// useGetMergedSeason fetches a split-cour season merged into one continuous episode list.
-export function useGetMergedSeason(id: Nullish<string | number>, season: Nullish<number>, enabled = true) {
+// useGetMergedSeason fetches a split-cour season merged into one continuous episode
+// list. `tmdb` disambiguates real cours from siblings mislabeled with the same season.
+export function useGetMergedSeason(id: Nullish<string | number>, season: Nullish<number>, tmdb = "", enabled = true) {
+    const base = API_ENDPOINTS.ANIME_FRANCHISE.GetMergedSeason.endpoint
+        .replace("{id}", String(id))
+        .replace("{season}", String(season))
     return useServerQuery<Anime_MergedSeason>({
-        endpoint: API_ENDPOINTS.ANIME_FRANCHISE.GetMergedSeason.endpoint
-            .replace("{id}", String(id))
-            .replace("{season}", String(season)),
+        endpoint: tmdb ? `${base}?tmdb=${encodeURIComponent(tmdb)}` : base,
         method: API_ENDPOINTS.ANIME_FRANCHISE.GetMergedSeason.methods[0],
-        queryKey: [API_ENDPOINTS.ANIME_FRANCHISE.GetMergedSeason.key, String(id), String(season)],
+        queryKey: [API_ENDPOINTS.ANIME_FRANCHISE.GetMergedSeason.key, String(id), String(season), tmdb],
         enabled: !!id && season != null && enabled,
         staleTime: 1000 * 60 * 10,
         gcTime: 1000 * 60 * 30,

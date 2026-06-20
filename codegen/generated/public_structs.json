@@ -49707,6 +49707,17 @@
         "comments": []
       },
       {
+        "name": "TmdbId",
+        "jsonName": "tmdbId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " for distinguishing cours of the same season from mislabeled siblings"
+        ]
+      },
+      {
         "name": "SeasonNumber",
         "jsonName": "seasonNumber",
         "goType": "int",

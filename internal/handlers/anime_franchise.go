@@ -190,8 +190,12 @@ func (h *Handler) HandleGetMergedSeason(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
+	// Optional TMDB filter distinguishes real cours of a season from siblings that
+	// metadata mislabeled with the same season number (e.g. Ascendance's unreleased
+	// "Adopted Daughter", which has the same season number but a different/empty TMDB).
+	tmdb := c.QueryParam("tmdb")
 	cours := lo.Filter(group.Seasons, func(e *anime.GroupedEntry, _ int) bool {
-		return e.SeasonNumber == seasonNum && e.Media != nil
+		return e.SeasonNumber == seasonNum && e.Media != nil && (tmdb == "" || e.TmdbId == tmdb)
 	})
 	if len(cours) == 0 {
 		return h.RespondWithError(c, errors.New("no cours found for that season"))
