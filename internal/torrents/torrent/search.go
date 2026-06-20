@@ -116,6 +116,15 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 	if opts.Media.GetFormat() != nil {
 		format = *opts.Media.GetFormat()
 	}
+	// Provider-facing format: collapse episodic formats (TV_SHORT/ONA/OVA/SPECIAL) to TV so
+	// torrent provider extensions that only treat "TV" as a series — e.g. AIOStreams, whose
+	// `format === 'TV' ? 'series' : 'movie'` would otherwise query an ONA as a movie and drop
+	// all per-episode results — handle them as episodic. MOVIE/MUSIC are left as-is. This only
+	// changes the value passed to providers; Seanime's own logic reads the real AniList format.
+	switch format {
+	case anilist.MediaFormatTvShort, anilist.MediaFormatOna, anilist.MediaFormatOva, anilist.MediaFormatSpecial:
+		format = anilist.MediaFormatTv
+	}
 	var year int
 	if opts.Media.GetStartDate() != nil && opts.Media.GetStartDate().GetYear() != nil {
 		year = *opts.Media.GetStartDate().GetYear()
