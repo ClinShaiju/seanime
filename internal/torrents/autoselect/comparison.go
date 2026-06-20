@@ -33,10 +33,12 @@ const (
 	scoreBatch             = 20
 	scoreBestRelease       = 20
 	scoreSeasonMatch       = 60
-	// Penalty for results whose declared episodes can't include the requested one
-	// (e.g. an E01-07 batch when episode 10 was asked for). Large enough to bury them
-	// below every relevant result regardless of cache status.
-	scoreEpisodeMismatch = 200
+	// Ranking is layered by magnitude so the order is: correct episode → audio tier → (cache,
+	// applied separately) → format. Episode mismatch dominates the audio tiers; the audio tiers
+	// dominate format (max ~350). Goal: the top result is the highest-quality cached English dub.
+	scoreEpisodeMismatch = 100000 // wrong episode → always last, even cached
+	scoreEnglishDub      = 2000    // English (top-preferred) audio / dub present
+	scoreForeignAudio    = 2000    // a release only in a non-preferred foreign language
 )
 
 type candidate struct {
@@ -208,6 +210,83 @@ func isJapaneseToken(s string) bool {
 		return true
 	}
 	return false
+}
+
+// audioLanguageScore classifies a candidate's audio into three tiers and returns a score that
+// dominates format scoring. The goal is "highest-quality English dub on top":
+//   - English dub (top-preferred audio): big positive. Matches the top preferred language via a
+//     tag/flag/name, OR a dual/multi-audio release with no foreign dub flag (dual = JP original
+//     + a dub assumed to be the top preference unless a flag names a different one).
+//   - Japanese original / neutral / dual-with-foreign-dub (e.g. jp/fr): 0.
+//   - Foreign-only (a single non-preferred language, no JP original, not dual): big negative.
+func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
+	groups := profile.PreferredLanguages
+	if len(groups) == 0 {
+		return 0
+	}
+	parsed := c.parsed
+
+	matchesGroup := func(groupIdx int) bool {
+		if groupIdx < 0 || groupIdx >= len(groups) {
+			return false
+		}
+		for _, lang := range strings.Split(groups[groupIdx], ",") {
+			lang = strings.TrimSpace(lang)
+			if lang == "" {
+				continue
+			}
+			if slices.ContainsFunc(parsed.Language, func(pl string) bool { return strings.EqualFold(pl, lang) }) ||
+				slices.ContainsFunc(c.flagLanguages, func(fl string) bool { return strings.EqualFold(fl, lang) }) ||
+				containsBoundedTerm(c.lowerName, lang) {
+				return true
+			}
+		}
+		return false
+	}
+
+	tokenInAnyGroup := func(tok string) bool {
+		for gi := range groups {
+			for _, lang := range strings.Split(groups[gi], ",") {
+				if strings.EqualFold(strings.TrimSpace(lang), tok) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	isDual := containsMultiOrDual(parsed.AudioTerm) || containsMultiOrDual([]string{c.lowerName})
+
+	// A declared language (flag emoji or parsed tag) that isn't in any preferred group is a
+	// foreign dub (e.g. FR, RU).
+	hasForeignLang := false
+	for _, fl := range c.flagLanguages {
+		if !tokenInAnyGroup(fl) {
+			hasForeignLang = true
+			break
+		}
+	}
+	if !hasForeignLang {
+		for _, pl := range parsed.Language {
+			if !tokenInAnyGroup(pl) {
+				hasForeignLang = true
+				break
+			}
+		}
+	}
+	hasJapanese := slices.ContainsFunc(c.flagLanguages, isJapaneseToken) ||
+		slices.ContainsFunc(parsed.Language, isJapaneseToken)
+
+	// English dub: top preferred audio present, or a dual with no foreign dub language.
+	if matchesGroup(0) || (isDual && !hasForeignLang) {
+		return scoreEnglishDub
+	}
+	// Foreign-only: a declared non-preferred language with no JP original and not dual.
+	if hasForeignLang && !isDual && !hasJapanese {
+		return -scoreForeignAudio
+	}
+	// Japanese original / neutral / dual-with-foreign (jp/fr).
+	return 0
 }
 
 func containsMultiOrDual(terms []string) bool {
@@ -462,9 +541,11 @@ func (s *AutoSelect) sortCandidates(candidates []*candidate, profile *anime.Auto
 	})
 }
 
-// smartCachedPrioritization applies the postSearchSort (which identifies cached torrents)
-// and reorders results to prioritize cached torrents that have similar quality scores.
-// It prevents low-quality cached torrents from being prioritized over high quality uncached ones.
+// smartCachedPrioritization applies the postSearchSort (which identifies cached torrents) and
+// puts ALL cached torrents before all uncached ones, preserving the existing score order within
+// each group. Cache is the outermost sort key (cached first), then the per-candidate score
+// (English dub → format quality). For debrid streaming a cached stream plays instantly, so it
+// always wins; the score order then surfaces the best English dub within each cache group.
 func (s *AutoSelect) smartCachedPrioritization(
 	torrents []*hibiketorrent.AnimeTorrent,
 	candidates []*candidate,
@@ -476,65 +557,68 @@ func (s *AutoSelect) smartCachedPrioritization(
 		return torrents
 	}
 
-	// Get torrents with explicit cache status
-	torrentsWithStatus := postSearchSort(torrents)
-
-	// Build a map of scores for each torrent
 	candidateMap := make(map[string]*candidate, len(candidates))
 	for _, c := range candidates {
 		candidateMap[c.torrent.InfoHash] = c
 	}
 
-	// Find the top score
-	topScore := 0
-	if len(candidates) > 0 {
-		topScore = candidates[0].score
+	type rankItem struct {
+		torrent *hibiketorrent.AnimeTorrent
+		score   int
+		cached  bool
+	}
+	items := make([]rankItem, 0, len(torrents))
+	for _, tws := range postSearchSort(torrents) {
+		score := 0
+		if c, ok := candidateMap[tws.Torrent.InfoHash]; ok {
+			score = c.score
+		}
+		items = append(items, rankItem{torrent: tws.Torrent, score: score, cached: tws.IsCached})
 	}
 
-	// cached torrents must be within 30% of the top score
-	// this ensures we don't prioritize very low-quality cached torrents
-	const scoreThresholdPercent = 0.7 // 70% of top score
-	scoreThreshold := int(float64(topScore) * scoreThresholdPercent)
-
-	// separate by cache status and quality
-	highQualityCached := make([]*hibiketorrent.AnimeTorrent, 0)
-	lowQualityCached := make([]*hibiketorrent.AnimeTorrent, 0)
-	uncached := make([]*hibiketorrent.AnimeTorrent, 0)
-
-	for _, tws := range torrentsWithStatus {
-		c, ok := candidateMap[tws.Torrent.InfoHash]
-		if !ok {
-			continue
+	// Sort lexicographically: audio/episode band (from the score magnitude) → cached within the
+	// band → format score → seeders. So order is correct-episode English dub → … → foreign →
+	// wrong-episode, and within each band the cached releases come first, then by format.
+	slices.SortStableFunc(items, func(a, b rankItem) int {
+		if ba, bb := scoreBand(a.score), scoreBand(b.score); ba != bb {
+			return cmp.Compare(bb, ba)
 		}
-
-		if tws.IsCached {
-			if c.score >= scoreThreshold {
-				highQualityCached = append(highQualityCached, tws.Torrent)
-			} else {
-				lowQualityCached = append(lowQualityCached, tws.Torrent)
+		if a.cached != b.cached {
+			if a.cached {
+				return -1
 			}
-		} else {
-			uncached = append(uncached, tws.Torrent)
+			return 1
 		}
-	}
+		if a.score != b.score {
+			return cmp.Compare(b.score, a.score)
+		}
+		return cmp.Compare(b.torrent.Seeders, a.torrent.Seeders)
+	})
 
-	// final order: high-quality cached, then uncached, then low-quality cached
 	result := make([]*hibiketorrent.AnimeTorrent, 0, len(torrents))
-	result = append(result, highQualityCached...)
-	result = append(result, uncached...)
-	result = append(result, lowQualityCached...)
-
-	for i, t := range result {
+	for i, it := range items {
+		result = append(result, it.torrent)
 		if i < 3 {
-			c, ok := candidateMap[t.InfoHash]
-			if !ok {
-				continue
-			}
-			s.logger.Debug().Str("name", t.Name).Int("seeders", t.Seeders).Int("score", c.score).Str("provider", t.Provider).Msg("autoselect: Top candidates")
+			s.logger.Debug().Str("name", it.torrent.Name).Bool("cached", it.cached).Int("score", it.score).Str("provider", it.torrent.Provider).Msg("autoselect: Top candidates")
 		}
 	}
-
 	return result
+}
+
+// scoreBand maps a candidate score to its ranking band, given the magnitude layering: episode
+// mismatch (-100000) << foreign (-2000) < jp/neutral (~0) < English dub (+2000), with format
+// adding at most a few hundred. Higher band = ranked higher.
+func scoreBand(score int) int {
+	switch {
+	case score < -50000:
+		return 0 // wrong episode (or otherwise excluded) — always last
+	case score <= -1000:
+		return 1 // foreign-only audio
+	case score >= 1000:
+		return 3 // English dub
+	default:
+		return 2 // Japanese original / neutral
+	}
 }
 
 func (s *AutoSelect) calculateScore(c *candidate, profile *anime.AutoSelectProfile) int {
@@ -632,44 +716,8 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 		}
 	}
 
-	// Language. Best-language-wins: preferred languages are checked in priority order, matching
-	// the parsed language, decoded flag emoji, the name, OR — for dual/multi-audio — the implied
-	// Japanese original. A "Dual Audio" release carries the original (JP) + a dub whose language
-	// is given by the flags, NOT assumed to be English: so dual/fr ranks as jp/fr, dual/en as
-	// jp/en, dual with no flag as jp. jp/ru ranks as jp; a single fr/es/ru release is demoted.
-	if len(profile.PreferredLanguages) > 0 {
-		isDual := containsMultiOrDual(parsed.AudioTerm) || containsMultiOrDual([]string{c.lowerName})
-		langMatched := false
-		for i, languages := range profile.PreferredLanguages {
-			for _, lang := range strings.Split(languages, ",") {
-				lang = strings.TrimSpace(lang)
-				if lang == "" {
-					continue
-				}
-				if slices.ContainsFunc(parsed.Language, func(pl string) bool {
-					return strings.EqualFold(pl, lang)
-				}) || slices.ContainsFunc(c.flagLanguages, func(fl string) bool {
-					return strings.EqualFold(fl, lang)
-				}) || containsBoundedTerm(c.lowerName, lang) || (isDual && isJapaneseToken(lang)) {
-					priority += scoreLanguageBase - (i * scoreLanguageDecay)
-					langMatched = true
-					break
-				}
-			}
-			if langMatched {
-				break
-			}
-		}
-
-		// A release "declares" a language via a parsed tag, a flag, or being dual-audio (which
-		// implies the Japanese original). Demote only when something is declared and none match
-		// — e.g. a single French/Spanish/Russian release (a dual/fr release matches the implied
-		// JP and is not demoted).
-		hasDeclaredLang := len(parsed.Language) > 0 || len(c.flagLanguages) > 0 || isDual
-		if !langMatched && hasDeclaredLang {
-			priority -= scoreLanguageUnpreferred
-		}
-	}
+	// Audio language: English dub on top, foreign-only demoted (dominates format below).
+	priority += audioLanguageScore(c, profile)
 
 	// Multiple audio preference (prefer/avoid)
 	isMultiAudio := containsMultiOrDual(parsed.AudioTerm)

@@ -375,13 +375,15 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			expectedOrder: []string{highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
 		},
 		{
-			name:         "Low quality cached should NOT be prioritized over high quality uncached",
+			// Cached-first within the same audio tier: the cached 480p comes first, then the
+			// uncached ones by format. (Cache outranks format, per "cached should always be first".)
+			name:         "Cached comes first within the same audio tier",
 			torrents:     []*hibiketorrent.AnimeTorrent{highQuality1080p, mediumQuality1080p, lowQuality720p, veryLowQuality480p},
 			cachedHashes: []string{"hash4"}, // veryLowQuality480p is cached
 			profile: &anime.AutoSelectProfile{
 				Resolutions: []string{"1080p"},
 			},
-			expectedOrder: []string{highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
+			expectedOrder: []string{veryLowQuality480p.Name, highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name},
 		},
 		{
 			name:         "Medium quality cached within threshold should be prioritized",
@@ -403,13 +405,14 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			expectedOrder: []string{highQuality1080pAlt.Name, highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
 		},
 		{
-			name:         "Mixed cached (high and low quality)",
+			// Both cached ones come first (ordered by format), then the uncached ones (by format).
+			name:         "Mixed cached: cached first, then by format",
 			torrents:     []*hibiketorrent.AnimeTorrent{highQuality1080p, mediumQuality1080p, lowQuality720p, veryLowQuality480p},
 			cachedHashes: []string{"hash1", "hash4"}, // High and very low quality cached
 			profile: &anime.AutoSelectProfile{
 				Resolutions: []string{"1080p"},
 			},
-			expectedOrder: []string{highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
+			expectedOrder: []string{highQuality1080p.Name, veryLowQuality480p.Name, mediumQuality1080p.Name, lowQuality720p.Name},
 		},
 		{
 			name:         "When all cached, maintain quality-based order",
@@ -441,15 +444,14 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			expectedOrder: []string{lowQuality720p.Name, highQuality1080p.Name},
 		},
 		{
-			name:         "Cached 480p should NOT beat uncached 1080p",
+			// Cache outranks format within the same audio tier, so the cached 480p comes first.
+			name:         "Cached 480p beats uncached 1080p (same audio tier)",
 			torrents:     []*hibiketorrent.AnimeTorrent{highQuality1080p, veryLowQuality480p},
 			cachedHashes: []string{"hash4"}, // 480p is cached
 			profile: &anime.AutoSelectProfile{
 				Resolutions: []string{"1080p"}, // Only 1080p preferred
 			},
-			// 480p gets no resolution bonus, so score is very low (below 70% threshold)
-			// Should NOT be prioritized even though cached
-			expectedOrder: []string{highQuality1080p.Name, veryLowQuality480p.Name},
+			expectedOrder: []string{veryLowQuality480p.Name, highQuality1080p.Name},
 		},
 	}
 
@@ -568,13 +570,14 @@ func TestAutoSelect_LanguageDemotion(t *testing.T) {
 		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
 	}
 
-	eng := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [English].mkv", InfoHash: "eng", Seeders: 10}
-	jpru := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese] [Russian].mkv", InfoHash: "jpru", Seeders: 20}
-	ruOnly := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Russian].mkv", InfoHash: "ru", Seeders: 500}
+	// Languages expressed as flag emoji (as aggregators do — habari can't read them).
+	eng := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] 🌐 🇬🇧", InfoHash: "eng", Seeders: 10}
+	jpru := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] 🌐 🇯🇵 🇷🇺", InfoHash: "jpru", Seeders: 20}
+	ruOnly := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] 🌐 🇷🇺", InfoHash: "ru", Seeders: 500}
 
-	// ru-only is the only cached one and has by far the most seeders. Without the demotion,
-	// cache-first would float it to the top; the demotion must sink it below the uncached
-	// preferred-language releases. jp/ru matches "jp" and stays alongside jp-tier.
+	// ru-only is the only cached one and has by far the most seeders, but it's in the foreign
+	// audio tier, which sits below the English/Japanese tiers — so cache (within-tier) can't
+	// float it above them. jp/ru has the JP original and stays in the middle tier.
 	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
 		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
 		for _, tr := range torrents {
@@ -600,9 +603,9 @@ func TestAutoSelect_LanguageTiers(t *testing.T) {
 		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
 	}
 
-	// en-only and explicit jp/en form the top (en) tier. Dual-audio implies the JP original, so
-	// dual-no-flag and jp-only and jp/ru share the JP tier — dual is NOT assumed to be en. Seeders
-	// only break ties within a tier, so the jp releases get the most seeders to prove tier wins.
+	// English dub tier (top): en-only, jp/en, and dual-audio (English dub assumed when no foreign
+	// flag). Japanese/neutral tier (below): jp-only, jp/ru. Seeders only break ties within a tier,
+	// so the jp releases get the most seeders to prove the audio tier wins over seeders.
 	enOnly := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [English].mkv", InfoHash: "en", Seeders: 1}
 	jpEn := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese] [English].mkv", InfoHash: "jpen", Seeders: 2}
 	dual := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Dual Audio].mkv", InfoHash: "dual", Seeders: 3}
@@ -614,13 +617,12 @@ func TestAutoSelect_LanguageTiers(t *testing.T) {
 	for i, r := range sorted {
 		pos[r.InfoHash] = i
 	}
-	// Top two (any order) are the en-tier; dual/jp/jpru are below them.
-	top2 := map[string]bool{sorted[0].InfoHash: true, sorted[1].InfoHash: true}
-	assert.True(t, top2["en"] && top2["jpen"],
-		"en-only and jp/en must form the top tier; got %v / %v", sorted[0].Name, sorted[1].Name)
-	assert.Greater(t, pos["dual"], pos["en"], "dual-audio (implied jp) ranks below the en tier")
-	assert.Greater(t, pos["dual"], pos["jpen"], "dual-audio ranks below jp/en")
-	assert.Greater(t, pos["jp"], pos["en"], "jp-only must rank below the en tier despite more seeders")
+	// Top three (any order) are the English-dub tier; jp-only / jp/ru are below.
+	top3 := map[string]bool{sorted[0].InfoHash: true, sorted[1].InfoHash: true, sorted[2].InfoHash: true}
+	assert.True(t, top3["en"] && top3["jpen"] && top3["dual"],
+		"en-only, jp/en, and dual-audio form the English-dub tier; got %v/%v/%v", sorted[0].Name, sorted[1].Name, sorted[2].Name)
+	assert.Greater(t, pos["jp"], pos["dual"], "jp-only ranks below the English-dub tier despite more seeders")
+	assert.Greater(t, pos["jpru"], pos["dual"], "jp/ru ranks below the English-dub tier")
 }
 
 func TestAutoSelect_FlagLanguages(t *testing.T) {
