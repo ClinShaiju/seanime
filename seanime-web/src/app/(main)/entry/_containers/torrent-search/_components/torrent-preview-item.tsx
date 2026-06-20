@@ -140,23 +140,28 @@ const TorrentPreviewItem = memo((props: TorrentPreviewItemProps) => {
 
     const mainTitle = React.useMemo(() => {
         const episodeNumbers = metadata?.episode_number
-        if (!isBatch) {
-            if (!!displayName) return displayName
-
-            if (episodeNumbers?.length === 1) return (
-                `Episode ${parseInt(episodeNumbers[0])}`
-            )
-
-            if (episodeNumbers?.length === 0) return (
-                `Batch`
-            )
-
-            if (metadata?.formatted_title) return metadata.formatted_title
-            return ""
-        }
-        let t = ""
         const seasonNumbers = metadata?.season_number
         const partNumbers = metadata?.part_number
+
+        // A parsed episode range (e.g. E01-07) is a batch even when the isBatch flag wasn't set.
+        // Show it as "Batch X-Y" so multi-episode packs aren't mislabeled "Episode X".
+        if (episodeNumbers?.length && episodeNumbers.length > 1) {
+            const a = parseInt(episodeNumbers[0])
+            const b = parseInt(episodeNumbers[episodeNumbers.length - 1])
+            let t = `Batch ${a}-${b}`
+            if (seasonNumbers?.length === 1) t += ` (Season ${parseInt(seasonNumbers[0])})`
+            return t
+        }
+
+        if (!isBatch) {
+            if (!!displayName) return displayName
+            if (episodeNumbers?.length === 1) return `Episode ${parseInt(episodeNumbers[0])}`
+            if (metadata?.formatted_title) return metadata.formatted_title
+            return "Batch"
+        }
+
+        // isBatch with no episode range: fall back to part / season ranges, else generic Batch.
+        let t = ""
         if (partNumbers?.length && partNumbers.length > 1) {
             const s1 = parseInt(partNumbers[0])
             const lastS = parseInt(partNumbers[partNumbers.length - 1])
@@ -183,17 +188,11 @@ const TorrentPreviewItem = memo((props: TorrentPreviewItemProps) => {
                 return `Season ${s1}`
             }
         }
-        if (episodeNumbers?.length && episodeNumbers?.length > 1) {
-            t = `Episodes ${parseInt(episodeNumbers[0])} to ${parseInt(episodeNumbers[episodeNumbers.length - 1])}`
-            if (seasonNumbers?.length === 1) {
-                t += ` (Season ${parseInt(seasonNumbers[0])})`
-            }
-            return t
-        } else if (seasonNumbers?.length && seasonNumbers.length === 1) {
+        if (seasonNumbers?.length === 1) {
             return `Season ${parseInt(seasonNumbers[0])}`
         }
         return "Batch"
-    }, [displayName, metadata])
+    }, [displayName, metadata, isBatch])
 
     return (
         <div

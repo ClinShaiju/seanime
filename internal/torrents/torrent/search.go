@@ -315,7 +315,9 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 			defer wg.Done()
 			tMetadata, found := metadataCache.Get(t.Name)
 			if !found {
-				m := habari.Parse(t.Name)
+				// Strip file-size tokens so habari doesn't read the size (e.g. "833 MB") as the
+				// episode number for aggregator names that lack a clear episode token.
+				m := habari.Parse(util.StripSizeTokens(t.Name))
 				var distance *comparison.LevenshteinResult
 				distance, ok := comparison.FindBestMatchWithLevenshtein(&m.Title, opts.Media.GetAllTitles())
 				if !ok {
@@ -536,7 +538,7 @@ func (r *Repository) createAnimeTorrentPreview(opts createAnimeTorrentPreviewOpt
 	var parsedData *habari.Metadata
 	tMetadata, found := metadataCache.Get(opts.torrent.Name)
 	if !found { // Should always be found
-		parsedData = habari.Parse(opts.torrent.Name)
+		parsedData = habari.Parse(util.StripSizeTokens(opts.torrent.Name))
 		newM := &TorrentMetadata{
 			Distance: 1000,
 			Metadata: parsedData,
