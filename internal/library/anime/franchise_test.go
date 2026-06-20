@@ -27,6 +27,18 @@ func TestFranchiseTitleStem(t *testing.T) {
 	require.True(t, strings.Contains(sub, root))
 }
 
+func TestFranchiseStemsOverlap(t *testing.T) {
+	// Sibling seasons with different subtitles (romaji) share the franchise base.
+	require.True(t, FranchiseStemsOverlap(
+		FranchiseTitleStem("Honzuki no Gekokujou: Ryoushu no Youjo"),
+		FranchiseTitleStem("Honzuki no Gekokujou: Shisho ni Naru Tame ni wa Shudan wo Erandeiraremasen"),
+	))
+	// Different shows don't overlap.
+	require.False(t, FranchiseStemsOverlap(FranchiseTitleStem("MF Ghost 3rd Season"), FranchiseTitleStem("Initial D")))
+	// Containment still works.
+	require.True(t, FranchiseStemsOverlap("ascendance of a bookworm adopted daughter", "ascendance of a bookworm"))
+}
+
 func frMkMedia(id int, format anilist.MediaFormat, year, episodes int) *anilist.BaseAnime {
 	return &anilist.BaseAnime{
 		ID:        id,

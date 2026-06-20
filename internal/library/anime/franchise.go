@@ -40,6 +40,26 @@ func FranchiseTitleStem(title string) string {
 	return strings.TrimSpace(franchiseStemNonAlnum.ReplaceAllString(t, " "))
 }
 
+// FranchiseStemsOverlap reports whether two title stems likely belong to the same
+// franchise: one contains the other, OR they share at least two leading words. The
+// leading-words case matters because sibling seasons often carry different subtitles
+// (e.g. "Honzuki no Gekokujou: Shisho ni Naru…" vs "…: Ryoushu no Youjo"), so neither
+// stem contains the other even though they share the franchise base.
+func FranchiseStemsOverlap(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if strings.Contains(a, b) || strings.Contains(b, a) {
+		return true
+	}
+	aw, bw := strings.Fields(a), strings.Fields(b)
+	n := 0
+	for n < len(aw) && n < len(bw) && aw[n] == bw[n] {
+		n++
+	}
+	return n >= 2
+}
+
 // Season-select grouping (Stremio-style). Presentation-only overlay over AniList:
 // each season stays its own AniList entry underneath, so tracking is unchanged.
 // Grouping key = shared TMDB id (from animap, via the metadata provider); seasons

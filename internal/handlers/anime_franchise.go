@@ -6,7 +6,6 @@ import (
 	"seanime/internal/library/anime"
 	"seanime/internal/util/limiter"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -160,7 +159,7 @@ func (h *Handler) resolveFranchiseGroup(c echo.Context, mId int) (*anime.Franchi
 			return true
 		}
 		memStem := anime.FranchiseTitleStem(franchiseRootTitle(m))
-		return memStem != "" && (strings.Contains(memStem, rootStem) || strings.Contains(rootStem, memStem))
+		return anime.FranchiseStemsOverlap(memStem, rootStem)
 	})
 
 	group := anime.BuildFranchiseFromMembers(members, refs, relationOf)
