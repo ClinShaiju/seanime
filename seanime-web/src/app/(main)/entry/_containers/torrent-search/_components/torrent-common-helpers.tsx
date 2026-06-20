@@ -426,21 +426,27 @@ export const TorrentFilterSortControls: React.FC<{
                         </div>
                     </div>
                 </Popover>
-                {allowAutoSort && <Button
-                    size="xs"
-                    intent="gray-basic"
-                    className={cn(sortField === "auto" && "text-brand-300 font-semibold")}
-                    leftIcon={<TbSparkles className={cn("text-lg", sortField === "auto" ? "text-brand-300" : "opacity-50")} />}
-                    onClick={() => onSortChange("auto")}
-                >
-                    Auto
-                </Button>}
+                {/* When auto is allowed and no explicit column sort is active (null), auto is the
+                    effective order, so highlight it. dark:text-brand-300 is required to beat
+                    gray-basic's dark:text-gray-200, otherwise the active color never shows in dark mode. */}
+                {allowAutoSort && (() => {
+                    const autoActive = sortField === "auto" || !sortField
+                    return <Button
+                        size="xs"
+                        intent="gray-basic"
+                        className={cn(autoActive && "text-brand-300 dark:text-brand-300 font-semibold")}
+                        leftIcon={<TbSparkles className={cn("text-lg", autoActive ? "text-brand-300" : "opacity-50")} />}
+                        onClick={() => onSortChange("auto")}
+                    >
+                        Auto
+                    </Button>
+                })()}
                 {([["seeders", "Seeders"], ["size", "Size"], ["date", "Date"], ["resolution", "Resolution"]] as [SortField, string][]).map(([field, label]) => (
                     <Button
                         key={field}
                         size="xs"
                         intent="gray-basic"
-                        className={cn(sortField === field && "text-brand-300 font-semibold")}
+                        className={cn(sortField === field && "text-brand-300 dark:text-brand-300 font-semibold")}
                         leftIcon={<>{getSortIcon(sortField, field, sortDirection)}</>}
                         onClick={() => onSortChange(field)}
                     >
