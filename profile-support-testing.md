@@ -65,12 +65,19 @@ Pick ONE:
 - [ ] Browsing/playback still works for the regular user (shares the admin's AniList/library for now — see known gaps).
 - [ ] Attempt a config write via API as testuser → 403.
 
+## H. Per-user data — theme & playlists (P6, partial)
+
+- [ ] As cvslinc, set a custom theme (colors/background). Create `testuser`, sign in as them → testuser sees the **default** theme, not cvslinc's. Change it → cvslinc's theme is unaffected when you switch back.
+- [ ] Create a playlist as cvslinc; sign in as `testuser` → playlist list is **empty** (not cvslinc's). Create one as testuser; back as cvslinc → only cvslinc's shows.
+- [ ] **Upgrade carryover**: after the first deploy, cvslinc still has the pre-existing theme (backfilled from the old single-tenant row).
+
 ---
 
 ## Known gaps — NOT bugs (don't report these as failures)
 
 These are intentionally deferred to later phases:
-- **Per-user settings are still global** — theme/UI/playback prefs are shared; a change by anyone affects everyone. (P6 + P2-backend)
+- **Theme and playlists ARE now per-user** (P6). But **continuity (resume positions) and auto-select profiles are still shared** — they're driven by the playback flow, which isn't per-user until P3/P4.
+- **Server/library settings are still global/admin** — the settings table split (server vs user prefs) is P2-backend.
 - **AniList is shared** — all users currently see the admin's AniList account/collection. (P3)
 - **No in-app user-logout button** — use localStorage clear or the AniList "Sign out". (added later, P3)
 - **WebSocket events are broadcast** — scan/playback events not yet per-user. (P5)
