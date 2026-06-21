@@ -161,6 +161,21 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 
 		// If the content type is an EBML content type, we can create a metadata parser
 		if isEbmlContent(s.LoadContentType()) || s.LoadContentType() == "application/octet-stream" || s.LoadContentType() == "application/force-download" {
+			// Reuse a prewarmed parser for this URL if one exists — its GetMetadata is sync.Once
+			// cached, so this skips the ~2-3s parse (font download) entirely. Subtitle/attachment
+			// serving creates its own readers, so the parser's closed original reader is irrelevant.
+			if cached, ok := s.manager.parserCache.Get(s.streamUrl); ok {
+				s.logger.Debug().Msgf("directstream(http): Reusing prewarmed metadata parser for: %s", s.streamUrl)
+				metadata := cached.GetMetadata(context.Background())
+				if metadata != nil && metadata.Error == nil {
+					playbackInfo.MkvMetadata = metadata
+					playbackInfo.MkvMetadataParser = mo.Some(cached)
+					s.playbackInfo = &playbackInfo
+					return
+				}
+				// Cached parser was bad — fall through to a fresh parse.
+			}
+
 			reader, readErr := s.newMetadataReader()
 			if readErr != nil {
 				err = fmt.Errorf("failed to create reader for stream url: %w", readErr)
@@ -188,6 +203,8 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 
 			playbackInfo.MkvMetadata = metadata
 			playbackInfo.MkvMetadataParser = mo.Some(parser)
+			// Cache for instant re-press of this same episode (URL-keyed, short TTL).
+			s.manager.parserCache.SetT(s.streamUrl, parser, 15*time.Minute)
 		}
 
 		s.playbackInfo = &playbackInfo

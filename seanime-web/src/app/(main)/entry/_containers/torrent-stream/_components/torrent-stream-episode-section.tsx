@@ -20,6 +20,7 @@ type TorrentStreamEpisodeSectionProps = {
     entry: Anime_Entry
     episodeCollection: Anime_EpisodeCollection | undefined
     onEpisodeClick: (episode: Anime_Episode) => void
+    onEpisodeHover?: (episode: Anime_Episode) => void // intent-based prewarm on hover
     onPlayExternallyEpisodeClick?: (episode: Anime_Episode) => void
     onPlayNextEpisodeOnMount: (episode: Anime_Episode) => void
     bottomSection?: React.ReactNode
@@ -33,6 +34,7 @@ export function TorrentStreamEpisodeSection(props: TorrentStreamEpisodeSectionPr
         entry,
         episodeCollection,
         onEpisodeClick,
+        onEpisodeHover,
         onPlayNextEpisodeOnMount,
         bottomSection,
         onPlayExternallyEpisodeClick,
@@ -82,6 +84,7 @@ export function TorrentStreamEpisodeSection(props: TorrentStreamEpisodeSectionPr
                         <CarouselItem
                             key={episode?.localFile?.path || idx}
                             className={episodeCardCarouselItemClass(ts.smallerEpisodeCarouselSize)}
+                            onMouseEnter={() => onEpisodeHover?.(episode)}
                         >
                             <EpisodeCard
                                 key={episode.localFile?.path || ""}
@@ -130,6 +133,7 @@ export function TorrentStreamEpisodeSection(props: TorrentStreamEpisodeSectionPr
                     const episode = episodeCollection?.episodes?.[index]
                     return (<EpisodeGridItem
                             key={episode?.episodeNumber + (episode?.displayTitle || "")}
+                            onMouseEnter={() => episode && onEpisodeHover?.(episode as Anime_Episode)}
                             media={episode?.baseAnime as any}
                             title={episode?.displayTitle || episode?.baseAnime?.title?.userPreferred || ""}
                             image={episode?.episodeMetadata?.image || episode?.baseAnime?.coverImage?.large}

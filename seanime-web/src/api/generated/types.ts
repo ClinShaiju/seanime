@@ -3969,6 +3969,8 @@ export type Models_LibrarySettings = {
      */
     defaultPlaybackSource: string
     groupSeasons: boolean
+    hideFranchiseSpinoffs: boolean
+    hideFranchiseRecaps: boolean
 }
 
 /**

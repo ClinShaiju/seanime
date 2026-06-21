@@ -123,6 +123,10 @@ export function useHandleStartDebridStream() {
 
     return {
         isUsingNativePlayer: __isElectronDesktop__ && electronPlaybackMethod === ElectronPlaybackMethod.NativePlayer,
+        // The backend only consumes a preloaded stream for the native + external-player paths
+        // (not the desktop "default" mpv path). Prewarming for "default" would add a debrid torrent
+        // that never gets consumed, so callers gate speculative prewarms on this.
+        isPreloadablePlaybackType: getPlaybackType() !== "default",
         handleStreamSelection,
         handleAutoSelectStream,
         isPending,

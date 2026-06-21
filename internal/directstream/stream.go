@@ -846,6 +846,14 @@ func (m *Manager) FetchStreamInfo(streamUrl string) (info *StreamInfo, canStream
 }
 
 func (m *Manager) FetchStreamInfoWithHeaders(streamUrl string, headers http.Header) (info *StreamInfo, canStream bool) {
+	// Content-type/length are stable per URL — reuse a cached HEAD to skip the ~1-2s CDN round-trip
+	// (populated by the prewarm, so the play-time LoadContentType is instant).
+	if m.streamInfoCache != nil && streamUrl != "" {
+		if cached, ok := m.streamInfoCache.Get(streamUrl); ok && cached != nil {
+			return cached, true
+		}
+	}
+
 	_, isArchive := IsArchive(streamUrl)
 
 	m.Logger.Debug().Str("url", streamUrl).Msg("directstream(http): Fetching stream info")
@@ -886,10 +894,14 @@ func (m *Manager) FetchStreamInfoWithHeaders(streamUrl string, headers http.Head
 		return nil, false
 	}
 
-	return &StreamInfo{
+	info = &StreamInfo{
 		ContentType:   contentType,
 		ContentLength: contentLength,
-	}, true
+	}
+	if m.streamInfoCache != nil && streamUrl != "" {
+		m.streamInfoCache.SetT(streamUrl, info, 15*time.Minute)
+	}
+	return info, true
 }
 
 func IsArchive(streamUrl string) (hasExtension bool, isArchive bool) {

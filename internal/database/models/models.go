@@ -105,6 +105,10 @@ type LibrarySettings struct {
 	DefaultPlaybackSource     string `gorm:"column:default_playback_source" json:"defaultPlaybackSource"` // "", "library", "torrentstream", "debridstream", "onlinestream", "ext:[extensionId]"
 	// Season-select grouping (Stremio-style). Presentation-only; AniList tracking unchanged.
 	GroupSeasons bool `gorm:"column:group_seasons" json:"groupSeasons"`
+	// HideFranchiseSpinoffs drops SPIN-OFF entries from the season-select dropdown.
+	HideFranchiseSpinoffs bool `gorm:"column:hide_franchise_spinoffs" json:"hideFranchiseSpinoffs"`
+	// HideFranchiseRecaps drops RECAP (summary) entries from the season-select dropdown.
+	HideFranchiseRecaps bool `gorm:"column:hide_franchise_recaps" json:"hideFranchiseRecaps"`
 }
 
 func (o *LibrarySettings) GetLibraryPaths() (ret []string) {

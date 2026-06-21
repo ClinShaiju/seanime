@@ -331,12 +331,15 @@ func (t *RealDebrid) GetTorrentStreamUrl(ctx context.Context, opts debrid.Stream
 		defer func() {
 			close(doneCh)
 		}()
+		// ponytail: poll fast then back off (500ms→1s→2s→4s). Cached torrents report ready on the
+		// first poll, so the old fixed 4s first-wait burned ~4s on the common case. Cap at 4s.
+		delay := 500 * time.Millisecond
 		for {
 			select {
 			case <-ctx.Done():
 				err = ctx.Err()
 				return
-			case <-time.After(4 * time.Second):
+			case <-time.After(delay):
 				ti, _err := t.getTorrentInfo(opts.ID)
 				if _err != nil {
 					t.logger.Error().Err(_err).Msg("realdebrid: Failed to get torrent")
@@ -363,7 +366,7 @@ func (t *RealDebrid) GetTorrentStreamUrl(ctx context.Context, opts debrid.Stream
 
 				// Check if the torrent is ready
 				if dt.IsReady {
-					time.Sleep(1 * time.Second)
+					time.Sleep(1 * time.Second) // ponytail: settle hedge before unrestricting the link; drop if it never fails
 
 					files := make([]*TorrentInfoFile, 0)
 					for _, f := range ti.Files {
@@ -391,6 +394,10 @@ func (t *RealDebrid) GetTorrentStreamUrl(ctx context.Context, opts debrid.Stream
 					}
 					err = fmt.Errorf("realdebrid: File not found")
 					return
+				}
+
+				if delay < 4*time.Second {
+					delay *= 2
 				}
 			}
 		}

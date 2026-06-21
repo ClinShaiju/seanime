@@ -6,6 +6,7 @@ import { TRANSPARENT_SIDEBAR_BANNER_IMG_STYLE } from "@/app/(main)/_features/cus
 import { MediaEntryAudienceScore } from "@/app/(main)/_features/media/_components/media-entry-metadata-components"
 import { useMediaPreviewModal } from "@/app/(main)/_features/media/_containers/media-preview-modal"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
+import { useDebridPrewarm } from "@/app/(main)/entry/_containers/debrid-stream/_lib/use-debrid-prewarm"
 import { imageShimmer } from "@/components/shared/image-helpers"
 import { SeaImage } from "@/components/shared/sea-image"
 import { SeaLink } from "@/components/shared/sea-link"
@@ -258,6 +259,16 @@ function EpisodeCardSidebar({ episode, isTransitioning }: EpisodeCardSidebarProp
     const { setPlayNext } = usePlayNext()
     const { data: watchHistory } = useGetContinuityWatchHistory()
 
+    // #7: prewarm this show's next-up debrid stream on hover (debounced, gated to debrid + preload +
+    // a preloadable player). The backend de-dupes, so this overlaps harmlessly with the server-side
+    // continue-watching prewarm and the entry-page prewarm.
+    const { prewarm: prewarmDebrid } = useDebridPrewarm()
+    const handleHoverPrewarm = () => prewarmDebrid({
+        mediaId: episode.baseAnime?.id,
+        episodeNumber: episode.episodeNumber,
+        aniDBEpisode: episode.aniDBEpisode,
+    }, { debounceMs: 600 })
+
     const handleEpisodeClick = () => {
         setPlayNext(episode.baseAnime?.id, () => {
             if (!serverStatus?.isOffline) {
@@ -295,6 +306,7 @@ function EpisodeCardSidebar({ episode, isTransitioning }: EpisodeCardSidebarProp
                             stiffness: 100,
                         },
                     }}
+                    onMouseEnter={handleHoverPrewarm}
                     className="2xl:w-[500px] xl:w-[400px] lg:w-[300px] rounded-xl overflow-hidden"
                 >
                     {/* <div className="w-[160%] h-[120%] -left-[30%] -top-0 opacity-50 absolute z-[1]">

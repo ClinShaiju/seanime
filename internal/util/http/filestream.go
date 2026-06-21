@@ -5,11 +5,46 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 )
+
+// fileStreamTempPrefix is the prefix used for FileStream temp files (see NewFileStream).
+const fileStreamTempPrefix = "filestream_"
+
+// CleanupStaleFileStreams removes orphaned FileStream temp files left in TempDir by playbacks that
+// ended abnormally (crash / hard kill) before Close() could remove them. These are sparse files, so
+// real disk leaked is usually small, but they accumulate over time. Safe to call at startup — no
+// FileStream is active then. Age-gated (30m) as a guard against a concurrently-running instance.
+func CleanupStaleFileStreams(logger *zerolog.Logger) {
+	dir := os.TempDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-30 * time.Minute)
+	removed := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, fileStreamTempPrefix) || !strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue // skip recently-touched files (possible live playback from another instance)
+		}
+		if os.Remove(filepath.Join(dir, name)) == nil {
+			removed++
+		}
+	}
+	if removed > 0 && logger != nil {
+		logger.Info().Int("count", removed).Msg("httputil: Cleaned up stale filestream temp files")
+	}
+}
 
 type piece struct {
 	start int64
@@ -38,7 +73,7 @@ type FileStreamReader interface {
 
 // NewFileStream creates a new FileStream instance with a temporary file
 func NewFileStream(ctx context.Context, logger *zerolog.Logger, contentLength int64) (*FileStream, error) {
-	file, err := os.CreateTemp("", "filestream_*.tmp")
+	file, err := os.CreateTemp("", fileStreamTempPrefix+"*.tmp")
 	if err != nil {
 		return nil, err
 	}

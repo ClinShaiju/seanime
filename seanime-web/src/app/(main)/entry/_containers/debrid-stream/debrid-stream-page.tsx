@@ -4,6 +4,7 @@ import { useDeleteTorrentstreamBatchHistory, useGetTorrentstreamBatchHistory } f
 import { useDebridstreamAutoplay } from "@/app/(main)/_features/autoplay/autoplay"
 import { useSelectedDebridService, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { useHandleStartDebridStream } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-stream"
+import { useDebridPrewarm } from "@/app/(main)/entry/_containers/debrid-stream/_lib/use-debrid-prewarm"
 import { ENTRY_VIEW_TRANSITION } from "@/app/(main)/entry/_containers/entry-view-transition"
 import { useTorrentSearchSelectedStreamEpisode } from "@/app/(main)/entry/_containers/torrent-search/_lib/handle-torrent-selection"
 import {
@@ -93,6 +94,24 @@ export function DebridStreamPage(props: DebridStreamPageProps) {
 
     // Hook to handle starting the debrid stream
     const { handleAutoSelectStream, handleStreamSelection, isUsingNativePlayer } = useHandleStartDebridStream()
+
+    // Entry-page (search flow) prewarm: resolve the next-up episode ahead of an explicit click so
+    // it plays instantly. Only when auto-select is on (manual selection can't be preloaded).
+    const { prewarm: prewarmDebrid } = useDebridPrewarm()
+    React.useEffect(() => {
+        if (!autoSelect) return
+        const next = entry.nextEpisode
+        if (!next?.aniDBEpisode) return
+        prewarmDebrid({ mediaId: entry.mediaId, episodeNumber: next.episodeNumber, aniDBEpisode: next.aniDBEpisode })
+    }, [autoSelect, entry.mediaId, entry.nextEpisode?.episodeNumber, entry.nextEpisode?.aniDBEpisode])
+
+    // Intent-based prewarm: hovering an episode resolves its stream ahead of a click (debounced so
+    // only the episode you settle on is prewarmed; the hook de-dupes). Auto-select only — a manual
+    // torrent pick can't be preloaded.
+    const handleEpisodeHover = React.useCallback((episode: Anime_Episode) => {
+        if (!autoSelect || !episode?.aniDBEpisode) return
+        prewarmDebrid({ mediaId: entry.mediaId, episodeNumber: episode.episodeNumber, aniDBEpisode: episode.aniDBEpisode }, { debounceMs: 700 })
+    }, [autoSelect, entry.mediaId, prewarmDebrid])
 
     const { forcePlaybackMethodFn } = useForcePlaybackMethod()
 
@@ -353,6 +372,7 @@ export function DebridStreamPage(props: DebridStreamPageProps) {
                         episodeCollection={episodeCollection}
                         entry={entry}
                         onEpisodeClick={handleEpisodeClick}
+                        onEpisodeHover={handleEpisodeHover}
                         onPlayExternallyEpisodeClick={!isUsingNativePlayer ? undefined : (episode) => {
                             handleEpisodeClick(episode, "playbackmanager")
                         }}

@@ -253,8 +253,14 @@ Style: Default, Roboto Medium,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0
                 subtitleLog.info("Libass renderer ready")
 
 
+                // Append ?cv=<size> (content version) so the att URL is a stable, content-addressed
+                // cache key: the same font (same size) across episodes resolves to the same URL and is
+                // served from the browser cache (the att response is now `immutable`), instead of
+                // re-downloading large fonts (e.g. Arial Unicode ~22MB) every episode. The HMAC token
+                // validates the endpoint path only, so the extra query param doesn't affect auth.
                 this.fonts = this.playbackInfo.mkvMetadata?.attachments?.filter(a => a.type === "font")
-                    ?.map(a => `${getServerBaseUrl()}/api/v1/directstream/att/${a.filename}${this.hmacToken}`) || []
+                    ?.map(a => `${getServerBaseUrl()}/api/v1/directstream/att/${a.filename}?cv=${a.size}${this.hmacToken.replace(/^\?/, "&")}`)
+                    || []
 
                 if (!this.playbackInfo.libassFonts) {
                     this.fonts = [...new Set([...this.fonts, defaultFontUrl])]
@@ -262,7 +268,25 @@ Style: Default, Roboto Medium,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0
 
                 this.fonts = [defaultFontUrl, ...this.fonts]
 
-                await this.libassRenderer.renderer.addFonts(this.fonts)
+                // Load fonts WITHOUT blocking init/playback. When streaming from a remote server, the
+                // embedded fonts (esp. large ones like Arial Unicode ~22MB) are pulled over the
+                // internet, and jassub fetches them roughly serially — ~40s for a font-heavy release.
+                // Instead: prefetch all of them in PARALLEL first (concurrent round-trips + warms the
+                // immutable browser cache), then hand them to jassub (now served from cache). It runs
+                // in the background, so subtitles render with the fallback font immediately and switch
+                // to the correct fonts as these resolve, rather than the video waiting ~40s.
+                const fontUrls = this.fonts
+                void (async () => {
+                    try {
+                        await Promise.allSettled(fontUrls.map(u => fetch(u).then(r => r.blob()).catch(() => undefined)))
+                    } catch {
+                    }
+                    try {
+                        await this.libassRenderer?.renderer?.addFonts(fontUrls)
+                    } catch (e) {
+                        subtitleLog.error("Error adding fonts", e)
+                    }
+                })()
             }
             catch (e) {
                 subtitleLog.error("Error initializing libass renderer", e)

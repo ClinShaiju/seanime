@@ -146,5 +146,6 @@ declare global {
         openInBackground: boolean;
         openAtLaunch: boolean;
         updateChannel?: string;
+        serverUrl?: string;
     }
 }

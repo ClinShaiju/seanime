@@ -58,7 +58,35 @@ func (h *Handler) HandleGetAnimeFranchise(c echo.Context) error {
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
+	// Optionally drop spin-offs and/or recaps from the dropdown. Filtered post-cache (on a
+	// copy) so toggling a setting takes effect immediately without invalidating the cache.
+	if s, e := h.App.Database.GetSettings(); e == nil && s.Library != nil {
+		hide := map[string]bool{}
+		if s.Library.HideFranchiseSpinoffs {
+			hide["SPIN_OFF"] = true
+		}
+		if s.Library.HideFranchiseRecaps {
+			hide["SUMMARY"] = true
+		}
+		if len(hide) > 0 {
+			group = filterFranchiseRelations(group, hide)
+		}
+	}
 	return h.RespondWithData(c, group)
+}
+
+// filterFranchiseRelations returns a shallow copy of the group with extras whose
+// RelationType is in `hide` removed from Extras + WatchOrder (Seasons are never extras).
+// Does not mutate the cached group.
+func filterFranchiseRelations(g *anime.FranchiseGroup, hide map[string]bool) *anime.FranchiseGroup {
+	if g == nil {
+		return g
+	}
+	keep := func(e *anime.GroupedEntry, _ int) bool { return e == nil || !hide[e.RelationType] }
+	cp := *g
+	cp.Extras = lo.Filter(g.Extras, keep)
+	cp.WatchOrder = lo.Filter(g.WatchOrder, keep)
+	return &cp
 }
 
 // resolveFranchiseGroup walks the franchise relation tree (or returns the cached

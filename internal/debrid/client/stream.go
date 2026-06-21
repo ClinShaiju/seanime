@@ -30,11 +30,16 @@ type (
 
 		playbackSubscriberCtxCancelFunc context.CancelFunc
 
-		// Preloaded next-episode stream (native player autoplay).
-		// Resolved at ~80% of the current episode so the next start is instant.
-		preloadMu         sync.Mutex
-		preloadCancelFunc context.CancelFunc
-		preloadedStream   mo.Option[*preloadedDebridStream]
+		// Preloaded streams, resolved ahead of time so playback starts instantly. Keyed by
+		// media+episode (preloadKey). Holds the ~80% next-episode preload plus the server-side
+		// continue-watching prewarm (next-up of the last few shows watched).
+		preloadMu       sync.Mutex
+		preloads        map[string]*preloadedDebridStream // resolved, ready to consume
+		preloadInflight map[string]context.CancelFunc     // in-flight resolves, for dedupe/cancel
+		// lastConsumedKey is the preload entry currently being played. Kept (not deleted) on
+		// consume so re-pressing/restarting the same episode is instant; deleted on episode end
+		// (a different episode starts, or the stream is cancelled). TTL is the staleness backstop.
+		lastConsumedKey string
 	}
 
 	// preloadedDebridStream holds a fully-resolved debrid stream URL for a future episode.
@@ -46,6 +51,8 @@ type (
 		media         *anilist.BaseAnime
 		torrent       *hibiketorrent.AnimeTorrent
 		torrentItemId string
+		resolvedAt    time.Time // for TTL eviction; debrid URLs expire
+		priority      bool      // protected from eviction over speculative hover prewarms
 	}
 
 	StreamPlaybackType string
@@ -72,6 +79,13 @@ type (
 		BatchEpisodeFiles *hibiketorrent.BatchEpisodeFiles
 		// Preload is true when the stream should only be resolved and cached (not played).
 		Preload bool
+		// PrewarmMetadata, when set on a preload, also pre-parses the MKV metadata (skips the
+		// "Loading metadata" step on play). Gated to high-certainty targets (client next-episode
+		// preloads), NOT the speculative continue-watching prewarm, since it downloads fonts.
+		PrewarmMetadata bool
+		// Priority marks a high-value preload (the server's continue-watching next-up set the user
+		// is most likely to click). Such entries survive eviction over speculative hover prewarms.
+		Priority bool
 	}
 
 	CancelStreamOptions struct {
@@ -91,7 +105,24 @@ func NewStreamManager(repository *Repository) *StreamManager {
 	return &StreamManager{
 		repository:           repository,
 		currentTorrentItemId: "",
+		preloads:             make(map[string]*preloadedDebridStream),
+		preloadInflight:      make(map[string]context.CancelFunc),
 	}
+}
+
+const (
+	// preloadTTL bounds how long a resolved stream URL is trusted before we re-resolve.
+	preloadTTL = 15 * time.Minute
+	// maxSpeculativePreloads caps ONLY the speculative browse/search/discover hover prewarms.
+	// The continue-watching (priority) entries — the set the user actually clicks — are uncapped:
+	// they're bounded at the source (3 shows + next-ep) and self-expire via TTL, so the speculative
+	// hover firehose can never evict them.
+	maxSpeculativePreloads = 8
+)
+
+// preloadKey identifies a preload slot by the episode it targets.
+func preloadKey(opts *StartStreamOptions) string {
+	return fmt.Sprintf("%d|%d|%s", opts.MediaId, opts.EpisodeNumber, opts.AniDBEpisode)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -110,11 +141,26 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 	// Reuse a preloaded stream if one matches this episode (native player + external player link).
 	if canReusePreloadedStream(opts.PlaybackType) {
+		key := preloadKey(opts)
 		s.preloadMu.Lock()
-		cached, ok := s.preloadedStream.Get()
-		hit := ok && debridStreamOptionsMatch(opts, cached.opts)
-		// Drop the cache either way: a hit consumes it, a miss invalidates a stale preload.
-		s.clearPreloadedStreamLocked()
+		// A different episode is starting → the previously-consumed one has ended; drop its kept
+		// entry (replays of the SAME episode keep theirs, so this leaves a same-key hit intact).
+		if s.lastConsumedKey != "" && s.lastConsumedKey != key {
+			delete(s.preloads, s.lastConsumedKey)
+			s.lastConsumedKey = ""
+		}
+		cached, ok := s.preloads[key]
+		fresh := ok && time.Since(cached.resolvedAt) <= preloadTTL
+		hit := fresh && debridStreamOptionsMatch(opts, cached.opts)
+		if ok && !fresh {
+			delete(s.preloads, key) // stale (expired) → drop. A fresh-but-intent-mismatch entry
+			// (e.g. a manual pick when this episode was auto-select-preloaded) is kept, not consumed.
+		}
+		if hit {
+			// Keep the entry so a restart/re-press of this episode is instant; it's removed on
+			// episode end (next episode or cancelStream) and bounded by the TTL/slot cap.
+			s.lastConsumedKey = key
+		}
 		s.preloadMu.Unlock()
 		if hit {
 			return s.playPreloadedStream(ctx, opts, cached)
@@ -283,9 +329,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			return fmt.Errorf("debridstream: Failed to add torrent: %w", err)
 		}
 
-		// ponytail: brief settle after AddTorrent so the item is queryable; GetTorrentStreamUrl
-		// polls anyway (the preload path skips this entirely). Was 1s; 250ms shaves selection time.
-		time.Sleep(250 * time.Millisecond)
+		// ponytail: no settle needed — GetTorrentStreamUrl's first poll is now 500ms out (with
+		// backoff), which is plenty for the just-added item to become queryable.
 	}
 
 	// Save the current torrent item id
@@ -630,8 +675,14 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 }
 
 func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
+	// The playing episode is ending → drop only ITS kept preload entry (the one held for instant
+	// replay). Other shows' continue-watching prewarms stay warm; stale entries self-evict via TTL.
+	// Full reset (provider change/shutdown) uses ClearAllPreloads.
 	s.preloadMu.Lock()
-	s.clearPreloadedStreamLocked()
+	if s.lastConsumedKey != "" {
+		delete(s.preloads, s.lastConsumedKey)
+		s.lastConsumedKey = ""
+	}
 	s.preloadMu.Unlock()
 
 	if s.repository.directStreamManager != nil {
@@ -672,17 +723,88 @@ func debridStreamOptionsMatch(a, b *StartStreamOptions) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return a.MediaId == b.MediaId && a.EpisodeNumber == b.EpisodeNumber && a.AniDBEpisode == b.AniDBEpisode
+	if a.MediaId != b.MediaId || a.EpisodeNumber != b.EpisodeNumber || a.AniDBEpisode != b.AniDBEpisode {
+		return false
+	}
+	// A preload must match the SELECTION INTENT, not just the episode — otherwise a manual torrent
+	// pick for an episode that was auto-select-preloaded would silently play the cached auto-selected
+	// stream instead of the chosen one.
+	if a.AutoSelect != b.AutoSelect {
+		return false
+	}
+	if !a.AutoSelect {
+		// Manual selection: require the same torrent + file.
+		if a.FileId != b.FileId || !sameAnimeTorrent(a.Torrent, b.Torrent) {
+			return false
+		}
+		if (a.FileIndex == nil) != (b.FileIndex == nil) {
+			return false
+		}
+		if a.FileIndex != nil && b.FileIndex != nil && *a.FileIndex != *b.FileIndex {
+			return false
+		}
+	}
+	return true
 }
 
-// clearPreloadedStreamLocked cancels any in-flight preload and drops the cached stream.
-// Caller must hold preloadMu.
-func (s *StreamManager) clearPreloadedStreamLocked() {
-	if s.preloadCancelFunc != nil {
-		s.preloadCancelFunc()
-		s.preloadCancelFunc = nil
+// sameAnimeTorrent reports whether two torrents refer to the same release.
+func sameAnimeTorrent(a, b *hibiketorrent.AnimeTorrent) bool {
+	if a == nil || b == nil {
+		return a == b
 	}
-	s.preloadedStream = mo.None[*preloadedDebridStream]()
+	if a.InfoHash != "" && b.InfoHash != "" {
+		return a.InfoHash == b.InfoHash
+	}
+	return a.Identity() == b.Identity()
+}
+
+// clearAllPreloadsLocked cancels every in-flight resolve and drops all cached streams.
+// Used on provider change / shutdown — NOT on a normal stream cancel. Caller holds preloadMu.
+func (s *StreamManager) clearAllPreloadsLocked() {
+	for k, cancel := range s.preloadInflight {
+		if cancel != nil {
+			cancel()
+		}
+		delete(s.preloadInflight, k)
+	}
+	for k := range s.preloads {
+		delete(s.preloads, k)
+	}
+	s.lastConsumedKey = ""
+}
+
+// evictIfNeededLocked enforces the speculative-preload budget. Continue-watching (priority) entries
+// are NOT capped here — they're bounded at the source (3 shows + next-ep) and self-expire via TTL —
+// so the browse/search/discover hover firehose can never evict them. Caller holds preloadMu.
+func (s *StreamManager) evictIfNeededLocked(priority bool) {
+	// Drop any TTL-expired entries first (either class) so the map can't grow unbounded over a binge.
+	for k, v := range s.preloads {
+		if time.Since(v.resolvedAt) > preloadTTL {
+			delete(s.preloads, k)
+		}
+	}
+	if priority {
+		return // continue-watching entries are not subject to the speculative budget
+	}
+	// Evict the oldest speculative entry while the speculative class is over budget.
+	for {
+		count := 0
+		var oldestKey string
+		var oldest time.Time
+		for k, v := range s.preloads {
+			if v.priority {
+				continue // never count or evict priority entries
+			}
+			count++
+			if oldestKey == "" || v.resolvedAt.Before(oldest) {
+				oldestKey, oldest = k, v.resolvedAt
+			}
+		}
+		if count < maxSpeculativePreloads || oldestKey == "" {
+			break
+		}
+		delete(s.preloads, oldestKey)
+	}
 }
 
 // preloadStream resolves the next episode's debrid stream URL ahead of time and caches it.
@@ -699,20 +821,39 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 		return fmt.Errorf("debridstream: Failed to preload stream: %w", err)
 	}
 
-	// Replace any existing preload and create a fresh cancellable context.
+	key := preloadKey(opts)
+
 	s.preloadMu.Lock()
-	s.clearPreloadedStreamLocked()
+	// Skip if already resolved-fresh, or a resolve is already in flight for this episode.
+	if existing, ok := s.preloads[key]; ok && time.Since(existing.resolvedAt) <= preloadTTL {
+		// Upgrade a speculative entry to priority if a continue-watching prewarm arrives for it,
+		// so an earlier hover/entry-mount preload of the same episode can't leave it evictable.
+		if opts.Priority && !existing.priority {
+			existing.priority = true
+		}
+		s.preloadMu.Unlock()
+		return nil
+	}
+	if _, inflight := s.preloadInflight[key]; inflight {
+		s.preloadMu.Unlock()
+		return nil
+	}
 	preloadCtx, cancel := context.WithCancel(context.Background())
-	s.preloadCancelFunc = cancel
+	s.preloadInflight[key] = cancel
 	s.preloadMu.Unlock()
 
 	s.repository.logger.Info().
 		Int("mediaId", opts.MediaId).
 		Int("episodeNumber", opts.EpisodeNumber).
-		Msg("debridstream: Preloading stream for next episode")
+		Msg("debridstream: Preloading stream")
 
 	go func() {
 		defer util.HandlePanicInModuleThen("debrid/client/preloadStream", func() {})
+		defer func() {
+			s.preloadMu.Lock()
+			delete(s.preloadInflight, key)
+			s.preloadMu.Unlock()
+		}()
 
 		media, _, err := s.getMediaInfo(preloadCtx, opts.MediaId)
 		if err != nil || preloadCtx.Err() != nil {
@@ -791,7 +932,8 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 		s.preloadMu.Lock()
 		// Only store if this preload wasn't superseded or cancelled in the meantime.
 		if preloadCtx.Err() == nil {
-			s.preloadedStream = mo.Some(&preloadedDebridStream{
+			s.evictIfNeededLocked(opts.Priority)
+			s.preloads[key] = &preloadedDebridStream{
 				opts:          opts,
 				streamUrl:     streamUrl,
 				fileId:        fileId,
@@ -799,10 +941,19 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 				media:         media.ToBaseAnime(),
 				torrent:       selectedTorrent,
 				torrentItemId: torrentItemId,
-			})
+				resolvedAt:    time.Now(),
+				priority:      opts.Priority,
+			}
 			s.repository.logger.Info().Str("torrent", selectedTorrent.Name).Msg("debridstream: Preloaded stream ready")
 		}
 		s.preloadMu.Unlock()
+
+		// Pre-parse MKV metadata for high-certainty targets (next-episode preloads) so the
+		// play-time "Loading metadata" step is near-instant. Zero disk; gated by PrewarmMetadata
+		// so the speculative continue-watching prewarm doesn't download fonts it may never use.
+		if opts.PrewarmMetadata && streamUrl != "" && preloadCtx.Err() == nil && s.repository.directStreamManager != nil {
+			s.repository.directStreamManager.PrewarmStreamMetadata(streamUrl)
+		}
 	}()
 
 	return nil

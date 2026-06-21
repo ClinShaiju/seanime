@@ -130,6 +130,8 @@ export const settingsSchema = z.object({
     enableExtensionSecureMode: z.boolean().optional().default(false),
     defaultPlaybackSource: z.string().optional().default(""),
     groupSeasons: z.boolean().optional().default(false),
+    hideFranchiseSpinoffs: z.boolean().optional().default(false),
+    hideFranchiseRecaps: z.boolean().optional().default(false),
     hideAnimeSpoilers: z.boolean().optional().default(false),
     hideAnimeSpoilerThumbnails: z.boolean().optional().default(true),
     hideAnimeSpoilerTitles: z.boolean().optional().default(true),
@@ -170,6 +172,8 @@ export const getDefaultSettings = (data: z.infer<typeof gettingStartedSchema>): 
         enableExtensionSecureMode: false,
         defaultPlaybackSource: "",
         groupSeasons: false,
+        hideFranchiseSpinoffs: false,
+        hideFranchiseRecaps: false,
     },
     nakama: {
         enabled: false,

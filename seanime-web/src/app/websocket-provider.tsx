@@ -100,6 +100,7 @@ function WebsocketManagement() {
     const socketRef = React.useRef<WebSocket | null>(null)
     const clientIdRef = React.useRef<string>("")
     const clientIdProofRef = React.useRef<string>("")
+    const connectedClientIdRef = React.useRef<string>("") // clientId the live socket is registered under
     const connectWebSocketRef = React.useRef<(() => void) | null>(null)
     const clearAllIntervalsRef = React.useRef<(() => void) | null>(null)
     const wasDisconnected = React.useRef<boolean>(false)
@@ -111,6 +112,25 @@ function WebsocketManagement() {
             clientIdRef.current = clientId
             clientIdProofRef.current = clientIdProof
             setClientId(clientId || null)
+
+            // If the server handed us a different clientId than the one the live socket registered under
+            // (common against a remote server: the first connection uses a stale/unsigned id), close the
+            // socket so it reconnects under the new identity. Otherwise clientId-targeted events — player
+            // open, and the video-status stream that drives progress/continuity tracking — get dropped.
+            if (clientId
+                && connectedClientIdRef.current
+                && connectedClientIdRef.current !== clientId
+                && socketRef.current
+                && socketRef.current.readyState === WebSocket.OPEN) {
+                logger("WebsocketProvider").info("Client identity changed, reconnecting socket",
+                    { from: connectedClientIdRef.current, to: clientId })
+                try {
+                    socketRef.current.close()
+                }
+                catch (e) {
+                    // close handler schedules the reconnect
+                }
+            }
         }
 
         updateClientIdentity(getClientIdentity())
@@ -184,8 +204,11 @@ function WebsocketManagement() {
                 }
             }
 
-            const wsUrl = `${document.location.protocol == "https:" ? "wss" : "ws"}://${getServerBaseUrl(true)}/events`
+            // Derive ws/wss from the target server URL, not document.location (which is app:// in Denshi).
+            const wsScheme = getServerBaseUrl().startsWith("https") ? "wss" : "ws"
+            const wsUrl = `${wsScheme}://${getServerBaseUrl(true)}/events`
             const { clientId, clientIdProof } = initClientIdentity()
+            connectedClientIdRef.current = clientId
 
             try {
                 const queryParams = new URLSearchParams()

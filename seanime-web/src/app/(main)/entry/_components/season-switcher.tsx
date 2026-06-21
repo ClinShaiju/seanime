@@ -74,6 +74,10 @@ export function SeasonSwitcher({ mediaId }: { mediaId: string | number | null | 
         const cours = groups.get(key) ?? []
         if (cours.length > 1) {
             setMergedSeason({ season: cours[0].seasonNumber, tmdb: cours[0].tmdbId })
+            // Navigate to the season's first cour so the banner/cover/metadata reflect it
+            // (the merged view re-opens on arrival via the auto-open effect). No-op if we're
+            // already on a cour of this season.
+            if (!cours.some(c => c.mediaId === currentId)) go(cours[0].mediaId)
         } else if (cours[0]) {
             setMergedSeason(null)
             go(cours[0].mediaId)

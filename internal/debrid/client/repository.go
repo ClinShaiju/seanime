@@ -115,6 +115,8 @@ func (r *Repository) startOrStopDownloadLoop() {
 
 // InitializeProvider is called each time the settings change
 func (r *Repository) InitializeProvider(settings *models.DebridSettings) error {
+	// Provider/account/key may have changed — drop any prewarmed streams from the old account.
+	r.ClearAllPreloads()
 	r.settings = settings
 
 	if !settings.Enabled {

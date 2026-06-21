@@ -35,5 +35,11 @@ func (m *Manager) ServeEchoAttachments(c echo.Context) error {
 		return errors.New("attachment not found")
 	}
 
+	// Attachments (fonts) are immutable content. Let the client cache them so a binge of one
+	// release — which reuses the same fonts every episode — only downloads each font once.
+	// Correctness comes from the content-versioned URL (?cv=<size>) the client appends, so a
+	// different font (different bytes/size) maps to a different cache key.
+	c.Response().Header().Set("Cache-Control", "public, max-age=604800, immutable")
+
 	return c.Blob(200, attachment.Mimetype, attachment.Data)
 }

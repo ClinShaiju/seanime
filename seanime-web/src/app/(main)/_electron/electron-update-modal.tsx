@@ -95,14 +95,19 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
                 }
             })
 
-            const removeUpdateError = window.electron.on("update-error", (error: string) => {
-                logger("ELECTRON").error("Update error", error)
-                if (!isMacOS) {
-                    toast.error(`Update error: ${error}`)
-                    setIsUpdating(false)
-                    setIsDownloading(false)
-                }
-            })
+            const removeUpdateError = window.electron.on(
+                "update-error",
+                (error: string | { code?: string, message?: string, stack?: string }) => {
+                    logger("ELECTRON").error("Update error", error)
+                    if (!isMacOS) {
+                        // main.js sends { code, message, stack }; older paths may send a string.
+                        const msg = typeof error === "string" ? error : (error?.message || error?.code || "unknown error")
+                        toast.error(`Update error: ${msg}`)
+                        setIsUpdating(false)
+                        setIsDownloading(false)
+                    }
+                },
+            )
 
             const removeDownloadProgress = window.electron.on("download-progress", (progress: { percent: number }) => {
                 if (!isMacOS) {

@@ -8,6 +8,11 @@ function devOrProd(dev: string, prod: string): string {
 export function getServerBaseUrl(removeProtocol: boolean = false): string {
     if (__isDesktop__) {
         let ret = devOrProd(`http://127.0.0.1:${__DEV_SERVER_PORT}`, "http://127.0.0.1:43211")
+        // Denshi may point the renderer at an external server (set in denshi-settings, injected by preload).
+        const override = typeof window !== "undefined" ? (window as any).__SEANIME_SERVER_URL__ : ""
+        if (typeof override === "string" && override.trim()) {
+            ret = override.trim().replace(/\/+$/, "")
+        }
         if (removeProtocol) {
             ret = ret.replace("http://", "").replace("https://", "")
         }

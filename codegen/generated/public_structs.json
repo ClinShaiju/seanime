@@ -30847,6 +30847,24 @@
         "required": true,
         "public": true,
         "comments": []
+      },
+      {
+        "name": "HideFranchiseSpinoffs",
+        "jsonName": "hideFranchiseSpinoffs",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "HideFranchiseRecaps",
+        "jsonName": "hideFranchiseRecaps",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": []
@@ -34690,24 +34708,30 @@
         "comments": []
       },
       {
-        "name": "preloadCancelFunc",
-        "jsonName": "preloadCancelFunc",
-        "goType": "context.CancelFunc",
-        "typescriptType": "CancelFunc",
+        "name": "preloads",
+        "jsonName": "preloads",
+        "goType": "map[string]preloadedDebridStream",
+        "typescriptType": "Record\u003cstring, DebridClient_preloadedDebridStream\u003e",
+        "usedTypescriptType": "DebridClient_preloadedDebridStream",
+        "usedStructName": "debrid_client.preloadedDebridStream",
+        "required": false,
+        "public": false,
+        "comments": [
+          " resolved, ready to consume"
+        ]
+      },
+      {
+        "name": "preloadInflight",
+        "jsonName": "preloadInflight",
+        "goType": "map[string]context.CancelFunc",
+        "typescriptType": "Record\u003cstring, CancelFunc\u003e",
         "usedTypescriptType": "CancelFunc",
         "usedStructName": "context.CancelFunc",
         "required": false,
         "public": false,
-        "comments": []
-      },
-      {
-        "name": "preloadedStream",
-        "jsonName": "preloadedStream",
-        "goType": "",
-        "typescriptType": "any",
-        "required": true,
-        "public": false,
-        "comments": []
+        "comments": [
+          " in-flight resolves, for dedupe/cancel"
+        ]
       }
     ],
     "comments": []
@@ -35961,6 +35985,38 @@
         "typescriptType": "Logger",
         "usedTypescriptType": "Logger",
         "usedStructName": "zerolog.Logger",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "mylistMu",
+        "jsonName": "mylistMu",
+        "goType": "sync.Mutex",
+        "typescriptType": "Mutex",
+        "usedTypescriptType": "Mutex",
+        "usedStructName": "sync.Mutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "mylist",
+        "jsonName": "mylist",
+        "goType": "[]Torrent",
+        "typescriptType": "Array\u003cTorrent\u003e",
+        "usedTypescriptType": "Torrent",
+        "usedStructName": "torbox.Torrent",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "mylistAt",
+        "jsonName": "mylistAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
         "required": false,
         "public": false,
         "comments": []

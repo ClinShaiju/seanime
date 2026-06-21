@@ -114,6 +114,7 @@ import {
     useVideoCoreBindings,
     vc_createChapterCues,
     vc_createChaptersFromAniSkip,
+    vc_getChapterType,
     vc_logGeneralInfo,
 } from "@/app/(main)/_features/video-core/video-core.utils"
 import { useServerHMACAuth, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
@@ -677,6 +678,10 @@ export interface VideoCoreProps {
     mRef?: React.MutableRefObject<HTMLVideoElement | null>
 }
 
+// Module-level so the directstream attachment (font) token survives player remounts and is reused
+// across episodes/restarts — keeping font URLs stable so the browser caches them. See usage below.
+let __attTokenCache: { value: string, at: number } | null = null
+
 export function VideoCore(props: VideoCoreProps) {
     const {
         state,
@@ -710,13 +715,41 @@ export function VideoCore(props: VideoCoreProps) {
     const { getHMACTokenQueryParam } = useServerHMACAuth()
     const [streamType, setStreamType] = useState<VideoCore_VideoPlaybackInfo["streamType"]>(state.playbackInfo?.streamType ?? "unknown")
 
-    // HMAC token for directstream attachment URLs (fonts)
-    const [directstreamAttToken, setDirectstreamAttToken] = React.useState("")
+    // HMAC token for directstream attachment URLs (fonts).
+    // Stored module-level and reused across plays/mounts so the font URL stays byte-stable — otherwise
+    // a fresh token per play changes the URL every time and the (immutable) font responses never hit
+    // the browser cache. Refreshed only every 12h to stay well within the token's 24h validity.
+    const [directstreamAttToken, setDirectstreamAttToken] = React.useState(__attTokenCache?.value ?? "")
     React.useEffect(() => {
-        (async () => {
-            setDirectstreamAttToken(await getHMACTokenQueryParam("/api/v1/directstream/att", "?"))
+        if (__attTokenCache && Date.now() - __attTokenCache.at < 12 * 60 * 60 * 1000) {
+            setDirectstreamAttToken(__attTokenCache.value)
+            return
+        }
+        let cancelled = false
+        ;(async () => {
+            const t = await getHMACTokenQueryParam("/api/v1/directstream/att", "?")
+            if (cancelled || !t) return
+            __attTokenCache = { value: t, at: Date.now() }
+            setDirectstreamAttToken(t)
         })()
+        return () => { cancelled = true }
     }, [getHMACTokenQueryParam])
+
+    // Preconnect to the stream server so the video's first range request can skip the TLS handshake
+    // (the directstream proxy uses its own connections, separate from the API/WS pool). crossOrigin
+    // must match the <video crossOrigin="anonymous"> so the warmed connection is actually reused.
+    React.useEffect(() => {
+        const origin = getServerBaseUrl()
+        if (!origin || typeof document === "undefined") return
+        const link = document.createElement("link")
+        link.rel = "preconnect"
+        link.href = origin
+        link.crossOrigin = "anonymous"
+        document.head.appendChild(link)
+        return () => {
+            link.remove()
+        }
+    }, [])
 
     const videoRef = useRef<HTMLVideoElement | null>(null)
     const containerRef = useRef<HTMLDivElement | null>(null)
@@ -1327,9 +1360,11 @@ export function VideoCore(props: VideoCoreProps) {
             dispatchVideoCompletedEvent()
         }
 
-        // Preload the next episode's stream at 80% so native-player autoplay starts instantly.
-        // No-op unless this is the native player streaming from debrid (see preloadNextEpisode).
-        if (!!v.duration && !preloadFiredRef.current && percent >= 0.8) {
+        // Preload the next episode's stream shortly after playback starts (not at 80%), so the next
+        // start is instant and uncached torrents get the whole episode to download in the background.
+        // Fires once per playback whether or not THIS episode was itself a preload hit, which keeps
+        // the prewarm pipeline refilled as you binge. No-op unless native player streaming from debrid.
+        if (!!v.duration && !preloadFiredRef.current && v.currentTime >= 3) {
             preloadFiredRef.current = true
             if (props.id === "native-player" && !isGlobalPlaylistActive) {
                 preloadNextEpisode()
@@ -1684,15 +1719,27 @@ export function VideoCore(props: VideoCoreProps) {
 
     const chapterCues = useMemo(() => {
             if (!duration || duration <= 1) return []
-            // If we have MKV chapters, use them
+            const aniSkipAvailable = !!resolvedSkipData?.op?.interval && duration > 0
+
+            // Prefer MKV chapters — but only when they actually label OP/ED. Some releases label the
+            // opening/ending "Intro"/"Outro" (or in another language), which auto-skip can't detect,
+            // so the player would show chapters but never skip. In that case fall back to AniSkip,
+            // which provides precise, label-independent OP/ED intervals.
             if (state.playbackInfo?.mkvMetadata?.chapters?.length) {
                 const cues = vc_createChapterCues(state.playbackInfo.mkvMetadata.chapters, duration)
-                log.info("Chapter cues from MKV", cues)
-                return cues
+                const mkvHasOPED = cues.some(c => {
+                    const t = vc_getChapterType(c.text)
+                    return t === "Opening" || t === "Ending"
+                })
+                if (mkvHasOPED || !aniSkipAvailable) {
+                    log.info("Chapter cues from MKV", cues)
+                    return cues
+                }
+                log.info("MKV chapters lack OP/ED labels — using AniSkip for skip support")
             }
 
             // Otherwise, create chapters from skip data if available
-            if (!!resolvedSkipData?.op?.interval && duration > 0) {
+            if (aniSkipAvailable) {
                 log.info("Creating chapter cues from skip data", resolvedSkipData)
                 const chapters = vc_createChaptersFromAniSkip(resolvedSkipData, duration, state?.playbackInfo?.media?.format)
                 const cues = vc_createChapterCues(chapters, duration)

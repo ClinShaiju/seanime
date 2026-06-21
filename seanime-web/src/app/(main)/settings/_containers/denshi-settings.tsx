@@ -1,5 +1,6 @@
 import { SettingsCard } from "@/app/(main)/settings/_components/settings-card"
 import { Switch } from "@/components/ui/switch"
+import { TextInput } from "@/components/ui/text-input"
 import React from "react"
 import { RiSettings3Fill } from "react-icons/ri"
 
@@ -48,6 +49,16 @@ export function DenshiSettings() {
                     onValueChange={(v) => updateSetting("openInBackground", v)}
                     label="Open in background"
                     help="When enabled, the app will start hidden. You can show it from the system tray."
+                />
+            </SettingsCard>
+
+            <SettingsCard title="Server">
+                <TextInput
+                    label="External server URL"
+                    help="Connect this app to a remote Seanime server (e.g. https://seanime.example.com) instead of running a local one. Leave empty to use the built-in server. The remote server must have a password set. Applied after a restart."
+                    placeholder="https://seanime.example.com"
+                    defaultValue={settings.serverUrl ?? ""}
+                    onBlur={(e) => updateSetting("serverUrl", e.target.value.trim())}
                 />
             </SettingsCard>
 

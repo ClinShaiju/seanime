@@ -22,6 +22,7 @@ const DENSHI_SETTINGS_DEFAULTS = {
     updateChannel: "github",
     windowBounds: null,
     windowMaximized: true,
+    serverUrl: "", // External server URL. Empty = run and use the bundled sidecar.
 }
 
 const MAIN_WINDOW_DEFAULT_BOUNDS = {
@@ -246,7 +247,7 @@ const LOCAL_EMBED_HOST = "127.0.0.1"
 const DESKTOP_SERVER_HOST = "127.0.0.1"
 const DESKTOP_SERVER_DEFAULT_PORT = 43211
 const DESKTOP_SERVER_DEV_PORT = 43000
-const DEFAULT_UPDATE_FEED_URL = "https://github.com/5rahim/seanime/releases/latest/download"
+const DEFAULT_UPDATE_FEED_URL = "https://github.com/ClinShaiju/seanime/releases/latest/download"
 
 function isAllowedLocalEmbedURL(rawURL) {
     if (!localServerPort) {
@@ -293,6 +294,19 @@ function getDesktopServerPort() {
 
 function getDesktopServerBaseUrl() {
     return `http://${DESKTOP_SERVER_HOST}:${getDesktopServerPort()}`
+}
+
+// Returns a sanitized external server origin (e.g. https://seanime.example.com), or "" to use the bundled sidecar.
+function getExternalServerUrl() {
+    const raw = (denshiSettings.serverUrl || "").trim()
+    if (!raw) return ""
+    try {
+        const parsed = new URL(raw)
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return ""
+        return parsed.origin
+    } catch {
+        return ""
+    }
 }
 
 async function isDesktopServerReachable() {
@@ -683,6 +697,11 @@ function createTray() {
         }
     }
     ] : []), {
+        id: "gpu_info", label: "GPU Info (chrome://gpu)", click: () => {
+            const gpuWin = new BrowserWindow({ width: 1100, height: 850, title: "GPU Info" })
+            gpuWin.loadURL("chrome://gpu")
+        }
+    }, {
         id: "quit", label: "Quit Seanime", click: () => {
             cleanupAndExit()
         }
@@ -783,6 +802,21 @@ async function launchSeanimeServer(isRestart) {
             if (await isDesktopServerReachable()) {
                 checkFinalizeStartup("HTTP status probe")
             }
+        }
+
+        // External server configured: don't spawn the bundled sidecar. The renderer talks to it directly.
+        const externalServerUrl = getExternalServerUrl()
+        if (externalServerUrl) {
+            logStartupEvent("SKIPPING SERVER LAUNCH", `External server configured: ${externalServerUrl}`)
+            serverStarted = true
+            if (splashScreen && !splashScreen.isDestroyed()) {
+                splashScreen.close()
+                splashScreen = null
+            }
+            if (mainWindow && !mainWindow.isDestroyed() && !denshiSettings.openInBackground) {
+                showMainWindow()
+            }
+            return resolve()
         }
 
         // TEST ONLY: Check for -no-binary flag
@@ -936,6 +970,11 @@ async function launchSeanimeServer(isRestart) {
 }
 
 async function restartSeanimeServer() {
+    if (getExternalServerUrl()) {
+        console.log("[Main] Restart skipped, using external server")
+        return
+    }
+
     if (serverRestartPromise) {
         console.log("[Main] Restart already in progress, skipping duplicate request")
         return serverRestartPromise
@@ -1249,31 +1288,8 @@ function cleanupAndExit() {
 // returns true if github is ok OR url is unreachable
 // returns false if github is down and fallback should be used
 async function fetchGithubStatus() {
-    try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 5000)
-
-        const response = await net.fetch("https://seanime.app/api/github-status", {
-            signal: controller.signal
-        })
-        clearTimeout(timeoutId)
-
-        if (!response.ok) {
-            return { ok: true, fallback: "" }
-        }
-
-        const data = await response.json()
-
-        // url is reachable, status is "down"
-        if (data.status === "down") {
-            log.warn(`[Denshi] App: Changing update channel to ${data.fallback}, reason: ${data.description}`)
-            return { ok: false, fallback: data.fallback || "seanime" }
-        }
-
-        return { ok: true, fallback: "" }
-    } catch (err) {
-        return { ok: true, fallback: "" }
-    }
+    // Fork: never fall back to the seanime.app channel (it only hosts upstream builds).
+    return { ok: true, fallback: "" }
 }
 
 // Initialize the app
@@ -1290,6 +1306,11 @@ app.whenReady().then(async () => {
         denshiSettings.openInBackground = false
     }
     log.info("[Denshi] Loaded settings:", JSON.stringify(denshiSettings))
+
+    // Synchronous handler so the renderer's preload can read the server URL before app code evaluates.
+    ipcMain.on("denshi:getServerUrlSync", (event) => {
+        event.returnValue = getExternalServerUrl()
+    })
 
     let currentUpdateChannel = denshiSettings.updateChannel
     const { ok, fallback } = await fetchGithubStatus()

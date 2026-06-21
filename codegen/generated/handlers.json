@@ -1418,6 +1418,29 @@
     }
   },
   {
+    "name": "filterFranchiseRelations",
+    "trimmedName": "filterFranchiseRelations",
+    "comments": [
+      "filterFranchiseRelations returns a shallow copy of the group with extras whose",
+      "RelationType is in `hide` removed from Extras + WatchOrder (Seasons are never extras).",
+      "Does not mutate the cached group.",
+      ""
+    ],
+    "filepath": "internal/handlers/anime_franchise.go",
+    "filename": "anime_franchise.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
     "name": "resolveFranchiseGroup",
     "trimmedName": "resolveFranchiseGroup",
     "comments": [

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -27,6 +28,12 @@ type (
 		apiKey  mo.Option[string]
 		client  *http.Client
 		logger  *zerolog.Logger
+
+		// dedup-path cache for getTorrents (AddTorrent only); short TTL so back-to-back plays
+		// don't each re-fetch the whole mylist. ponytail: 6s TTL, no invalidation needed.
+		mylistMu  sync.Mutex
+		mylist    []*Torrent
+		mylistAt  time.Time
 	}
 
 	Response struct {
@@ -235,7 +242,7 @@ func (t *TorBox) AddTorrent(opts debrid.AddTorrentOptions) (string, error) {
 	// Check if the torrent is already added by checking existing torrents
 	if opts.InfoHash != "" {
 		// First check if it's already in our account using a more efficient approach
-		torrents, err := t.getTorrents()
+		torrents, err := t.getTorrentsCached()
 		if err == nil {
 			for _, torrent := range torrents {
 				if strings.EqualFold(torrent.Hash, opts.InfoHash) {
@@ -303,12 +310,15 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 			close(doneCh)
 		}()
 
+		// ponytail: poll fast then back off (500ms→1s→2s→4s). Cached torrents report ready on the
+		// first poll, so the old fixed 4s first-wait burned ~4s on the common case. Cap at 4s.
+		delay := 500 * time.Millisecond
 		for {
 			select {
 			case <-ctx.Done():
 				err = ctx.Err()
 				return
-			case <-time.After(4 * time.Second):
+			case <-time.After(delay):
 				torrent, _err := t.GetTorrent(opts.ID)
 				if _err != nil {
 					t.logger.Error().Err(_err).Msg("torbox: Failed to get torrent")
@@ -320,7 +330,7 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 
 				// Check if the torrent is ready
 				if torrent.IsReady {
-					time.Sleep(1 * time.Second)
+					time.Sleep(1 * time.Second) // ponytail: settle hedge before requesting the URL; drop if the URL never 404s
 					downloadUrl, err := t.GetTorrentDownloadUrl(debrid.DownloadTorrentOptions{
 						ID:     opts.ID,
 						FileId: opts.FileId, // Filename
@@ -332,6 +342,10 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 
 					streamUrl = downloadUrl
 					return
+				}
+
+				if delay < 4*time.Second {
+					delay *= 2
 				}
 			}
 		}
@@ -502,6 +516,26 @@ func (t *TorBox) GetTorrents() (ret []*debrid.TorrentItem, err error) {
 	})
 
 	return ret, nil
+}
+
+// getTorrentsCached is getTorrents with a 6s TTL, used only by AddTorrent's dedup check.
+// Staleness is harmless: TorBox dedups server-side, so a missed cache hit at worst re-POSTs
+// a magnet that already exists (and gets the same id back).
+func (t *TorBox) getTorrentsCached() ([]*Torrent, error) {
+	t.mylistMu.Lock()
+	defer t.mylistMu.Unlock()
+
+	if t.mylist != nil && time.Since(t.mylistAt) < 6*time.Second {
+		return t.mylist, nil
+	}
+
+	torrents, err := t.getTorrents()
+	if err != nil {
+		return nil, err
+	}
+	t.mylist = torrents
+	t.mylistAt = time.Now()
+	return torrents, nil
 }
 
 func (t *TorBox) getTorrents() (ret []*Torrent, err error) {

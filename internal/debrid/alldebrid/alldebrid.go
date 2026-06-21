@@ -371,12 +371,18 @@ func (a *AllDebrid) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamT
 	go func(ctx context.Context) {
 		defer close(doneCh)
 
+		// ponytail: poll fast then back off (500ms→1s→2s→4s). Cached torrents report ready on the
+		// first poll, so the old fixed 5s first-wait burned ~5s on the common case. Cap at 4s.
+		delay := 500 * time.Millisecond
 		for {
 			select {
 			case <-ctx.Done():
 				err = ctx.Err()
 				return
-			case <-time.After(time.Second * 5):
+			case <-time.After(delay):
+				if delay < 4*time.Second {
+					delay *= 2
+				}
 				// Check status
 				tInfo, sErr := a.GetTorrent(opts.ID)
 				if sErr != nil {

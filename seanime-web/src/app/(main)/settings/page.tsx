@@ -365,6 +365,8 @@ export default function Page() {
                                         enableExtensionSecureMode: data.enableExtensionSecureMode ?? false,
                                         defaultPlaybackSource: data.defaultPlaybackSource === "-" ? "" : data.defaultPlaybackSource,
                                         groupSeasons: data.groupSeasons ?? false,
+                                        hideFranchiseSpinoffs: data.hideFranchiseSpinoffs ?? false,
+                                        hideFranchiseRecaps: data.hideFranchiseRecaps ?? false,
                                     },
                                     nakama: {
                                         enabled: data.nakamaEnabled ?? false,
@@ -577,6 +579,8 @@ export default function Page() {
                                 enableExtensionSecureMode: status?.settings?.library?.enableExtensionSecureMode ?? false,
                                 defaultPlaybackSource: status?.settings?.library?.defaultPlaybackSource || "-",
                                 groupSeasons: status?.settings?.library?.groupSeasons ?? false,
+                                hideFranchiseSpinoffs: status?.settings?.library?.hideFranchiseSpinoffs ?? false,
+                                hideFranchiseRecaps: status?.settings?.library?.hideFranchiseRecaps ?? false,
                                 hideAnimeSpoilers: status?.themeSettings?.hideAnimeSpoilers ?? THEME_DEFAULT_VALUES.hideAnimeSpoilers,
                                 hideAnimeSpoilerThumbnails: status?.themeSettings?.hideAnimeSpoilerThumbnails ?? THEME_DEFAULT_VALUES.hideAnimeSpoilerThumbnails,
                                 hideAnimeSpoilerTitles: status?.themeSettings?.hideAnimeSpoilerTitles ?? THEME_DEFAULT_VALUES.hideAnimeSpoilerTitles,

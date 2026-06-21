@@ -344,6 +344,10 @@ func (a *App) initModulesOnce() {
 		Database:    a.Database,
 	})
 
+	// Background prewarm of the next-up episode of the last few watched shows (debrid only).
+	// No-op until debrid + PreloadNextStream are configured.
+	a.startContinueWatchingPrewarmLoop()
+
 }
 
 // HandleNewDatabaseEntries initializes essential database collections.

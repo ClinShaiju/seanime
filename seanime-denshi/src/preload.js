@@ -142,3 +142,13 @@ contextBridge.exposeInMainWorld(
 
 // Set __isElectronDesktop__ global variable
 contextBridge.exposeInMainWorld('__isElectronDesktop__', true);
+
+// Configured external server URL (empty string = use the bundled sidecar at 127.0.0.1).
+// Read synchronously so getServerBaseUrl() resolves it on first evaluation.
+let __serverUrl = ""
+try {
+    __serverUrl = ipcRenderer.sendSync("denshi:getServerUrlSync") || ""
+} catch (e) {
+    __serverUrl = ""
+}
+contextBridge.exposeInMainWorld('__SEANIME_SERVER_URL__', __serverUrl);

@@ -408,6 +408,10 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		AutoSelect:        b.AutoSelect,
 		BatchEpisodeFiles: b.BatchEpisodeFiles,
 		Preload:           b.Preload,
+		// Client-initiated preloads (next-episode / hover / entry) are user-intent, so also
+		// pre-parse MKV metadata. The server-side continue-watching prewarm goes through
+		// PrewarmStreams (not this handler) and stays URL-only — no speculative font downloads.
+		PrewarmMetadata: b.Preload,
 	}
 
 	if b.Preload {
