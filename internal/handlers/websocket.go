@@ -65,6 +65,14 @@ func (h *Handler) webSocketEventHandler(c echo.Context) error {
 
 	// Add connection to manager
 	h.App.WSEventManager.AddConn(id, ws, platform)
+	// Associate the connection with a user for per-user event scoping, if the client
+	// passed its session token. Best-effort: an unassociated conn just won't receive
+	// user-scoped events (global events still reach it).
+	if sessionToken := c.QueryParam("session"); sessionToken != "" {
+		if u, err := h.App.Database.GetSessionUser(sessionToken); err == nil && u != nil {
+			h.App.WSEventManager.SetConnUserID(id, u.ID)
+		}
+	}
 	h.App.Logger.Debug().Str("id", id).Str("platform", platform).Msg("ws: Client connected")
 	h.App.WSEventManager.SendEventTo(id, events.ClientIdentity, map[string]string{
 		"clientId": id,

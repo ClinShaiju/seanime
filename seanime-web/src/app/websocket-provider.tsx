@@ -1,5 +1,5 @@
 import { getServerBaseUrl } from "@/api/client/server-url"
-import { serverAuthTokenAtom, serverStatusAtom } from "@/app/(main)/_atoms/server-status.atoms"
+import { serverAuthTokenAtom, serverStatusAtom, sessionTokenAtom } from "@/app/(main)/_atoms/server-status.atoms"
 import { websocketAtom, WebSocketContext } from "@/app/(main)/_atoms/websocket.atoms"
 import { ElectronRestartServerPrompt } from "@/app/(main)/_electron/electron-restart-server-prompt"
 import { ExtensionPrompt } from "@/app/(main)/_features/plugin/extension-prompt"
@@ -73,13 +73,18 @@ function WebsocketManagement() {
     // Password set, user not yet logged in → ws connection fails (401), reconnect loop retries. Once the user logs in, serverAuthTokenRef updates,
     // next reconnect succeeds.
     const serverAuthToken = useAtomValue(serverAuthTokenAtom)
+    const sessionToken = useAtomValue(sessionTokenAtom)
     const serverStatus = useAtomValue(serverStatusAtom)
     const serverAuthTokenRef = React.useRef(serverAuthToken)
+    const sessionTokenRef = React.useRef(sessionToken)
     const shouldPauseForAuth = serverStatus?.serverHasPassword !== false && !serverAuthToken
     const shouldPauseForAuthRef = React.useRef(shouldPauseForAuth)
     React.useEffect(() => {
         serverAuthTokenRef.current = serverAuthToken
     }, [serverAuthToken])
+    React.useEffect(() => {
+        sessionTokenRef.current = sessionToken
+    }, [sessionToken])
     React.useEffect(() => {
         shouldPauseForAuthRef.current = shouldPauseForAuth
     }, [shouldPauseForAuth])
@@ -223,6 +228,9 @@ function WebsocketManagement() {
                 }
                 if (serverAuthTokenRef.current) {
                     queryParams.set("token", serverAuthTokenRef.current)
+                }
+                if (sessionTokenRef.current) {
+                    queryParams.set("session", sessionTokenRef.current)
                 }
                 const query = queryParams.toString()
                 socketRef.current = new WebSocket(query ? `${wsUrl}?${query}` : wsUrl)

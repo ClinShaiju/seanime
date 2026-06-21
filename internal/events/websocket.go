@@ -78,6 +78,9 @@ type (
 		ID       string
 		Platform string
 		Conn     *websocket.Conn
+		// UserID associates the connection with a Seanime user (multi-user event
+		// scoping). 0 means unassociated (legacy / not logged in).
+		UserID uint
 	}
 
 	WSEvent struct {
@@ -153,6 +156,38 @@ func (m *WSEventManager) AddConn(id string, conn *websocket.Conn, platform ...st
 		Platform: clientPlatform,
 		Conn:     conn,
 	})
+}
+
+// SetConnUserID associates a connection with a Seanime user, for per-user event
+// scoping. Called once at upgrade when a session token is present.
+func (m *WSEventManager) SetConnUserID(id string, userID uint) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, conn := range m.Conns {
+		if conn.ID == id {
+			conn.UserID = userID
+		}
+	}
+}
+
+// SendEventToUser sends an event to every connection belonging to the given user
+// (a user may have several tabs/devices). Foundation for per-user event scoping;
+// genuinely global events keep using SendEvent. No-op if userID is 0.
+func (m *WSEventManager) SendEventToUser(userID uint, t string, payload interface{}) {
+	if userID == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, conn := range m.Conns {
+		if conn.UserID != userID {
+			continue
+		}
+		_ = conn.Conn.WriteJSON(WSEvent{
+			Type:    t,
+			Payload: payload,
+		})
+	}
 }
 
 func (m *WSEventManager) RemoveConn(id string) {
