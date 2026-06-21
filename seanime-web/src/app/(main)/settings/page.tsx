@@ -25,6 +25,7 @@ import { MediastreamSettings } from "@/app/(main)/settings/_containers/mediastre
 import { ServerSettings } from "@/app/(main)/settings/_containers/server-settings"
 import { TorrentstreamSettings } from "@/app/(main)/settings/_containers/torrentstream-settings"
 import { UISettings } from "@/app/(main)/settings/_containers/ui-settings"
+import { UsersSettings } from "@/app/(main)/settings/_containers/users-settings"
 import { PageWrapper } from "@/components/shared/page-wrapper"
 import { SeaLink } from "@/components/shared/sea-link"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
@@ -60,6 +61,7 @@ import {
     LuMonitorPlay,
     LuPalette,
     LuTabletSmartphone,
+    LuUsers,
     LuWandSparkles,
 } from "react-icons/lu"
 import { LuRefreshCw } from "react-icons/lu"
@@ -153,6 +155,26 @@ export default function Page() {
 
     if (!status?.settings) return <LoadingSpinner />
 
+    // Settings configure the shared server, and theme/UI prefs are still global, so the
+    // whole settings page is admin-only on a networked server. Per-user settings tabs
+    // (theme/UI, view prefs) get un-gated once user-scoped settings land (later phase).
+    // On a local/password-less install the operator is admin, so nothing changes.
+    const isAdmin = !status?.serverHasPassword || status?.userRole === "admin"
+    if (!isAdmin) {
+        return (
+            <PageWrapper className="p-4 sm:p-8">
+                <Card className="max-w-2xl mx-auto md:py-10">
+                    <div className="text-center space-y-3">
+                        <h3>Settings</h3>
+                        <p className="text-[--muted]">
+                            Server settings are managed by the administrator.
+                        </p>
+                    </div>
+                </Card>
+            </PageWrapper>
+        )
+    }
+
     return (
         <>
             <CustomLibraryBanner discrete />
@@ -201,6 +223,10 @@ export default function Page() {
                                         value="seanime"
                                         className="group"
                                     ><LuWandSparkles className="text-xl mr-3 transition-transform duration-200" /> App</TabsTrigger>
+                                    <TabsTrigger
+                                        value="users"
+                                        className="group"
+                                    ><LuUsers className="text-xl mr-3 transition-transform duration-200" /> Users</TabsTrigger>
                                     <TabsTrigger
                                         value="ui"
                                         className="group"
@@ -977,6 +1003,12 @@ export default function Page() {
                          <FilecacheSettings />
 
                          </TabsContent> */}
+
+                        <TabsContent value="users" className={tabContentClass}>
+
+                            <UsersSettings />
+
+                        </TabsContent>
 
                         <TabsContent value="mediastream" className={tabContentClass}>
 
