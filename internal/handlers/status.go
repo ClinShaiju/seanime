@@ -48,6 +48,11 @@ type Status struct {
 	ServerReady           bool                          `json:"serverReady"`
 	ServerHasPassword     bool                          `json:"serverHasPassword"`
 	ShowChangelogTour     string                        `json:"showChangelogTour"`
+	// Multi-user profile system. UserRole is the role of the resolved acting user
+	// ("admin" | "user" | ""); the frontend gates admin-only settings on it.
+	// ServerHasUsers is true once at least one regular user exists (multi-user active).
+	UserRole       string `json:"userRole"`
+	ServerHasUsers bool   `json:"serverHasUsers"`
 }
 
 var clientInfoCache = result.NewMap[string, util.ClientInfo]()
@@ -129,6 +134,8 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 		ServerHasPassword:     h.App.Config.Server.Password != "",
 		DisabledFeatures:      h.App.FeatureManager.DisabledFeatures,
 		ShowChangelogTour:     h.App.ShowTour,
+		UserRole:              h.CurrentUserRole(c),
+		ServerHasUsers:        h.App.Database.HasRegularUsers(),
 	}
 
 	return status

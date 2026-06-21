@@ -125,6 +125,7 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	// Auth middleware
 	//
 	v1.Use(h.OptionalAuthMiddleware)
+	v1.Use(h.IdentityMiddleware)
 	v1.Use(h.FeaturesMiddleware)
 
 	imageProxy := &util.ImageProxy{}
@@ -152,17 +153,27 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 
 	v1.POST("/announcements", h.HandleGetAnnouncements)
 
-	// Auth
+	// Auth (AniList account)
 	v1.POST("/auth/login", h.HandleLogin)
 	v1.POST("/auth/logout", h.HandleLogout)
 
-	// Settings
+	// User profiles (multi-user identity layer, behind the server-password gate)
+	v1User := v1.Group("/user")
+	v1User.POST("/login", h.HandleUserLogin)
+	v1User.POST("/logout", h.HandleUserLogout)
+	v1User.GET("/me", h.HandleUserMe)
+	v1User.POST("/change-password", h.HandleUserChangePassword)
+	v1User.GET("/list", h.HandleUserList)
+	v1User.POST("/register", h.HandleUserRegister)
+	v1User.DELETE("/:id", h.HandleUserDelete)
+
+	// Settings (writes are admin-only: configuring the server requires an admin login)
 	v1.GET("/settings", h.HandleGetSettings)
-	v1.PATCH("/settings", h.HandleSaveSettings)
-	v1.PATCH("/settings/path", h.HandlePatchSetting)
-	v1.POST("/start", h.HandleGettingStarted)
-	v1.PATCH("/settings/auto-downloader", h.HandleSaveAutoDownloaderSettings)
-	v1.PATCH("/settings/media-player", h.HandleSaveMediaPlayerSettings)
+	v1.PATCH("/settings", h.HandleSaveSettings, h.AdminOnly)
+	v1.PATCH("/settings/path", h.HandlePatchSetting, h.AdminOnly)
+	v1.POST("/start", h.HandleGettingStarted, h.AdminOnly)
+	v1.PATCH("/settings/auto-downloader", h.HandleSaveAutoDownloaderSettings, h.AdminOnly)
+	v1.PATCH("/settings/media-player", h.HandleSaveMediaPlayerSettings, h.AdminOnly)
 
 	// Auto Downloader
 	v1.POST("/auto-downloader/run", h.HandleRunAutoDownloader)
@@ -446,7 +457,7 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	// Media Stream
 	//
 	v1.GET("/mediastream/settings", h.HandleGetMediastreamSettings)
-	v1.PATCH("/mediastream/settings", h.HandleSaveMediastreamSettings)
+	v1.PATCH("/mediastream/settings", h.HandleSaveMediastreamSettings, h.AdminOnly)
 	v1.POST("/mediastream/request", h.HandleRequestMediastreamMediaContainer)
 	v1.POST("/mediastream/preload", h.HandlePreloadMediastreamMediaContainer)
 	// Transcode
@@ -477,7 +488,7 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	// Torrent stream
 	//
 	v1.GET("/torrentstream/settings", h.HandleGetTorrentstreamSettings)
-	v1.PATCH("/torrentstream/settings", h.HandleSaveTorrentstreamSettings)
+	v1.PATCH("/torrentstream/settings", h.HandleSaveTorrentstreamSettings, h.AdminOnly)
 	v1.POST("/torrentstream/start", h.HandleTorrentstreamStartStream)
 	v1.POST("/torrentstream/stop", h.HandleTorrentstreamStopStream)
 	v1.POST("/torrentstream/drop", h.HandleTorrentstreamDropTorrent)
@@ -548,7 +559,7 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	//
 
 	v1.GET("/debrid/settings", h.HandleGetDebridSettings)
-	v1.PATCH("/debrid/settings", h.HandleSaveDebridSettings)
+	v1.PATCH("/debrid/settings", h.HandleSaveDebridSettings, h.AdminOnly)
 	v1.POST("/debrid/torrents", h.HandleDebridAddTorrents)
 	v1.POST("/debrid/torrents/download", h.HandleDebridDownloadTorrent)
 	v1.POST("/debrid/torrents/cancel", h.HandleDebridCancelDownload)
