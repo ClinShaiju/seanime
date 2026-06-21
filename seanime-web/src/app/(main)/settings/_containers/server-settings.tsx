@@ -363,6 +363,7 @@ export function ServerSettings(props: ServerSettingsProps) {
                 </div>
             </SettingsCard>
 
+            <AdminGate>
             <SettingsCard title="App">
                 {/*<Separator />*/}
                 <Field.Switch
@@ -449,6 +450,7 @@ export function ServerSettings(props: ServerSettingsProps) {
                     icon={<TbAlertSquareRoundedOff className="" />}
                 />
             </SettingsCard>
+            </AdminGate>
 
             {/*<Accordion*/}
             {/*    type="single"*/}
