@@ -5,13 +5,13 @@ import { Models_Theme } from "@/api/generated/types"
 import { useOpenInExplorer } from "@/api/hooks/explorer.hooks"
 import { useAnimeListTorrentProviderExtensions } from "@/api/hooks/extensions.hooks"
 import { useCheckForUpdates } from "@/api/hooks/releases.hooks"
-import { useSaveSettings } from "@/api/hooks/settings.hooks"
+import { useSaveSettings, useSaveUserSettings } from "@/api/hooks/settings.hooks"
 import { useGetTorrentstreamSettings } from "@/api/hooks/torrentstream.hooks"
 import { electronUpdateModalOpenAtom } from "@/app/(main)/_electron/electron-update-modal"
 import { CustomLibraryBanner } from "@/app/(main)/_features/anime-library/_containers/custom-library-banner"
 import { __issueReport_overlayOpenAtom } from "@/app/(main)/_features/issue-report/issue-report"
 import { updateModalOpenAtom as webUpdateModalOpenAtom } from "@/app/(main)/_features/update/update-modal"
-import { useServerDisabledFeatures, useServerStatus, useSetServerStatus } from "@/app/(main)/_hooks/use-server-status"
+import { useIsAdmin, useServerDisabledFeatures, useServerStatus, useSetServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { ExternalPlayerLinkSettings, MediaplayerSettings } from "@/app/(main)/settings/_components/mediaplayer-settings"
 import { PlaybackSettings } from "@/app/(main)/settings/_components/playback-settings"
 import { __settings_tabAtom } from "@/app/(main)/settings/_components/settings-page.atoms"
@@ -92,6 +92,8 @@ export default function Page() {
     const searchParams = useSearchParams()
 
     const { mutateAsync: saveSettings, data, isPending } = useSaveSettings()
+    const { mutateAsync: saveUserSettings } = useSaveUserSettings()
+    const isAdmin = useIsAdmin()
 
     const [tab, setTab] = useAtom(__settings_tabAtom)
     const formRef = React.useRef<UseFormReturn<any>>(null)
@@ -153,27 +155,16 @@ export default function Page() {
         }
     }, [searchParams])
 
-    if (!status?.settings) return <LoadingSpinner />
+    // If a non-admin's active tab is an admin-only one (e.g. left over from an admin
+    // session in this browser), send them to a visible tab.
+    React.useEffect(() => {
+        const adminOnlyTabs = ["library", "mediastream", "torrent", "torrent-client", "torrentstream", "debrid", "onlinestream", "nakama", "logs", "users"]
+        if (!isAdmin && adminOnlyTabs.includes(tab)) {
+            setTab("seanime")
+        }
+    }, [isAdmin, tab])
 
-    // Settings configure the shared server, and theme/UI prefs are still global, so the
-    // whole settings page is admin-only on a networked server. Per-user settings tabs
-    // (theme/UI, view prefs) get un-gated once user-scoped settings land (later phase).
-    // On a local/password-less install the operator is admin, so nothing changes.
-    const isAdmin = !status?.serverHasPassword || status?.userRole === "admin"
-    if (!isAdmin) {
-        return (
-            <PageWrapper className="p-4 sm:p-8">
-                <Card className="max-w-2xl mx-auto md:py-10">
-                    <div className="text-center space-y-3">
-                        <h3>Settings</h3>
-                        <p className="text-[--muted]">
-                            Server settings are managed by the administrator.
-                        </p>
-                    </div>
-                </Card>
-            </PageWrapper>
-        )
-    }
+    if (!status?.settings) return <LoadingSpinner />
 
     return (
         <>
@@ -223,10 +214,10 @@ export default function Page() {
                                         value="seanime"
                                         className="group"
                                     ><LuWandSparkles className="text-xl mr-3 transition-transform duration-200" /> App</TabsTrigger>
-                                    <TabsTrigger
+                                    {isAdmin && <TabsTrigger
                                         value="users"
                                         className="group"
-                                    ><LuUsers className="text-xl mr-3 transition-transform duration-200" /> Users</TabsTrigger>
+                                    ><LuUsers className="text-xl mr-3 transition-transform duration-200" /> Users</TabsTrigger>}
                                     <TabsTrigger
                                         value="ui"
                                         className="group"
@@ -235,10 +226,10 @@ export default function Page() {
                                      value="local"
                                      className="group"
                                      ><LuUserCog className="text-xl mr-3 transition-transform duration-200" /> Local Account</TabsTrigger> */}
-                                    <TabsTrigger
+                                    {isAdmin && <TabsTrigger
                                         value="library"
                                         className="group"
-                                    ><LuLibrary className="text-xl mr-3 transition-transform duration-200" /> Local Anime Library</TabsTrigger>
+                                    ><LuLibrary className="text-xl mr-3 transition-transform duration-200" /> Local Anime Library</TabsTrigger>}
                                 </Card>
 
                                 {/*<div className="text-xs lg:text-[--muted] text-center py-1.5 uppercase px-3 border-gray-800 tracking-wide font-medium">*/}
@@ -260,11 +251,11 @@ export default function Page() {
                                         className="group"
                                     ><LuCircleArrowOutUpRight className="text-xl mr-3 transition-transform duration-200" /> External Player
                                                                                                                             Link</TabsTrigger>
-                                    <TabsTrigger
+                                    {isAdmin && <TabsTrigger
                                         value="mediastream"
                                         className="relative group"
                                     ><LuTabletSmartphone className="text-xl mr-3 transition-transform duration-200" /> Transcoding / Direct
-                                                                                                                       Play</TabsTrigger>
+                                                                                                                       Play</TabsTrigger>}
                                 </Card>
 
                                 {/*<div className="text-xs lg:text-[--muted] text-center py-1.5 uppercase px-3 border-gray-800 tracking-wide font-medium">*/}
@@ -272,22 +263,24 @@ export default function Page() {
                                 {/*</div>*/}
 
                                 <Card className="lg:p-2 contents lg:block border-0 bg-transparent lg:border lg:bg-gray-950/80">
-                                    <TabsTrigger
-                                        value="torrent"
-                                        className="group"
-                                    ><LuFileSearch className="text-xl mr-3 transition-transform duration-200" /> Torrent Provider</TabsTrigger>
-                                    <TabsTrigger
-                                        value="torrent-client"
-                                        className="group"
-                                    ><MdOutlineDownloading className="text-xl mr-3 transition-transform duration-200" /> Torrent Client</TabsTrigger>
-                                    <TabsTrigger
-                                        value="torrentstream"
-                                        className="relative group"
-                                    ><SiBittorrent className="text-xl mr-3 transition-transform duration-200" /> Torrent Streaming</TabsTrigger>
-                                    <TabsTrigger
-                                        value="debrid"
-                                        className="group"
-                                    ><HiOutlineServerStack className="text-xl mr-3 transition-transform duration-200" /> Debrid Service</TabsTrigger>
+                                    {isAdmin && <>
+                                        <TabsTrigger
+                                            value="torrent"
+                                            className="group"
+                                        ><LuFileSearch className="text-xl mr-3 transition-transform duration-200" /> Torrent Provider</TabsTrigger>
+                                        <TabsTrigger
+                                            value="torrent-client"
+                                            className="group"
+                                        ><MdOutlineDownloading className="text-xl mr-3 transition-transform duration-200" /> Torrent Client</TabsTrigger>
+                                        <TabsTrigger
+                                            value="torrentstream"
+                                            className="relative group"
+                                        ><SiBittorrent className="text-xl mr-3 transition-transform duration-200" /> Torrent Streaming</TabsTrigger>
+                                        <TabsTrigger
+                                            value="debrid"
+                                            className="group"
+                                        ><HiOutlineServerStack className="text-xl mr-3 transition-transform duration-200" /> Debrid Service</TabsTrigger>
+                                    </>}
                                 </Card>
 
                                 {/*<div className="text-xs lg:text-[--muted] text-center py-1.5 uppercase px-3 border-gray-800 tracking-wide font-medium">*/}
@@ -295,19 +288,19 @@ export default function Page() {
                                 {/*</div>*/}
 
                                 <Card className="lg:p-2 contents lg:block border-0 bg-transparent lg:border lg:bg-gray-950/80">
-                                    <TabsTrigger
+                                    {isAdmin && <TabsTrigger
                                         value="onlinestream"
                                         className="group"
-                                    ><CgMediaPodcast className="text-xl mr-3 transition-transform duration-200" /> Online Streaming</TabsTrigger>
+                                    ><CgMediaPodcast className="text-xl mr-3 transition-transform duration-200" /> Online Streaming</TabsTrigger>}
 
                                     <TabsTrigger
                                         value="manga"
                                         className="group"
                                     ><LuBookOpen className="text-xl mr-3 transition-transform duration-200" /> Manga</TabsTrigger>
-                                    <TabsTrigger
+                                    {isAdmin && <TabsTrigger
                                         value="nakama"
                                         className="group relative"
-                                    ><MdOutlineConnectWithoutContact className="text-xl mr-3 transition-transform duration-200" /> Nakama</TabsTrigger>
+                                    ><MdOutlineConnectWithoutContact className="text-xl mr-3 transition-transform duration-200" /> Nakama</TabsTrigger>}
                                     <TabsTrigger
                                         value="discord"
                                         className="group"
@@ -329,10 +322,10 @@ export default function Page() {
                                      value="cache"
                                      className="group"
                                      ><TbDatabaseExclamation className="text-xl mr-3 transition-transform duration-200" /> Cache</TabsTrigger> */}
-                                    <TabsTrigger
+                                    {isAdmin && <TabsTrigger
                                         value="logs"
                                         className="group"
-                                    ><LuBookKey className="text-xl mr-3 transition-transform duration-200" /> Logs & Cache</TabsTrigger>
+                                    ><LuBookKey className="text-xl mr-3 transition-transform duration-200" /> Logs & Cache</TabsTrigger>}
                                 </Card>
                             </div>
                         </SettingsNavCard>
@@ -360,7 +353,10 @@ export default function Page() {
                             schema={settingsSchema}
                             mRef={formRef}
                             onSubmit={async data => {
-                                await saveSettings({
+                                // Admins write the shared server settings; regular users
+                                // write their own overrides (server ignores admin-only fields).
+                                const save = isAdmin ? saveSettings : saveUserSettings
+                                await save({
                                     library: {
                                         libraryPath: data.libraryPath,
                                         autoUpdateProgress: data.autoUpdateProgress,

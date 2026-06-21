@@ -54,6 +54,24 @@ export function useSaveSettings() {
     })
 }
 
+// useSaveUserSettings saves a non-admin user's own settings overrides. The client posts
+// the same settings payload as useSaveSettings; the server extracts only the
+// user-overridable fields (admin-only fields are ignored).
+export function useSaveUserSettings() {
+    const queryClient = useQueryClient()
+
+    return useServerMutation<boolean, SaveSettings_Variables>({
+        endpoint: "/api/v1/user/settings",
+        method: "PATCH",
+        mutationKey: ["save-user-settings"],
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: [API_ENDPOINTS.SETTINGS.GetSettings.key] })
+            await queryClient.invalidateQueries({ queryKey: [API_ENDPOINTS.STATUS.GetStatus.key] })
+            toast.success("Settings saved")
+        },
+    })
+}
+
 export function usePatchSetting() {
     const queryClient = useQueryClient()
     const setServerStatus = useSetServerStatus()

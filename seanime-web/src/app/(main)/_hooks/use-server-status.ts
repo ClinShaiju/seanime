@@ -21,6 +21,17 @@ export function useCurrentUser() {
     return React.useMemo(() => serverStatus?.user, [serverStatus?.user])
 }
 
+// useIsAdmin reports whether the acting user controls the server. On a local/
+// password-less install the operator is always admin; on a networked server it's the
+// resolved session role. Used to gate admin-only settings tabs/sections.
+export function useIsAdmin() {
+    const serverStatus = useServerStatus()
+    return React.useMemo(
+        () => !serverStatus?.serverHasPassword || serverStatus?.userRole === "admin",
+        [serverStatus?.serverHasPassword, serverStatus?.userRole],
+    )
+}
+
 export function useIsSimulatedUser() {
     const serverStatus = useServerStatus()
     return React.useMemo(() => !!serverStatus?.user?.isSimulated, [serverStatus?.user?.isSimulated])

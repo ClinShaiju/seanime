@@ -158,11 +158,22 @@ func (h *Handler) HandleSaveUserSettings(c echo.Context) error {
 	if userID == 0 {
 		return h.RespondWithStatusError(c, http.StatusUnauthorized, errors.New("not logged in"))
 	}
-	var overrides models.UserOverrides
-	if err := c.Bind(&overrides); err != nil {
+	// The client posts the same settings shape as /settings; we extract only the
+	// user-overridable fields server-side, so admin-only fields can never be set here.
+	var s models.Settings
+	if err := c.Bind(&s); err != nil {
 		return h.RespondWithError(c, err)
 	}
-	if err := h.App.Database.UpsertUserOverrides(userID, &overrides); err != nil {
+	next := models.ExtractUserOverrides(&s)
+
+	// Preserve the user's debrid-override fields (not part of the Settings payload).
+	if existing, _ := h.App.Database.GetUserOverrides(userID); existing != nil {
+		next.UseServerDebrid = existing.UseServerDebrid
+		next.DebridProvider = existing.DebridProvider
+		next.DebridApiKey = existing.DebridApiKey
+	}
+
+	if err := h.App.Database.UpsertUserOverrides(userID, next); err != nil {
 		return h.RespondWithError(c, err)
 	}
 	return h.RespondWithData(c, true)
