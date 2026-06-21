@@ -69,11 +69,13 @@ export function ServerDataWrapper(props: ServerDataWrapperProps) {
     const authenticated = !resolvedServerStatus?.serverHasPassword || !!password || pathname === "/public/auth"
 
     React.useEffect(() => {
-        if (resolvedServerStatus?.serverHasPassword && !password && pathname !== "/public/auth") {
+        if (pathname === "/public/auth") return
+        // No token, or a token the server rejected (wrong/stale password) → re-authenticate.
+        if (resolvedServerStatus?.serverHasPassword && (!password || resolvedServerStatus?.serverAuthenticated === false)) {
             window.location.href = "/public/auth"
             console.warn("Redirecting to auth")
         }
-    }, [resolvedServerStatus?.serverHasPassword, password, pathname])
+    }, [resolvedServerStatus?.serverHasPassword, resolvedServerStatus?.serverAuthenticated, password, pathname])
 
     // Refetch the server status every 2 seconds if serverReady is false
     // This is a fallback to the websocket
@@ -108,11 +110,20 @@ export function ServerDataWrapper(props: ServerDataWrapperProps) {
     if (pathname.startsWith("/auth/callback")) return children
 
     /**
+     * Wrong/stale server password (server rejected the token): the effect above is
+     * redirecting to /public/auth; show loading meanwhile so we don't flash the app.
+     */
+    if (currentServerStatus.serverHasPassword && currentServerStatus.serverAuthenticated === false) {
+        return <LoadingOverlayWithLogo />
+    }
+
+    /**
      * Networked server (one with a server password): require a per-user login before
      * anything else. The session loads the acting user's role; configuring the server
      * requires an admin. On a local/password-less server the operator is admin implicitly.
+     * Gated on serverAuthenticated so a wrong password never reaches this screen.
      */
-    if (currentServerStatus.serverHasPassword && !currentServerStatus.userRole) {
+    if (currentServerStatus.serverHasPassword && currentServerStatus.serverAuthenticated && !currentServerStatus.userRole) {
         return <UserLoginScreen />
     }
 

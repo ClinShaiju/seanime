@@ -3018,6 +3018,11 @@ export type Status = {
      * True once at least one regular (non-admin) user exists (multi-user active).
      */
     serverHasUsers?: boolean
+    /**
+     * True when the request passed the server-password gate. The login UI uses this to
+     * reject a wrong password instead of advancing to the user-login screen.
+     */
+    serverAuthenticated?: boolean
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

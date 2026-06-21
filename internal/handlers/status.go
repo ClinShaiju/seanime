@@ -53,6 +53,9 @@ type Status struct {
 	// ServerHasUsers is true once at least one regular user exists (multi-user active).
 	UserRole       string `json:"userRole"`
 	ServerHasUsers bool   `json:"serverHasUsers"`
+	// ServerAuthenticated is true when the request passed the server-password gate.
+	// The login UI uses it to reject a wrong password instead of advancing.
+	ServerAuthenticated bool `json:"serverAuthenticated"`
 }
 
 var clientInfoCache = result.NewMap[string, util.ClientInfo]()
@@ -138,6 +141,7 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 		ShowChangelogTour:     h.App.ShowTour,
 		UserRole:              h.CurrentUserRole(c),
 		ServerHasUsers:        h.App.Database.HasRegularUsers(),
+		ServerAuthenticated:   true, // reached the full path → passed the password gate
 	}
 
 	return status
