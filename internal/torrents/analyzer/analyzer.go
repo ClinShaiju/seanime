@@ -167,6 +167,31 @@ func (a *Analysis) GetFileByAniDBEpisode(episode string) (*File, bool) {
 	return nil, false
 }
 
+// CountByAniDBEpisode returns how many analyzed files claim the given AniDB episode.
+// More than one means the torrent is a multi-cour/season batch whose files collide
+// under a forced media id (see the debrid/torrent finder).
+func (a *Analysis) CountByAniDBEpisode(episode string) int {
+	n := 0
+	for _, f := range a.files {
+		if f.localFile.Metadata.AniDBEpisode == episode {
+			n++
+		}
+	}
+	return n
+}
+
+// GetFileByMediaIdAndAniDBEpisode finds the file matching both a media id and an AniDB
+// episode. Used after a non-forced (media-tree) analysis to pick the right cour's
+// episode out of a multi-season batch.
+func (a *Analysis) GetFileByMediaIdAndAniDBEpisode(mediaId int, episode string) (*File, bool) {
+	for _, f := range a.files {
+		if f.localFile.MediaId == mediaId && f.localFile.Metadata.AniDBEpisode == episode {
+			return f, true
+		}
+	}
+	return nil, false
+}
+
 func (a *Analysis) GetUnselectedFiles() map[int]*File {
 	_, uRet := a.getCorrespondingFiles(func(f *File) bool {
 		return true
