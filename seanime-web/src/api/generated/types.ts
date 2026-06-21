@@ -3010,6 +3010,14 @@ export type Status = {
     serverReady: boolean
     serverHasPassword: boolean
     showChangelogTour: string
+    /**
+     * Role of the resolved acting user ("admin" | "user" | ""). Used to gate admin-only UI.
+     */
+    userRole?: string
+    /**
+     * True once at least one regular (non-admin) user exists (multi-user active).
+     */
+    serverHasUsers?: boolean
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

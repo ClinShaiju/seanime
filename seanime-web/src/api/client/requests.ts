@@ -1,5 +1,5 @@
 import { getServerBaseUrl } from "@/api/client/server-url"
-import { SERVER_AUTH_TOKEN_STORAGE_KEY, serverAuthTokenAtom } from "@/app/(main)/_atoms/server-status.atoms"
+import { SERVER_AUTH_TOKEN_STORAGE_KEY, SESSION_TOKEN_STORAGE_KEY, serverAuthTokenAtom } from "@/app/(main)/_atoms/server-status.atoms"
 import { getClientId, getClientIdProof, setClientIdentity } from "@/lib/server/client-id"
 import { __clientPlatform__ } from "@/types/constants"
 import { useMutation, UseMutationOptions, useQuery, UseQueryOptions } from "@tanstack/react-query"
@@ -63,8 +63,29 @@ function clearStoredServerAuthToken() {
 
     try {
         window.localStorage.removeItem(SERVER_AUTH_TOKEN_STORAGE_KEY)
+        // Also clear the per-user session token so a re-auth starts clean.
+        window.localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY)
     }
     catch {
+    }
+}
+
+function getStoredSessionToken(): string | undefined {
+    if (typeof window === "undefined") return undefined
+    try {
+        const raw = window.localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)
+        if (!raw) return undefined
+        // atomWithStorage persists values JSON-encoded; decode to the raw token.
+        try {
+            const parsed = JSON.parse(raw)
+            return typeof parsed === "string" && parsed ? parsed : undefined
+        }
+        catch {
+            return raw
+        }
+    }
+    catch {
+        return undefined
     }
 }
 
@@ -104,6 +125,12 @@ export async function buildSeaQuery<T, D extends any = any>(
 
     if (password) {
         headers["X-Seanime-Token"] = password
+    }
+
+    // Per-user session token (multi-user profile system).
+    const sessionToken = getStoredSessionToken()
+    if (sessionToken) {
+        headers["Authorization"] = `Bearer ${sessionToken}`
     }
 
     const clientId = getClientId()

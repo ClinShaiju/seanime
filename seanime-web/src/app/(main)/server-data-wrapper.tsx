@@ -2,6 +2,7 @@ import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { useGetStatus } from "@/api/hooks/status.hooks"
 import { serverAuthTokenAtom } from "@/app/(main)/_atoms/server-status.atoms"
 import { GettingStartedPage } from "@/app/(main)/_features/getting-started/getting-started-page"
+import { UserLoginScreen } from "@/app/(main)/_features/user-auth/user-login-screen"
 import { useServerStatus, useSetServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { LoadingOverlayWithLogo } from "@/components/shared/loading-overlay-with-logo"
 import { LuffyError } from "@/components/shared/luffy-error"
@@ -105,6 +106,15 @@ export function ServerDataWrapper(props: ServerDataWrapperProps) {
      * If the pathname is /auth/callback, show the callback page
      */
     if (pathname.startsWith("/auth/callback")) return children
+
+    /**
+     * Networked server (one with a server password): require a per-user login before
+     * anything else. The session loads the acting user's role; configuring the server
+     * requires an admin. On a local/password-less server the operator is admin implicitly.
+     */
+    if (currentServerStatus.serverHasPassword && !currentServerStatus.userRole) {
+        return <UserLoginScreen />
+    }
 
     /**
      * If the server status doesn't have settings, show the getting started page
