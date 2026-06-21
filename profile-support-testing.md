@@ -72,6 +72,15 @@ Pick ONE:
 - [ ] Create a playlist as cvslinc; sign in as `testuser` → playlist list is **empty** (not cvslinc's). Create one as testuser; back as cvslinc → only cvslinc's shows.
 - [ ] **Upgrade carryover**: after the first deploy, cvslinc still has the pre-existing theme (backfilled from the old single-tenant row).
 
+## J. Settings role-gating (c9, tab-level)
+
+- [ ] As **admin** (cvslinc): all settings tabs visible (incl. Users, Local Library, Torrent*, Debrid, Online Streaming, Nakama, Logs, Transcoding).
+- [ ] As a **regular user** (bob): only App, User Interface, Video Playback, Desktop Media Player, External Player Link, Manga, Discord (+ Denshi on desktop) are visible. The admin tabs are **gone** (not just disabled).
+- [ ] As bob, change a user-editable setting (e.g. an AniList view pref, a Discord toggle, or Manga default provider) and Save → "Settings saved", persists across refresh, and does NOT change what cvslinc sees.
+- [ ] Known follow-ups (not bugs yet): the App and Manga tabs still show a few admin-only sub-options to users (section-level gating pending); "use server debrid" toggle, season-grouping-in-UI, and per-device video-playback are not done yet.
+
+---
+
 ## I. WebSocket primitive (P5) — regression only
 
 - [ ] App still connects to `/events` and real-time updates (scan progress, playback) work as before (the primitive must not regress WS).
