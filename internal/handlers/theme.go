@@ -12,7 +12,7 @@ import (
 //	@route /api/v1/theme [GET]
 //	@returns models.Theme
 func (h *Handler) HandleGetTheme(c echo.Context) error {
-	theme, err := h.App.Database.GetTheme()
+	theme, err := h.App.Database.GetTheme(h.dataUserID(c))
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -36,12 +36,12 @@ func (h *Handler) HandleUpdateTheme(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	// Set the theme ID to 1, so we overwrite the previous settings
-	b.Theme.BaseModel = models.BaseModel{
-		ID: 1,
-	}
+	userID := h.dataUserID(c)
 
-	currentTheme, err := h.App.Database.GetTheme()
+	// Clear any client-sent identity; UpsertTheme resolves the row by user_id.
+	b.Theme.BaseModel = models.BaseModel{}
+
+	currentTheme, err := h.App.Database.GetTheme(userID)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -49,7 +49,7 @@ func (h *Handler) HandleUpdateTheme(c echo.Context) error {
 	b.Theme.HomeItems = currentTheme.HomeItems
 
 	// Update the theme settings
-	if _, err := h.App.Database.UpsertTheme(&b.Theme); err != nil {
+	if _, err := h.App.Database.UpsertTheme(userID, &b.Theme); err != nil {
 		return h.RespondWithError(c, err)
 	}
 

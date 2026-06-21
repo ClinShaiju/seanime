@@ -94,6 +94,19 @@ func (h *Handler) CurrentUserRole(c echo.Context) string {
 	return ""
 }
 
+// dataUserID returns the user id to scope per-user data (theme, playlists, progress)
+// by. It falls back to the admin when no user is resolved, so single-user / local
+// installs keep one coherent owner and per-user rows are never orphaned.
+func (h *Handler) dataUserID(c echo.Context) uint {
+	if id := h.CurrentUserID(c); id != 0 {
+		return id
+	}
+	if admin, err := h.App.Database.GetAdminUser(); err == nil && admin != nil {
+		return admin.ID
+	}
+	return 0
+}
+
 // CurrentUser returns the resolved user for the request, or nil if none.
 func (h *Handler) CurrentUser(c echo.Context) *models.User {
 	id := h.CurrentUserID(c)

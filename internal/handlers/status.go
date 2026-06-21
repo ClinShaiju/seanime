@@ -108,8 +108,10 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 		clientInfoCache.Set(c.Request().UserAgent(), clientInfo)
 	}
 
-	theme, _ = h.App.Database.GetThemeCopy()
-	theme.HomeItems = nil
+	theme, _ = h.App.Database.GetThemeCopy(h.dataUserID(c))
+	if theme != nil {
+		theme.HomeItems = nil
+	}
 
 	status := &Status{
 		OS:                    runtime.GOOS,
@@ -692,7 +694,7 @@ func (h *Handler) HandleForceGC(c echo.Context) error {
 //	@returns []models.HomeItem
 func (h *Handler) HandleGetHomeItems(c echo.Context) error {
 
-	theme, err := h.App.Database.GetTheme()
+	theme, err := h.App.Database.GetTheme(h.dataUserID(c))
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -719,7 +721,7 @@ func (h *Handler) HandleUpdateHomeItems(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	theme, err := h.App.Database.GetTheme()
+	theme, err := h.App.Database.GetTheme(h.dataUserID(c))
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -730,7 +732,7 @@ func (h *Handler) HandleUpdateHomeItems(c echo.Context) error {
 	}
 
 	// update the settings
-	_, err = h.App.Database.UpsertTheme(theme)
+	_, err = h.App.Database.UpsertTheme(h.dataUserID(c), theme)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}

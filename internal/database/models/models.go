@@ -394,6 +394,9 @@ type SilencedMediaEntry struct {
 
 type Theme struct {
 	BaseModel
+	// UserID scopes the theme to a user (multi-user profiles). One theme row per user;
+	// 0 means the legacy single-tenant row (backfilled to the admin on first boot).
+	UserID uint `gorm:"column:user_id;index" json:"userId"`
 	// Main
 	EnableColorSettings              bool   `gorm:"column:enable_color_settings" json:"enableColorSettings"`
 	BackgroundColor                  string `gorm:"column:background_color" json:"backgroundColor"`

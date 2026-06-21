@@ -409,6 +409,12 @@ func bootstrapAdminUser(database *db.Database, flags SeanimeFlags, logger *zerol
 	default:
 		// Admin already exists and no new credential was provided: nothing to do.
 	}
+
+	// Backfill legacy single-tenant per-user rows (user_id = 0) to the admin so a
+	// single-user upgrade keeps its theme/data. Idempotent: only unassigned rows match.
+	if admin, err := database.GetAdminUser(); err == nil && admin != nil {
+		_ = database.Gorm().Model(&models.Theme{}).Where("user_id = ? OR user_id IS NULL", 0).Update("user_id", admin.ID).Error
+	}
 }
 
 // InitOrRefreshModules will initialize or refresh modules that depend on settings.

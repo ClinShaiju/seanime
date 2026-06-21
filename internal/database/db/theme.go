@@ -4,40 +4,28 @@ import (
 	"seanime/internal/database/models"
 
 	"github.com/goccy/go-json"
-	"gorm.io/gorm/clause"
 )
 
-var themeCache *models.Theme
+// Theme is per-user (multi-user profiles). Reads/writes are scoped by userID.
+//
+// ponytail: no in-memory cache — a single indexed row per user is cheap, and a
+// global cache would have to become per-user to stay correct. Add a per-user cache
+// only if a profiler says theme reads matter.
 
-func (db *Database) GetTheme() (*models.Theme, error) {
-
-	if themeCache != nil {
-		return themeCache, nil
-	}
-
+// GetTheme returns the user's theme, or an empty (default) theme if they have none.
+func (db *Database) GetTheme(userID uint) (*models.Theme, error) {
 	var theme models.Theme
-	err := db.gormdb.Where("id = ?", 1).Find(&theme).Error
-
+	err := db.gormdb.Where("user_id = ?", userID).Limit(1).Find(&theme).Error
 	if err != nil {
 		return nil, err
 	}
-
-	themeCache = &theme
-
+	theme.UserID = userID
 	return &theme, nil
 }
 
-var themeCopyCache *models.Theme
-
-// GetThemeCopy returns a copy of the theme settings.
-// The copy will have the HomeItems removed.
-func (db *Database) GetThemeCopy() (*models.Theme, error) {
-
-	if themeCopyCache != nil {
-		return themeCopyCache, nil
-	}
-
-	theme, err := db.GetTheme()
+// GetThemeCopy returns a copy of the user's theme with HomeItems removed.
+func (db *Database) GetThemeCopy(userID uint) (*models.Theme, error) {
+	theme, err := db.GetTheme(userID)
 	if err != nil {
 		return nil, err
 	}
@@ -48,34 +36,30 @@ func (db *Database) GetThemeCopy() (*models.Theme, error) {
 	}
 
 	var themeCopy models.Theme
-	err = json.Unmarshal(marshaledTheme, &themeCopy)
-	if err != nil {
+	if err := json.Unmarshal(marshaledTheme, &themeCopy); err != nil {
 		return nil, err
 	}
-
-	themeCopyCache = &themeCopy
 
 	return &themeCopy, nil
 }
 
-// UpsertTheme updates the theme settings.
-func (db *Database) UpsertTheme(settings *models.Theme) (*models.Theme, error) {
+// UpsertTheme creates or updates the given user's theme row.
+func (db *Database) UpsertTheme(userID uint, settings *models.Theme) (*models.Theme, error) {
+	settings.UserID = userID
 
-	err := db.gormdb.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		UpdateAll: true,
-	}).Create(settings).Error
+	// Resolve the existing row for this user so Save updates it instead of inserting.
+	var existing models.Theme
+	if err := db.gormdb.Where("user_id = ?", userID).Limit(1).Find(&existing).Error; err == nil && existing.ID != 0 {
+		settings.ID = existing.ID
+	} else {
+		settings.ID = 0
+	}
 
-	if err != nil {
+	if err := db.gormdb.Save(settings).Error; err != nil {
 		db.Logger.Error().Err(err).Msg("db: Failed to save theme in the database")
 		return nil, err
 	}
 
 	db.Logger.Debug().Msg("db: Theme saved")
-
-	themeCache = settings
-	themeCopyCache = nil
-
 	return settings, nil
-
 }
