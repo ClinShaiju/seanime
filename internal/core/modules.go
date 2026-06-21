@@ -352,7 +352,7 @@ func (a *App) initModulesOnce() {
 
 // HandleNewDatabaseEntries initializes essential database collections.
 // It creates an empty local files collection if one does not already exist.
-func HandleNewDatabaseEntries(database *db.Database, logger *zerolog.Logger) {
+func HandleNewDatabaseEntries(database *db.Database, flags SeanimeFlags, logger *zerolog.Logger) {
 
 	// Create initial empty local files collection if none exists
 	if _, _, err := db_bridge.GetLocalFiles(database); err != nil {
@@ -362,6 +362,53 @@ func HandleNewDatabaseEntries(database *db.Database, logger *zerolog.Logger) {
 		}
 	}
 
+	bootstrapAdminUser(database, flags, logger)
+}
+
+// bootstrapAdminUser ensures the admin user (server owner) exists and, when invoked
+// with --admin-username/--admin-password, creates or updates that admin credential
+// (also the recovery path for a forgotten admin password). On a fresh install with
+// no admin flags, it auto-generates a one-time password and logs it so the operator
+// can perform the first login. The pre-existing AniList account (single-user data)
+// is linked to the admin so their library/collection carries over.
+func bootstrapAdminUser(database *db.Database, flags SeanimeFlags, logger *zerolog.Logger) {
+	linkAccount := func(adminID uint) {
+		if acc, err := database.GetAccount(); err == nil && acc != nil {
+			_ = database.LinkAnilistAccount(adminID, acc.ID)
+		}
+	}
+
+	existing, _ := database.GetAdminUser()
+
+	switch {
+	case flags.AdminPassword != "":
+		// Explicit credential from flags: create or reset the admin.
+		admin, err := database.SetAdminCredential(flags.AdminUsername, flags.AdminPassword)
+		if err != nil {
+			logger.Error().Err(err).Msg("app: Failed to set admin credential")
+			return
+		}
+		linkAccount(admin.ID)
+		logger.Warn().Str("username", admin.Username).Msg("app: Admin credential set from flags")
+
+	case existing == nil:
+		// Fresh install, no credential provided: generate a one-time password.
+		username := flags.AdminUsername
+		if username == "" {
+			username = "admin"
+		}
+		password := util.GenerateCryptoID()
+		admin, err := database.CreateUser(username, password, models.UserRoleAdmin)
+		if err != nil {
+			logger.Error().Err(err).Msg("app: Failed to bootstrap admin user")
+			return
+		}
+		linkAccount(admin.ID)
+		logger.Warn().Msgf("app: Created initial admin user %q with password: %s — log in and change it (set a new one with --admin-username/--admin-password)", username, password)
+
+	default:
+		// Admin already exists and no new credential was provided: nothing to do.
+	}
 }
 
 // InitOrRefreshModules will initialize or refresh modules that depend on settings.

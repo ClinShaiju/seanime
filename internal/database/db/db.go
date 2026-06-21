@@ -90,6 +90,8 @@ func migrateTables(db *gorm.DB) error {
 		&models.ShelvedLocalFiles{},
 		&models.Settings{},
 		&models.Account{},
+		&models.User{},
+		&models.Session{},
 		&models.Mal{},
 		&models.ScanSummary{},
 		&models.AutoSelectProfile{},

@@ -237,7 +237,7 @@ func NewApp(configOpts *ConfigOptions, selfupdater *updater.SelfUpdater) *App {
 		logger.Fatal().Err(err).Msgf("app: Failed to initialize database")
 	}
 
-	HandleNewDatabaseEntries(database, logger)
+	HandleNewDatabaseEntries(database, configOpts.Flags, logger)
 
 	// Clean up old database entries using the cleanup manager to prevent concurrent access issues
 	database.RunDatabaseCleanup() // Remove old entries from all tables sequentially

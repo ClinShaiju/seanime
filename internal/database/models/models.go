@@ -27,6 +27,43 @@ type Account struct {
 }
 
 // +---------------------+
+// |     User/Session    |
+// +---------------------+
+
+// User roles for the multi-user profile system.
+const (
+	UserRoleAdmin = "admin"
+	UserRoleUser  = "user"
+)
+
+// User is a Seanime-local account: a credential (username + bcrypt password) and a
+// role. It is distinct from the AniList Account, which is linked separately via
+// AnilistAccountID. The first user created is the admin (server owner) who controls
+// the shared content/infrastructure plane.
+//
+// ponytail: admin identity is also satisfied by the server-password holder, so a
+// single-user install needs no User rows to behave as today; the admin row is a
+// bootstrap convenience and the anchor for per-user data.
+type User struct {
+	BaseModel
+	Username     string `gorm:"column:username;uniqueIndex" json:"username"`
+	PasswordHash string `gorm:"column:password_hash" json:"-"`
+	Role         string `gorm:"column:role" json:"role"` // UserRoleAdmin | UserRoleUser
+	// AnilistAccountID links this user to their AniList Account row (nil until the
+	// user links their AniList account in a later phase).
+	AnilistAccountID *uint `gorm:"column:anilist_account_id" json:"anilistAccountId"`
+}
+
+// Session is a server-side auth session token issued to a User on login. Server-side
+// (rather than JWT) so tokens can be revoked by deleting the row.
+type Session struct {
+	BaseModel
+	Token     string    `gorm:"column:token;uniqueIndex" json:"token"`
+	UserID    uint      `gorm:"column:user_id;index" json:"userId"`
+	ExpiresAt time.Time `gorm:"column:expires_at" json:"expiresAt"`
+}
+
+// +---------------------+
 // |     LocalFiles      |
 // +---------------------+
 

@@ -18,6 +18,10 @@ type (
 		Password         string
 		DisablePassword  bool
 		LockDown         bool
+		// AdminUsername / AdminPassword create-or-update the admin user (server owner)
+		// on startup. Used for first-time admin setup and password recovery.
+		AdminUsername string
+		AdminPassword string
 	}
 )
 
@@ -42,6 +46,8 @@ func GetSeanimeFlags() SeanimeFlags {
 		fmt.Printf("  --disable-all-features        disable all features that can be disabled\n")
 		fmt.Printf("  --password string             password to use for the instance\n")
 		fmt.Printf("  --disable-password            disable password protection\n")
+		fmt.Printf("  --admin-username string       create/update the admin user with this username\n")
+		fmt.Printf("  --admin-password string       set the admin user's password (recovery/first setup)\n")
 		fmt.Printf("  -h                           show this help message\n")
 	}
 
@@ -54,11 +60,14 @@ func GetSeanimeFlags() SeanimeFlags {
 	flag.BoolVar(&flags.LockDown, "disable-all-features", false, "Disables all features that can be disabled")
 	flag.StringVar(&flags.Password, "password", "", "Password to use for the instance")
 	flag.BoolVar(&flags.DisablePassword, "disable-password", false, "Disable password protection")
+	flag.StringVar(&flags.AdminUsername, "admin-username", "", "Create/update the admin user with this username")
+	flag.StringVar(&flags.AdminPassword, "admin-password", "", "Set the admin user's password (recovery/first setup)")
 
 	flag.Parse()
 
 	flags.DataDir = strings.TrimSpace(flags.DataDir)
 	flags.Host = strings.TrimSpace(flags.Host)
+	flags.AdminUsername = strings.TrimSpace(flags.AdminUsername)
 
 	if disableFeaturesStr != "" {
 		features := strings.Split(disableFeaturesStr, ",")
