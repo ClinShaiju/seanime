@@ -9,6 +9,7 @@ import (
 	"runtime/pprof"
 	"seanime/internal/constants"
 	"seanime/internal/core"
+	"seanime/internal/database/db"
 	"seanime/internal/database/models"
 	"seanime/internal/report"
 	"seanime/internal/user"
@@ -105,6 +106,18 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 		}
 	}
 
+	// Multi-user profiles: overlay the acting user's overrides (theme is separate).
+	// Admins see/edit the base server settings; regular users see their effective settings.
+	if settings != nil && !h.IsAdmin(c) {
+		if uid := h.CurrentUserID(c); uid != 0 {
+			if overrides, _ := h.App.Database.GetUserOverrides(uid); overrides != nil {
+				merged := db.CloneSettings(settings)
+				overrides.ApplyTo(merged)
+				settings = merged
+			}
+		}
+	}
+
 	clientInfo, found := clientInfoCache.Get(c.Request().UserAgent())
 	if !found {
 		clientInfo = util.GetClientInfo(c.Request().UserAgent())
@@ -142,6 +155,15 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 		UserRole:              h.CurrentUserRole(c),
 		ServerHasUsers:        h.App.Database.HasRegularUsers(),
 		ServerAuthenticated:   true, // reached the full path → passed the password gate
+	}
+
+	// Don't leak the shared debrid API key to non-admins (they still stream via the
+	// server debrid; they just can't see/configure it). Other admin-only secrets are
+	// gated behind hidden tabs on the client.
+	if !h.IsAdmin(c) && status.DebridSettings != nil {
+		redacted := *status.DebridSettings
+		redacted.ApiKey = ""
+		status.DebridSettings = &redacted
 	}
 
 	return status

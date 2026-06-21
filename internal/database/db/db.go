@@ -92,6 +92,7 @@ func migrateTables(db *gorm.DB) error {
 		&models.Account{},
 		&models.User{},
 		&models.Session{},
+		&models.UserSettings{},
 		&models.Mal{},
 		&models.ScanSummary{},
 		&models.AutoSelectProfile{},

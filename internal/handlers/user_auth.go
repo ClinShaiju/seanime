@@ -147,6 +147,27 @@ func (h *Handler) HandleUserChangePassword(c echo.Context) error {
 	return h.RespondWithData(c, true)
 }
 
+// HandleSaveUserSettings
+//
+//	@summary saves the current user's settings overrides (multi-user profiles).
+//	@desc Any logged-in user may save their own overrides; admin-only fields are never part of the payload.
+//	@route /api/v1/user/settings [PATCH]
+//	@returns bool
+func (h *Handler) HandleSaveUserSettings(c echo.Context) error {
+	userID := h.dataUserID(c)
+	if userID == 0 {
+		return h.RespondWithStatusError(c, http.StatusUnauthorized, errors.New("not logged in"))
+	}
+	var overrides models.UserOverrides
+	if err := c.Bind(&overrides); err != nil {
+		return h.RespondWithError(c, err)
+	}
+	if err := h.App.Database.UpsertUserOverrides(userID, &overrides); err != nil {
+		return h.RespondWithError(c, err)
+	}
+	return h.RespondWithData(c, true)
+}
+
 // HandleUserDelete
 //
 //	@summary deletes a Seanime user (admin only). Admin users cannot be deleted.

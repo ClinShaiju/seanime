@@ -163,6 +163,7 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1User.POST("/logout", h.HandleUserLogout)
 	v1User.GET("/me", h.HandleUserMe)
 	v1User.POST("/change-password", h.HandleUserChangePassword)
+	v1User.PATCH("/settings", h.HandleSaveUserSettings)
 	v1User.GET("/list", h.HandleUserList)
 	v1User.POST("/register", h.HandleUserRegister)
 	v1User.DELETE("/:id", h.HandleUserDelete)
