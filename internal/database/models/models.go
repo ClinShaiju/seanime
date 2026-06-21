@@ -480,8 +480,10 @@ type PlaylistEntry struct {
 
 type Playlist struct {
 	BaseModel
-	Name  string `gorm:"column:name" json:"name"`
-	Value []byte `gorm:"column:value" json:"value"`
+	// UserID scopes the playlist to its owner (multi-user profiles).
+	UserID uint   `gorm:"column:user_id;index" json:"userId"`
+	Name   string `gorm:"column:name" json:"name"`
+	Value  []byte `gorm:"column:value" json:"value"`
 }
 
 // +------------------------+

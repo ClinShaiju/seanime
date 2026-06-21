@@ -34,7 +34,7 @@ func (h *Handler) HandleCreatePlaylist(c echo.Context) error {
 	playlist.SetEpisodes(b.Episodes)
 
 	// Save the playlist
-	if err := db_bridge.SavePlaylist(h.App.Database, playlist); err != nil {
+	if err := db_bridge.SavePlaylist(h.App.Database, h.dataUserID(c), playlist); err != nil {
 		return h.RespondWithError(c, err)
 	}
 
@@ -48,7 +48,7 @@ func (h *Handler) HandleCreatePlaylist(c echo.Context) error {
 //	@returns []anime.Playlist
 func (h *Handler) HandleGetPlaylists(c echo.Context) error {
 
-	playlists, err := db_bridge.GetPlaylists(h.App.Database)
+	playlists, err := db_bridge.GetPlaylists(h.App.Database, h.dataUserID(c))
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -83,8 +83,8 @@ func (h *Handler) HandleUpdatePlaylist(c echo.Context) error {
 	playlist.Name = b.Name
 	playlist.SetEpisodes(b.Episodes)
 
-	// Save the playlist
-	if err := db_bridge.UpdatePlaylist(h.App.Database, playlist); err != nil {
+	// Save the playlist (scoped to the requesting user)
+	if err := db_bridge.UpdatePlaylistForUser(h.App.Database, h.dataUserID(c), playlist); err != nil {
 		return h.RespondWithError(c, err)
 	}
 
@@ -108,7 +108,7 @@ func (h *Handler) HandleDeletePlaylist(c echo.Context) error {
 
 	}
 
-	if err := db_bridge.DeletePlaylist(h.App.Database, b.DbId); err != nil {
+	if err := db_bridge.DeletePlaylistForUser(h.App.Database, b.DbId, h.dataUserID(c)); err != nil {
 		return h.RespondWithError(c, err)
 	}
 
