@@ -71,6 +71,11 @@ Pick ONE:
 - [ ] Create a playlist as cvslinc; sign in as `testuser` → playlist list is **empty** (not cvslinc's). Create one as testuser; back as cvslinc → only cvslinc's shows.
 - [ ] **Upgrade carryover**: after the first deploy, cvslinc still has the pre-existing theme (backfilled from the old single-tenant row).
 
+## I. WebSocket primitive (P5) — regression only
+
+- [ ] App still connects to `/events` and real-time updates (scan progress, playback) work as before (the primitive must not regress WS).
+- [ ] DevTools → Network → WS: the `/events` URL includes a `session=…` param when logged in. (No user-visible behavior change yet — events still broadcast.)
+
 ---
 
 ## Known gaps — NOT bugs (don't report these as failures)
@@ -80,10 +85,10 @@ These are intentionally deferred to later phases:
 - **Server/library settings are still global/admin** — the settings table split (server vs user prefs) is P2-backend.
 - **AniList is shared** — all users currently see the admin's AniList account/collection. (P3)
 - **No in-app user-logout button** — use localStorage clear or the AniList "Sign out". (added later, P3)
-- **WebSocket events are broadcast** — scan/playback events not yet per-user. (P5)
+- **WebSocket events are broadcast** — the per-user primitive (WSConn.UserID/SendEventToUser) is in place and the client sends its session on /events, but existing emitters still broadcast; per-user routing lands with P3/P4. (P5)
 - **Streaming is one global session** — two users streaming simultaneously will collide. (P4)
 - **Secrets in status** — debrid API key etc. still returned to any authenticated client. (P2-backend)
-- **No resource concurrency limits** — shared debrid/transcode can contend. (P8)
+- **No resource concurrency limits** — not needed yet: transcode/torrentstream/debrid are each single-session today, so concurrency is already 1. Limits become meaningful only once P4 enables N per-user streams. (P8, after P4)
 
 ## Recovery (if locked out of admin)
 
