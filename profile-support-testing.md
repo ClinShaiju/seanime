@@ -45,7 +45,8 @@ Pick ONE:
 
 ## E. Frontend login flow (browser, on the VPS)
 
-- [ ] Open the site → enter server password → **UserLoginScreen** ("Sign in") appears, NOT the app.
+- [ ] **Wrong server password is rejected**: at the password screen, a wrong password shows "Incorrect password" and does NOT advance to the user-login screen. (Regression fix — was previously falling through.)
+- [ ] Open the site → enter the correct server password → **UserLoginScreen** ("Sign in") appears, NOT the app.
 - [ ] Sign in as `cvslinc` → app loads; AniList collection/library present.
 - [ ] **Refresh** the page → still signed in (session persisted in `localStorage["sea-session-token"]`).
 - [ ] DevTools → Network: requests carry `Authorization: Bearer …`.
