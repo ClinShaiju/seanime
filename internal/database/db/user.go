@@ -2,6 +2,7 @@ package db
 
 import (
 	"errors"
+	"fmt"
 	"seanime/internal/database/models"
 	"strings"
 
@@ -19,6 +20,11 @@ func (db *Database) CreateUser(username, password, role string) (*models.User, e
 	}
 	if role != models.UserRoleAdmin {
 		role = models.UserRoleUser
+	}
+
+	// Friendly duplicate check (clearer than the raw UNIQUE-constraint error).
+	if existing, _ := db.GetUserByUsername(username); existing != nil {
+		return nil, fmt.Errorf("user %q already exists", username)
 	}
 
 	hash, err := hashPassword(password)

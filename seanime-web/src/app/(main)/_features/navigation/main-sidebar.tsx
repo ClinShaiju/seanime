@@ -9,6 +9,7 @@ import { usePluginSidebarItems } from "@/app/(main)/_features/plugin/webview/plu
 import { UpdateModal } from "@/app/(main)/_features/update/update-modal"
 import { useAutoDownloaderQueueCount } from "@/app/(main)/_hooks/autodownloader-queue-count"
 import { useWebsocketMessageListener } from "@/app/(main)/_hooks/handle-websockets"
+import { useUserLogout } from "@/api/hooks/user-auth.hooks"
 import { useCurrentUser, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
 import { SeaLink } from "@/components/shared/sea-link"
@@ -398,6 +399,8 @@ function SidebarFooter({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogo
 function SidebarUser({ isCollapsed, expandedSidebar, onLogout }: { isCollapsed: boolean, expandedSidebar: boolean, onLogout: () => void }) {
     const ctx = useAppSidebarContext()
     const user = useCurrentUser()
+    const serverStatus = useServerStatus()
+    const { mutate: userLogout } = useUserLogout()
     const router = useRouter()
     const avatarSrc = useResolvedAnilistAvatarSrc(user?.viewer?.avatar)
 
@@ -451,6 +454,10 @@ function SidebarUser({ isCollapsed, expandedSidebar, onLogout }: { isCollapsed: 
                         <BiLogOut /> Sign out
                     </DropdownMenuItem> : <DropdownMenuItem onClick={() => setLoginModal(true)}>
                         <BiLogIn /> Log in with AniList
+                    </DropdownMenuItem>}
+                    {/* Profile (session) logout — only in multi-user mode (server password set) */}
+                    {serverStatus?.serverHasPassword && <DropdownMenuItem onClick={() => userLogout()}>
+                        <BiLogOut /> Log out of profile
                     </DropdownMenuItem>}
                 </DropdownMenu>
             </div>}

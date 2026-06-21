@@ -12,16 +12,18 @@ export function UserLoginScreen() {
 
     return (
         <div className="container max-w-md py-10">
-            <Card className="md:py-10">
+            <Card className="p-6 sm:p-8">
                 <AppLayoutStack>
-                    <div className="text-center space-y-4">
-                        <div className="mb-4 flex justify-center w-full">
-                            <img src="/seanime-logo.png" alt="logo" className="w-24 h-auto" />
+                    <div className="space-y-4">
+                        <div className="text-center space-y-2">
+                            <div className="mb-2 flex justify-center w-full">
+                                <img src="/seanime-logo.png" alt="logo" className="w-20 h-auto" />
+                            </div>
+                            <h3>Sign in</h3>
+                            <p className="text-[--muted] text-sm">
+                                Enter your Seanime username and password.
+                            </p>
                         </div>
-                        <h3>Sign in</h3>
-                        <p className="text-[--muted] text-sm">
-                            Enter your Seanime username and password.
-                        </p>
 
                         <Form
                             schema={defineSchema(({ z }) => z.object({

@@ -17,6 +17,7 @@ export function UsersSettings() {
     const { seaFetch } = useSeaQuery()
     const queryClient = useQueryClient()
     const [deletingId, setDeletingId] = React.useState<number | null>(null)
+    const [formKey, setFormKey] = React.useState(0) // bump to remount (clear) the add form
 
     async function handleDelete(id: number) {
         setDeletingId(id)
@@ -44,6 +45,7 @@ export function UsersSettings() {
             <Card className="p-4 space-y-3">
                 <h4>Add a user</h4>
                 <Form
+                    key={formKey}
                     schema={defineSchema(({ z }) => z.object({
                         username: z.string().min(1, "Username is required"),
                         password: z.string().min(6, "Password must be at least 6 characters"),
@@ -51,7 +53,10 @@ export function UsersSettings() {
                     }))}
                     defaultValues={{ role: "user" }}
                     onSubmit={data => {
-                        registerUser({ username: data.username.trim(), password: data.password, role: data.role })
+                        registerUser(
+                            { username: data.username.trim(), password: data.password, role: data.role },
+                            { onSuccess: () => setFormKey(k => k + 1) }, // clear fields after add
+                        )
                     }}
                 >
                     <div className="flex flex-col md:flex-row gap-3 md:items-end">
