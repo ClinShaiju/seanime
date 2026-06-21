@@ -2,6 +2,7 @@ import { useGetAnilistCacheLayerStatus, useToggleAnilistCacheLayerStatus } from 
 import { useListAnimeEntryEpisodeTabExtensions } from "@/api/hooks/extensions.hooks"
 import { useLocalSyncSimulatedDataToAnilist } from "@/api/hooks/local.hooks"
 import { __seaCommand_shortcuts } from "@/app/(main)/_features/sea-command/sea-command"
+import { AdminGate } from "@/app/(main)/_features/user-auth/admin-gate"
 import { SettingsCard } from "@/app/(main)/settings/_components/settings-card"
 import { SettingsSubmitButton } from "@/app/(main)/settings/_components/settings-submit-button"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
@@ -118,15 +119,17 @@ export function ServerSettings(props: ServerSettingsProps) {
                     icon={<TbClockPlay className="" />}
                 />
 
-                <div data-settings-default-episode-source>
-                    <Field.Select
-                        name="defaultPlaybackSource"
-                        label="Default episode source"
-                        help="Used when opening anime pages."
-                        leftIcon={<RiMovieAiLine />}
-                        options={defaultPlaybackSourceOptions}
-                    />
-                </div>
+                <AdminGate>
+                    <div data-settings-default-episode-source>
+                        <Field.Select
+                            name="defaultPlaybackSource"
+                            label="Default episode source"
+                            help="Used when opening anime pages."
+                            leftIcon={<RiMovieAiLine />}
+                            options={defaultPlaybackSourceOptions}
+                        />
+                    </div>
+                </AdminGate>
 
                 <Separator />
 
@@ -204,17 +207,19 @@ export function ServerSettings(props: ServerSettingsProps) {
                     icon={<LuImageOff className="" />}
                 />
 
-                <Separator />
+                <AdminGate>
+                    <Separator />
 
-                <div data-settings-enable-extension-secure-mode>
-                    <Field.Switch
-                        side="right"
-                        name="enableExtensionSecureMode"
-                        label="Enable Extension Secure Mode"
-                        help="If enabled, Seanime will prompt you for confirmation whenever an extension tries to perform a sensitive action, even if permissions have been granted."
-                        icon={<LuShield className="" />}
-                    />
-                </div>
+                    <div data-settings-enable-extension-secure-mode>
+                        <Field.Switch
+                            side="right"
+                            name="enableExtensionSecureMode"
+                            label="Enable Extension Secure Mode"
+                            help="If enabled, Seanime will prompt you for confirmation whenever an extension tries to perform a sensitive action, even if permissions have been granted."
+                            icon={<LuShield className="" />}
+                        />
+                    </div>
+                </AdminGate>
 
 
             </SettingsCard>

@@ -262,26 +262,24 @@ export default function Page() {
                                 {/*    Torrenting*/}
                                 {/*</div>*/}
 
-                                <Card className="lg:p-2 contents lg:block border-0 bg-transparent lg:border lg:bg-gray-950/80">
-                                    {isAdmin && <>
-                                        <TabsTrigger
-                                            value="torrent"
-                                            className="group"
-                                        ><LuFileSearch className="text-xl mr-3 transition-transform duration-200" /> Torrent Provider</TabsTrigger>
-                                        <TabsTrigger
-                                            value="torrent-client"
-                                            className="group"
-                                        ><MdOutlineDownloading className="text-xl mr-3 transition-transform duration-200" /> Torrent Client</TabsTrigger>
-                                        <TabsTrigger
-                                            value="torrentstream"
-                                            className="relative group"
-                                        ><SiBittorrent className="text-xl mr-3 transition-transform duration-200" /> Torrent Streaming</TabsTrigger>
-                                        <TabsTrigger
-                                            value="debrid"
-                                            className="group"
-                                        ><HiOutlineServerStack className="text-xl mr-3 transition-transform duration-200" /> Debrid Service</TabsTrigger>
-                                    </>}
-                                </Card>
+                                {isAdmin && <Card className="lg:p-2 contents lg:block border-0 bg-transparent lg:border lg:bg-gray-950/80">
+                                    <TabsTrigger
+                                        value="torrent"
+                                        className="group"
+                                    ><LuFileSearch className="text-xl mr-3 transition-transform duration-200" /> Torrent Provider</TabsTrigger>
+                                    <TabsTrigger
+                                        value="torrent-client"
+                                        className="group"
+                                    ><MdOutlineDownloading className="text-xl mr-3 transition-transform duration-200" /> Torrent Client</TabsTrigger>
+                                    <TabsTrigger
+                                        value="torrentstream"
+                                        className="relative group"
+                                    ><SiBittorrent className="text-xl mr-3 transition-transform duration-200" /> Torrent Streaming</TabsTrigger>
+                                    <TabsTrigger
+                                        value="debrid"
+                                        className="group"
+                                    ><HiOutlineServerStack className="text-xl mr-3 transition-transform duration-200" /> Debrid Service</TabsTrigger>
+                                </Card>}
 
                                 {/*<div className="text-xs lg:text-[--muted] text-center py-1.5 uppercase px-3 border-gray-800 tracking-wide font-medium">*/}
                                 {/*    Other features*/}
@@ -311,22 +309,18 @@ export default function Page() {
                                 {/*    Server & Interface*/}
                                 {/*</div>*/}
 
-                                <Card className="lg:p-2 contents lg:block border-0 bg-transparent lg:border lg:bg-gray-950/80">
+                                {(__isElectronDesktop__ || isAdmin) && <Card className="lg:p-2 contents lg:block border-0 bg-transparent lg:border lg:bg-gray-950/80">
                                     {__isElectronDesktop__ && (
                                         <TabsTrigger
                                             value="denshi"
                                             className="group"
                                         ><LuMonitor className="text-xl mr-3 transition-transform duration-200" /> Denshi</TabsTrigger>
                                     )}
-                                    {/* <TabsTrigger
-                                     value="cache"
-                                     className="group"
-                                     ><TbDatabaseExclamation className="text-xl mr-3 transition-transform duration-200" /> Cache</TabsTrigger> */}
                                     {isAdmin && <TabsTrigger
                                         value="logs"
                                         className="group"
                                     ><LuBookKey className="text-xl mr-3 transition-transform duration-200" /> Logs & Cache</TabsTrigger>}
-                                </Card>
+                                </Card>}
                             </div>
                         </SettingsNavCard>
 
@@ -678,6 +672,27 @@ export default function Page() {
                                                 Check for updates
                                             </Button>
                                         </div>
+
+                                        <SettingsCard title="Season grouping">
+                                            <Field.Switch
+                                                side="right"
+                                                name="groupSeasons"
+                                                label="Group seasons"
+                                                help="Show multi-season anime as one entry with a season switcher (like Stremio), and collapse seasons into one card in your lists. Presentation only — AniList tracking is unchanged."
+                                            />
+                                            <Field.Switch
+                                                side="right"
+                                                name="hideFranchiseSpinoffs"
+                                                label="Hide spin-offs"
+                                                help="Drop spin-off entries from the season switcher dropdown. Side stories, recaps, movies, OVAs and specials are kept."
+                                            />
+                                            <Field.Switch
+                                                side="right"
+                                                name="hideFranchiseRecaps"
+                                                label="Hide recaps"
+                                                help="Drop recap entries from the season switcher dropdown."
+                                            />
+                                        </SettingsCard>
 
                                         <ServerSettings isPending={isPending} />
 

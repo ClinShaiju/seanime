@@ -1,4 +1,5 @@
 import { useListMangaProviderExtensions } from "@/api/hooks/extensions.hooks"
+import { AdminGate } from "@/app/(main)/_features/user-auth/admin-gate"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { useStoredMangaProviders } from "@/app/(main)/manga/_lib/handle-manga-selected-provider"
 import { SettingsCard, SettingsPageHeader } from "@/app/(main)/settings/_components/settings-card"
@@ -112,14 +113,16 @@ export function MangaSettings(props: MangaSettingsProps) {
                 />
             </SettingsCard>
 
-            <SettingsCard title="Local Provider" description="Read manga series from your local directory.">
+            <AdminGate>
+                <SettingsCard title="Local Provider" description="Read manga series from your local directory.">
 
-                <Field.DirectorySelector
-                    name="mangaLocalSourceDirectory"
-                    label="Local Source Directory"
-                    help="Directory where your manga is stored. This is only used by the local manga provider."
-                />
-            </SettingsCard>
+                    <Field.DirectorySelector
+                        name="mangaLocalSourceDirectory"
+                        label="Local Source Directory"
+                        help="Directory where your manga is stored. This is only used by the local manga provider."
+                    />
+                </SettingsCard>
+            </AdminGate>
 
             <ConfirmationDialog {...confirmDialog} />
 
