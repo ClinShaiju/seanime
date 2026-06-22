@@ -73,6 +73,11 @@ export function useHandleStartTorrentStream() {
         )) {
             return "externalPlayerLink"
         }
+        // A plain browser has no local media player — play in the built-in browser (native)
+        // player instead of launching mpv on the server.
+        if (!__isElectronDesktop__) {
+            return "nativeplayer"
+        }
         return "default"
     }, [externalPlayerLink, torrentStreamingPlayback, electronPlaybackMethod])
 

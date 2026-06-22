@@ -63,6 +63,12 @@ export function useHandleStartDebridStream() {
         )) {
             return "externalPlayerLink"
         }
+        // A plain browser (not the desktop app) has no local media player — "default" would
+        // launch mpv on the SERVER (headless on a remote multi-user server, and a single
+        // shared instance). Play in the built-in browser (native) player instead.
+        if (!__isElectronDesktop__) {
+            return "nativeplayer"
+        }
         return "default"
     }, [externalPlayerLink, torrentStreamingPlayback, electronPlaybackMethod])
 
