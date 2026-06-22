@@ -179,6 +179,44 @@ func (h *Handler) HandleSaveUserSettings(c echo.Context) error {
 	return h.RespondWithData(c, true)
 }
 
+// HandleSaveUserDebrid
+//
+//	@summary saves the current user's debrid choice (use the server debrid, or their own).
+//	@route /api/v1/user/debrid [PATCH]
+//	@returns bool
+func (h *Handler) HandleSaveUserDebrid(c echo.Context) error {
+	userID := h.dataUserID(c)
+	if userID == 0 {
+		return h.RespondWithStatusError(c, http.StatusUnauthorized, errors.New("not logged in"))
+	}
+	type body struct {
+		UseServerDebrid bool   `json:"useServerDebrid"`
+		Provider        string `json:"provider"`
+		ApiKey          string `json:"apiKey"`
+	}
+	var b body
+	if err := c.Bind(&b); err != nil {
+		return h.RespondWithError(c, err)
+	}
+
+	overrides, _ := h.App.Database.GetUserOverrides(userID)
+	if overrides == nil {
+		// Seed from the current server settings so existing per-user prefs aren't reset.
+		serverSettings, _ := h.App.Database.GetSettings()
+		overrides = models.ExtractUserOverrides(serverSettings)
+	}
+	overrides.UseServerDebrid = b.UseServerDebrid
+	overrides.DebridProvider = b.Provider
+	if b.ApiKey != "" { // blank = keep the existing key
+		overrides.DebridApiKey = b.ApiKey
+	}
+
+	if err := h.App.Database.UpsertUserOverrides(userID, overrides); err != nil {
+		return h.RespondWithError(c, err)
+	}
+	return h.RespondWithData(c, true)
+}
+
 // HandleUserDelete
 //
 //	@summary deletes a Seanime user (admin only). Admin users cannot be deleted.

@@ -25,6 +25,7 @@ import { MediastreamSettings } from "@/app/(main)/settings/_containers/mediastre
 import { ServerSettings } from "@/app/(main)/settings/_containers/server-settings"
 import { TorrentstreamSettings } from "@/app/(main)/settings/_containers/torrentstream-settings"
 import { UISettings } from "@/app/(main)/settings/_containers/ui-settings"
+import { UserDebridSettings } from "@/app/(main)/settings/_containers/user-debrid-settings"
 import { UsersSettings } from "@/app/(main)/settings/_containers/users-settings"
 import { PageWrapper } from "@/components/shared/page-wrapper"
 import { SeaLink } from "@/components/shared/sea-link"
@@ -158,7 +159,7 @@ export default function Page() {
     // If a non-admin's active tab is an admin-only one (e.g. left over from an admin
     // session in this browser), send them to a visible tab.
     React.useEffect(() => {
-        const adminOnlyTabs = ["library", "mediastream", "torrent", "torrent-client", "torrentstream", "debrid", "onlinestream", "nakama", "logs", "users"]
+        const adminOnlyTabs = ["library", "mediastream", "torrent", "torrent-client", "torrentstream", "onlinestream", "nakama", "logs", "users"]
         if (!isAdmin && adminOnlyTabs.includes(tab)) {
             setTab("seanime")
         }
@@ -275,11 +276,14 @@ export default function Page() {
                                         value="torrentstream"
                                         className="relative group"
                                     ><SiBittorrent className="text-xl mr-3 transition-transform duration-200" /> Torrent Streaming</TabsTrigger>
+                                </Card>}
+
+                                <Card className="lg:p-2 contents lg:block border-0 bg-transparent lg:border lg:bg-gray-950/80">
                                     <TabsTrigger
                                         value="debrid"
                                         className="group"
                                     ><HiOutlineServerStack className="text-xl mr-3 transition-transform duration-200" /> Debrid Service</TabsTrigger>
-                                </Card>}
+                                </Card>
 
                                 {/*<div className="text-xs lg:text-[--muted] text-center py-1.5 uppercase px-3 border-gray-800 tracking-wide font-medium">*/}
                                 {/*    Other features*/}
@@ -1076,7 +1080,7 @@ export default function Page() {
 
                         <TabsContent value="debrid" className={tabContentClass}>
 
-                            <DebridSettings />
+                            {isAdmin ? <DebridSettings /> : <UserDebridSettings />}
 
                         </TabsContent>
                     </div>

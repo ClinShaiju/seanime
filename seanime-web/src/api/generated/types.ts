@@ -3023,6 +3023,10 @@ export type Status = {
      * reject a wrong password instead of advancing to the user-login screen.
      */
     serverAuthenticated?: boolean
+    /**
+     * The acting non-admin user's debrid override (use server debrid, or their own).
+     */
+    userDebrid?: { useServerDebrid: boolean, provider: string, hasApiKey: boolean }
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

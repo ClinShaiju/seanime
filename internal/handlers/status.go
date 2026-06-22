@@ -57,6 +57,17 @@ type Status struct {
 	// ServerAuthenticated is true when the request passed the server-password gate.
 	// The login UI uses it to reject a wrong password instead of advancing.
 	ServerAuthenticated bool `json:"serverAuthenticated"`
+	// UserDebrid is the acting user's debrid override (multi-user). Nil for admins,
+	// who configure the shared server debrid directly.
+	UserDebrid *UserDebridStatus `json:"userDebrid,omitempty"`
+}
+
+// UserDebridStatus is a non-admin user's debrid choice. When UseServerDebrid is true
+// (default) they stream via the shared server debrid; otherwise their own provider/key.
+type UserDebridStatus struct {
+	UseServerDebrid bool   `json:"useServerDebrid"`
+	Provider        string `json:"provider"`
+	HasApiKey       bool   `json:"hasApiKey"`
 }
 
 var clientInfoCache = result.NewMap[string, util.ClientInfo]()
@@ -164,6 +175,20 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 		redacted := *status.DebridSettings
 		redacted.ApiKey = ""
 		status.DebridSettings = &redacted
+	}
+
+	// Surface the non-admin's debrid override so the "Use server debrid" toggle reflects
+	// their saved choice (default: use the server debrid).
+	if !h.IsAdmin(c) {
+		ud := &UserDebridStatus{UseServerDebrid: true}
+		if uid := h.CurrentUserID(c); uid != 0 {
+			if ov, _ := h.App.Database.GetUserOverrides(uid); ov != nil {
+				ud.UseServerDebrid = ov.UseServerDebrid
+				ud.Provider = ov.DebridProvider
+				ud.HasApiKey = ov.DebridApiKey != ""
+			}
+		}
+		status.UserDebrid = ud
 	}
 
 	return status
