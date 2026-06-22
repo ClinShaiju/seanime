@@ -171,6 +171,7 @@ func (h *Handler) HandleSaveUserSettings(c echo.Context) error {
 		next.UseServerDebrid = existing.UseServerDebrid
 		next.DebridProvider = existing.DebridProvider
 		next.DebridApiKey = existing.DebridApiKey
+		next.UseServerDebridAutoSelect = existing.UseServerDebridAutoSelect
 	}
 
 	if err := h.App.Database.UpsertUserOverrides(userID, next); err != nil {
@@ -190,9 +191,10 @@ func (h *Handler) HandleSaveUserDebrid(c echo.Context) error {
 		return h.RespondWithStatusError(c, http.StatusUnauthorized, errors.New("not logged in"))
 	}
 	type body struct {
-		UseServerDebrid bool   `json:"useServerDebrid"`
-		Provider        string `json:"provider"`
-		ApiKey          string `json:"apiKey"`
+		UseServerDebrid     bool   `json:"useServerDebrid"`
+		Provider            string `json:"provider"`
+		ApiKey              string `json:"apiKey"`
+		UseServerAutoSelect bool   `json:"useServerAutoSelect"`
 	}
 	var b body
 	if err := c.Bind(&b); err != nil {
@@ -210,6 +212,7 @@ func (h *Handler) HandleSaveUserDebrid(c echo.Context) error {
 	if b.ApiKey != "" { // blank = keep the existing key
 		overrides.DebridApiKey = b.ApiKey
 	}
+	overrides.UseServerDebridAutoSelect = b.UseServerAutoSelect
 
 	if err := h.App.Database.UpsertUserOverrides(userID, overrides); err != nil {
 		return h.RespondWithError(c, err)

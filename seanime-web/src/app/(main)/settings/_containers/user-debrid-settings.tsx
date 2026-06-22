@@ -1,6 +1,7 @@
 import { useServerMutation } from "@/api/client/requests"
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
+import { AutoSelectProfileButton } from "@/app/(main)/settings/_components/autoselect-profile-form"
 import { SettingsCard, SettingsPageHeader } from "@/app/(main)/settings/_components/settings-card"
 import { defineSchema, Field, Form } from "@/components/ui/form"
 import { useQueryClient } from "@tanstack/react-query"
@@ -24,7 +25,8 @@ export function UserDebridSettings() {
     const queryClient = useQueryClient()
     const ud = serverStatus?.userDebrid
 
-    const { mutate: save, isPending } = useServerMutation<boolean, { useServerDebrid: boolean, provider: string, apiKey: string }>({
+    const { mutate: save, isPending } = useServerMutation<boolean,
+        { useServerDebrid: boolean, provider: string, apiKey: string, useServerAutoSelect: boolean }>({
         endpoint: "/api/v1/user/debrid",
         method: "PATCH",
         mutationKey: ["user-debrid"],
@@ -47,16 +49,19 @@ export function UserDebridSettings() {
                     useServerDebrid: z.boolean(),
                     provider: z.string(),
                     apiKey: z.string().optional(),
+                    useServerAutoSelect: z.boolean(),
                 }))}
                 defaultValues={{
                     useServerDebrid: ud?.useServerDebrid ?? true,
                     provider: ud?.provider || "-",
                     apiKey: "",
+                    useServerAutoSelect: ud?.useServerAutoSelect ?? true,
                 }}
                 onSubmit={data => save({
                     useServerDebrid: data.useServerDebrid,
                     provider: data.provider === "-" ? "" : data.provider,
                     apiKey: data.apiKey ?? "",
+                    useServerAutoSelect: data.useServerAutoSelect,
                 })}
             >
                 <SettingsCard>
@@ -69,6 +74,19 @@ export function UserDebridSettings() {
                 </SettingsCard>
 
                 <UserDebridOwnFields hasApiKey={!!ud?.hasApiKey} />
+
+                <SettingsCard
+                    title="Auto-select"
+                    description="How a torrent is automatically picked when you stream via debrid."
+                >
+                    <Field.Switch
+                        side="right"
+                        name="useServerAutoSelect"
+                        label="Use server default auto-select"
+                        help="Use the server's auto-select preferences. Turn this off to set your own (resolution, language, ranking, etc.)."
+                    />
+                    <UserDebridAutoSelectFields />
+                </SettingsCard>
 
                 <Field.Submit loading={isPending}>Save</Field.Submit>
             </Form>
@@ -89,5 +107,19 @@ function UserDebridOwnFields({ hasApiKey }: { hasApiKey: boolean }) {
                 help={hasApiKey ? "A key is saved. Leave blank to keep it." : undefined}
             />
         </SettingsCard>
+    )
+}
+
+// UserDebridAutoSelectFields shows the full auto-select profile editor (resolution,
+// language, codecs, ranking, …) when the user opts out of the server default. The
+// editor self-fetches via the /auto-select/profile API, which is per-user, so it
+// edits THIS user's own profile. Save the toggle first to persist the choice.
+function UserDebridAutoSelectFields() {
+    const f = useFormContext()
+    if (f.watch("useServerAutoSelect")) return null
+    return (
+        <div className="pt-2">
+            <AutoSelectProfileButton />
+        </div>
     )
 }

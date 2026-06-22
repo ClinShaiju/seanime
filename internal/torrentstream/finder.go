@@ -45,7 +45,7 @@ func (r *Repository) findBestTorrent(ctx context.Context, media *anilist.Complet
 
 	r.sendStateEvent(eventLoading, TLSStateSearchingTorrents)
 
-	profile, found := db_bridge.FindAutoSelectProfile(r.db)
+	profile, found := db_bridge.GetServerAutoSelectProfile(r.db)
 	if !found {
 		resolution := r.settings.MustGet().PreferredResolution
 		if resolution == "" {

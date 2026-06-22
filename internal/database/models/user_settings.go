@@ -34,9 +34,14 @@ type UserOverrides struct {
 	DisableAnimeCardTrailers bool `json:"disableAnimeCardTrailers"`
 	// Debrid: when UseServerDebrid is false the user supplies their own provider+key
 	// (the functional wiring — streaming through the user's debrid — lands with P4).
-	UseServerDebrid    bool   `json:"useServerDebrid"`
-	DebridProvider     string `json:"debridProvider"`
-	DebridApiKey       string `json:"debridApiKey"`
+	UseServerDebrid bool   `json:"useServerDebrid"`
+	DebridProvider  string `json:"debridProvider"`
+	DebridApiKey    string `json:"debridApiKey"`
+	// Debrid auto-select: when UseServerDebridAutoSelect is false, the user's own
+	// AutoSelectProfile (stored per-user in the auto_select_profiles table, edited via
+	// the standard profile form) drives which torrent the debrid stream auto-picks,
+	// instead of the server (admin) default.
+	UseServerDebridAutoSelect bool `json:"useServerDebridAutoSelect"`
 }
 
 // ApplyTo overlays these user overrides onto a (cloned) server Settings, producing the
@@ -70,7 +75,7 @@ func (o *UserOverrides) ApplyTo(s *Settings) {
 // ExtractUserOverrides pulls the user-overridable fields out of a Settings into a fresh
 // UserOverrides (used to seed a new user's overrides from the current effective settings).
 func ExtractUserOverrides(s *Settings) *UserOverrides {
-	o := &UserOverrides{UseServerDebrid: true}
+	o := &UserOverrides{UseServerDebrid: true, UseServerDebridAutoSelect: true}
 	if s == nil {
 		return o
 	}

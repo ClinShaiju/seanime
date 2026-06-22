@@ -27,23 +27,39 @@ type (
 	}
 )
 
-func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.CompleteAnime, episodeNumber int) (ret *playbackTorrent, err error) {
+// resolveAutoSelectProfile returns the auto-select profile to use for a debrid
+// stream. A user who turned OFF "use server default auto-select" gets a profile
+// from their own preferred resolution; otherwise the server's auto-select profile
+// (DB profile, else server preferred resolution, else 1080p) is used.
+func (r *Repository) resolveAutoSelectProfile(userID uint) *anime.AutoSelectProfile {
+	// Custom mode: the user turned OFF "use server default auto-select" → use their own
+	// full auto-select profile.
+	if userID != 0 && r.db != nil {
+		if ov, _ := r.db.GetUserOverrides(userID); ov != nil && !ov.UseServerDebridAutoSelect {
+			if profile, found := db_bridge.FindAutoSelectProfile(r.db, userID); found {
+				return profile
+			}
+			// custom mode but no profile saved yet → fall through to the server default
+		}
+	}
+	// Server default = the admin's profile.
+	if profile, found := db_bridge.GetServerAutoSelectProfile(r.db); found {
+		return profile
+	}
+	resolution := "1080p"
+	if r.settings != nil && r.settings.StreamPreferredResolution != "" {
+		resolution = r.settings.StreamPreferredResolution
+	}
+	return &anime.AutoSelectProfile{Resolutions: []string{resolution}, MinSeeders: 0}
+}
+
+func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.CompleteAnime, episodeNumber int, userID uint) (ret *playbackTorrent, err error) {
 
 	defer util.HandlePanicInModuleWithError("debridstream/findBestTorrent", &err)
 
 	r.logger.Debug().Msgf("debridstream: Finding best torrent for %s, Episode %d", media.GetTitleSafe(), episodeNumber)
 
-	profile, found := db_bridge.FindAutoSelectProfile(r.db)
-	if !found {
-		resolution := r.settings.StreamPreferredResolution
-		if resolution == "" {
-			resolution = "1080p"
-		}
-		profile = &anime.AutoSelectProfile{
-			Resolutions: []string{resolution},
-			MinSeeders:  0,
-		}
-	}
+	profile := r.resolveAutoSelectProfile(userID)
 
 	providerID := provider.GetSettings().ID
 
@@ -177,7 +193,7 @@ func (r *Repository) RankTorrentsForDisplay(
 		}
 	}
 
-	profile, found := db_bridge.FindAutoSelectProfile(r.db)
+	profile, found := db_bridge.GetServerAutoSelectProfile(r.db)
 	if !found {
 		resolution := "1080p"
 		if r.settings != nil && r.settings.StreamPreferredResolution != "" {

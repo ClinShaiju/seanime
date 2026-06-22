@@ -68,6 +68,9 @@ type UserDebridStatus struct {
 	UseServerDebrid bool   `json:"useServerDebrid"`
 	Provider        string `json:"provider"`
 	HasApiKey       bool   `json:"hasApiKey"`
+	// Auto-select: when false, the user's own AutoSelectProfile (edited via the profile
+	// form, which is now per-user) drives the debrid auto-pick instead of the server's.
+	UseServerAutoSelect bool `json:"useServerAutoSelect"`
 }
 
 var clientInfoCache = result.NewMap[string, util.ClientInfo]()
@@ -178,12 +181,13 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 	// Surface the non-admin's debrid override so the "Use server debrid" toggle reflects
 	// their saved choice (default: use the server debrid).
 	if !h.IsAdmin(c) {
-		ud := &UserDebridStatus{UseServerDebrid: true}
+		ud := &UserDebridStatus{UseServerDebrid: true, UseServerAutoSelect: true}
 		if uid := h.CurrentUserID(c); uid != 0 {
 			if ov, _ := h.App.Database.GetUserOverrides(uid); ov != nil {
 				ud.UseServerDebrid = ov.UseServerDebrid
 				ud.Provider = ov.DebridProvider
 				ud.HasApiKey = ov.DebridApiKey != ""
+				ud.UseServerAutoSelect = ov.UseServerDebridAutoSelect
 			}
 		}
 		status.UserDebrid = ud

@@ -36,11 +36,8 @@ func (a *AppContextImpl) BindAutoSelectToContextObj(vm *goja.Runtime, obj *goja.
 			goja_bindings.PanicThrowErrorString(vm, "database not set")
 		}
 
-		profile, err := db_bridge.GetAutoSelectProfile(database)
-		if err != nil {
-			goja_bindings.PanicThrowError(vm, err)
-		}
-		if profile == nil || profile.DbID == 0 {
+		profile, found := db_bridge.GetServerAutoSelectProfile(database)
+		if !found || profile == nil || profile.DbID == 0 {
 			return goja.Undefined()
 		}
 
@@ -53,11 +50,15 @@ func (a *AppContextImpl) BindAutoSelectToContextObj(vm *goja.Runtime, obj *goja.
 			goja_bindings.PanicThrowErrorString(vm, "database not set")
 		}
 
-		if err := db_bridge.SaveAutoSelectProfile(database, &profile); err != nil {
+		adminID := uint(0)
+		if admin, e := database.GetAdminUser(); e == nil && admin != nil {
+			adminID = admin.ID
+		}
+		if err := db_bridge.SaveAutoSelectProfile(database, adminID, &profile); err != nil {
 			goja_bindings.PanicThrowError(vm, err)
 		}
 
-		saved, err := db_bridge.GetAutoSelectProfile(database)
+		saved, err := db_bridge.GetAutoSelectProfile(database, adminID)
 		if err != nil || saved == nil {
 			return goja.Undefined()
 		}
@@ -71,7 +72,11 @@ func (a *AppContextImpl) BindAutoSelectToContextObj(vm *goja.Runtime, obj *goja.
 			goja_bindings.PanicThrowErrorString(vm, "database not set")
 		}
 
-		if err := db_bridge.DeleteAutoSelectProfile(database); err != nil {
+		adminID := uint(0)
+		if admin, e := database.GetAdminUser(); e == nil && admin != nil {
+			adminID = admin.ID
+		}
+		if err := db_bridge.DeleteAutoSelectProfile(database, adminID); err != nil {
 			goja_bindings.PanicThrowError(vm, err)
 		}
 
@@ -94,11 +99,8 @@ func (p *autoSelectBindings) search(media *anilist.BaseAnime, episodeNumber int)
 		goja_bindings.PanicThrowErrorString(p.vm, "database not set")
 	}
 
-	profile, err := db_bridge.GetAutoSelectProfile(database)
-	if err != nil {
-		goja_bindings.PanicThrowError(p.vm, err)
-	}
-	if profile == nil {
+	profile, found := db_bridge.GetServerAutoSelectProfile(database)
+	if !found || profile == nil {
 		profile = &anime.AutoSelectProfile{}
 	}
 

@@ -10,15 +10,17 @@ import (
 	"gorm.io/gorm"
 )
 
-func FindAutoSelectProfile(db *db.Database) (*anime.AutoSelectProfile, bool) {
-	profile, err := GetAutoSelectProfile(db)
+// FindAutoSelectProfile returns the given user's auto-select profile and whether one
+// exists (DbID != 0).
+func FindAutoSelectProfile(db *db.Database, userID uint) (*anime.AutoSelectProfile, bool) {
+	profile, err := GetAutoSelectProfile(db, userID)
 	return profile, err == nil && profile.DbID != 0
 }
 
-// GetAutoSelectProfile returns the single autoselect profile if it exists
-func GetAutoSelectProfile(db *db.Database) (*anime.AutoSelectProfile, error) {
+// GetAutoSelectProfile returns the user's auto-select profile if it exists.
+func GetAutoSelectProfile(db *db.Database, userID uint) (*anime.AutoSelectProfile, error) {
 	var res models.AutoSelectProfile
-	err := db.Gorm().First(&res).Error
+	err := db.Gorm().Where("user_id = ?", userID).First(&res).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &anime.AutoSelectProfile{}, nil
@@ -36,23 +38,23 @@ func GetAutoSelectProfile(db *db.Database) (*anime.AutoSelectProfile, error) {
 	return &profile, nil
 }
 
-// SaveAutoSelectProfile saves or updates the autoselect profile
-// Since there's only one profile at all time, this will create or update it
-func SaveAutoSelectProfile(db *db.Database, profile *anime.AutoSelectProfile) error {
+// SaveAutoSelectProfile saves or updates the user's auto-select profile (one per user).
+func SaveAutoSelectProfile(db *db.Database, userID uint, profile *anime.AutoSelectProfile) error {
 	// Marshal the data
 	bytes, err := json.Marshal(profile)
 	if err != nil {
 		return err
 	}
 
-	// Check if a profile already exists
+	// Check if a profile already exists for this user
 	var existing models.AutoSelectProfile
-	err = db.Gorm().First(&existing).Error
+	err = db.Gorm().Where("user_id = ?", userID).First(&existing).Error
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// Create new profile
 		return db.Gorm().Create(&models.AutoSelectProfile{
-			Value: bytes,
+			UserID: userID,
+			Value:  bytes,
 		}).Error
 	} else if err != nil {
 		return err
@@ -64,7 +66,18 @@ func SaveAutoSelectProfile(db *db.Database, profile *anime.AutoSelectProfile) er
 		Update("value", bytes).Error
 }
 
-// DeleteAutoSelectProfile deletes the autoselect profile
-func DeleteAutoSelectProfile(db *db.Database) error {
-	return db.Gorm().Where("1 = 1").Delete(&models.AutoSelectProfile{}).Error
+// DeleteAutoSelectProfile deletes the user's auto-select profile.
+func DeleteAutoSelectProfile(db *db.Database, userID uint) error {
+	return db.Gorm().Where("user_id = ?", userID).Delete(&models.AutoSelectProfile{}).Error
+}
+
+// GetServerAutoSelectProfile returns the server-default (admin's) auto-select profile.
+// Used by server-wide callers (plugins, torrentstream, the debrid server-default path)
+// that aren't scoped to a particular logged-in user.
+func GetServerAutoSelectProfile(database *db.Database) (*anime.AutoSelectProfile, bool) {
+	adminID := uint(0)
+	if admin, err := database.GetAdminUser(); err == nil && admin != nil {
+		adminID = admin.ID
+	}
+	return FindAutoSelectProfile(database, adminID)
 }

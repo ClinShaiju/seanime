@@ -430,6 +430,7 @@ func bootstrapAdminUser(database *db.Database, flags SeanimeFlags, logger *zerol
 	if admin, err := database.GetAdminUser(); err == nil && admin != nil {
 		_ = database.Gorm().Model(&models.Theme{}).Where("user_id = ? OR user_id IS NULL", 0).Update("user_id", admin.ID).Error
 		_ = database.Gorm().Model(&models.Playlist{}).Where("user_id = ? OR user_id IS NULL", 0).Update("user_id", admin.ID).Error
+		_ = database.Gorm().Model(&models.AutoSelectProfile{}).Where("user_id = ? OR user_id IS NULL", 0).Update("user_id", admin.ID).Error
 	}
 }
 

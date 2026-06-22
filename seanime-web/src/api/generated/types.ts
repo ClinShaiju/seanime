@@ -3026,7 +3026,7 @@ export type Status = {
     /**
      * The acting non-admin user's debrid override (use server debrid, or their own).
      */
-    userDebrid?: { useServerDebrid: boolean, provider: string, hasApiKey: boolean }
+    userDebrid?: { useServerDebrid: boolean, provider: string, hasApiKey: boolean, useServerAutoSelect: boolean }
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

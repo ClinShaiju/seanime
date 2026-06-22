@@ -350,7 +350,11 @@ type AutoDownloaderProfile struct {
 
 type AutoSelectProfile struct {
 	BaseModel
-	Value []byte `gorm:"column:value" json:"value"`
+	// UserID scopes the profile to a user (multi-user): the admin's profile is the
+	// server default; a regular user's profile is used when they pick custom debrid
+	// auto-select. Legacy single-profile rows (user_id=0) are backfilled to the admin.
+	UserID uint   `gorm:"column:user_id;index" json:"userId"`
+	Value  []byte `gorm:"column:value" json:"value"`
 }
 
 type AutoDownloaderItem struct {

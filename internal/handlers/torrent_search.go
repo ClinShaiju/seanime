@@ -133,7 +133,9 @@ func (h *Handler) HandleSearchTorrent(c echo.Context) error {
 //	@route /api/v1/auto-select/profile [GET]
 //	@returns anime.AutoSelectProfile
 func (h *Handler) HandleGetAutoSelectProfile(c echo.Context) error {
-	profile, err := db_bridge.GetAutoSelectProfile(h.App.Database)
+	// Per-user: admin edits the server default; a regular user edits their own profile
+	// (used when they pick custom debrid auto-select).
+	profile, err := db_bridge.GetAutoSelectProfile(h.App.Database, h.dataUserID(c))
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -157,12 +159,12 @@ func (h *Handler) HandleSaveAutoSelectProfile(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	if err := db_bridge.SaveAutoSelectProfile(h.App.Database, b.Profile); err != nil {
+	if err := db_bridge.SaveAutoSelectProfile(h.App.Database, h.dataUserID(c), b.Profile); err != nil {
 		return h.RespondWithError(c, err)
 	}
 
 	// Get the saved profile to return it with the DB ID
-	profile, err := db_bridge.GetAutoSelectProfile(h.App.Database)
+	profile, err := db_bridge.GetAutoSelectProfile(h.App.Database, h.dataUserID(c))
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -176,7 +178,7 @@ func (h *Handler) HandleSaveAutoSelectProfile(c echo.Context) error {
 //	@route /api/v1/auto-select/profile [DELETE]
 //	@returns bool
 func (h *Handler) HandleDeleteAutoSelectProfile(c echo.Context) error {
-	if err := db_bridge.DeleteAutoSelectProfile(h.App.Database); err != nil {
+	if err := db_bridge.DeleteAutoSelectProfile(h.App.Database, h.dataUserID(c)); err != nil {
 		return h.RespondWithError(c, err)
 	}
 
