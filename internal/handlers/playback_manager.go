@@ -14,7 +14,6 @@ import (
 //	@route /api/v1/playback-manager/play [POST]
 //	@returns bool
 func (h *Handler) HandlePlaybackPlayVideo(c echo.Context) error {
-	h.App.SetStreamOwner(h.dataUserID(c))
 	type body struct {
 		Path string `json:"path"`
 	}
@@ -52,7 +51,6 @@ func (h *Handler) HandlePlaybackPlayVideo(c echo.Context) error {
 //	@route /api/v1/playback-manager/play-random [POST]
 //	@returns bool
 func (h *Handler) HandlePlaybackPlayRandomVideo(c echo.Context) error {
-	h.App.SetStreamOwner(h.dataUserID(c))
 	settings, err := h.App.Database.GetSettings()
 	if err != nil {
 		return h.RespondWithError(c, err)
@@ -212,7 +210,6 @@ func (h *Handler) HandlePlaybackPlaylistNext(c echo.Context) error {
 //	@route /api/v1/playback-manager/manual-tracking/start [POST]
 //	@returns bool
 func (h *Handler) HandlePlaybackStartManualTracking(c echo.Context) error {
-	h.App.SetStreamOwner(h.dataUserID(c))
 	type body struct {
 		MediaId       int    `json:"mediaId"`
 		EpisodeNumber int    `json:"episodeNumber"`

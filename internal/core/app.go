@@ -87,10 +87,11 @@ type (
 
 		// Real-time communication
 		WSEventManager *events.WSEventManager
-		// streamEvents wraps WSEventManager and routes the shared streaming/playback
-		// modules' broadcast events to the current stream owner (see session/streaming
-		// scoping). Set via SetStreamOwner at each stream/playback start.
-		streamEvents *events.OwnerScopedWSEventManager
+		// adminEvents scopes the App-global (admin's) streaming/playback modules to the
+		// admin user, so their events never leak to other users. Each non-admin user's
+		// session builds its own modules scoped to itself (see session.go), which is
+		// what lets users stream simultaneously and independently.
+		adminEvents *events.ScopedWSEventManager
 
 		// Extensions
 		ExtensionRepository           *extension_repo.Repository

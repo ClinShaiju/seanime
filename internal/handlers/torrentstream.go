@@ -127,7 +127,6 @@ func (h *Handler) HandleGetTorrentstreamTorrentFilePreviews(c echo.Context) erro
 //	@returns bool
 //	@route /api/v1/torrentstream/start [POST]
 func (h *Handler) HandleTorrentstreamStartStream(c echo.Context) error {
-	h.App.SetStreamOwner(h.dataUserID(c))
 
 	type body struct {
 		MediaId           int                              `json:"mediaId"`

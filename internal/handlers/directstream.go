@@ -22,7 +22,6 @@ func (h *Handler) HandleDirectstreamPlayLocalFile(c echo.Context) error {
 	if err := h.guardMediaConsumption(c); err != nil {
 		return err
 	}
-	h.App.SetStreamOwner(h.dataUserID(c))
 
 	type body struct {
 		Path     string `json:"path"`     // The path of the file.

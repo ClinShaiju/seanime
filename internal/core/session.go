@@ -4,12 +4,18 @@ import (
 	"context"
 	"errors"
 	"seanime/internal/api/anilist"
+	"seanime/internal/database/db"
 	"seanime/internal/database/models"
+	"seanime/internal/directstream"
 	"seanime/internal/events"
+	"seanime/internal/library/playbackmanager"
+	"seanime/internal/nativeplayer"
 	"seanime/internal/platforms/anilist_platform"
 	"seanime/internal/platforms/platform"
 	"seanime/internal/user"
 	"seanime/internal/util"
+	"seanime/internal/videocore"
+	"sync"
 
 	"github.com/goccy/go-json"
 )
@@ -43,6 +49,145 @@ type UserSession struct {
 	// unlinked non-admin user has an EMPTY collection (a clean slate) — it must never
 	// fall back to the shared simulated/local collection, which is the admin's data.
 	linked bool
+
+	// Per-session stateful streaming/playback modules (non-admin only; admin reads
+	// the App globals via the accessors). Built lazily/once on first access, each
+	// wired to a ScopedWSEventManager fixed to this user so two users stream
+	// independently. Shared engines (torrent client, debrid account, transcoder,
+	// metadata, continuity) are injected by reference.
+	modulesOnce  sync.Once
+	videoCore    *videocore.VideoCore
+	nativePlayer *nativeplayer.NativePlayer
+	directStream *directstream.Manager
+	playback     *playbackmanager.PlaybackManager
+}
+
+// ensureModules lazily builds this (non-admin) session's own streaming/playback
+// modules. The admin never calls this (its accessors return the App globals).
+func (s *UserSession) ensureModules() {
+	s.modulesOnce.Do(func() {
+		a := s.app
+		scoped := events.NewScopedWSEventManager(a.WSEventManager, s.UserID)
+		refresh := func() { _, _ = s.RefreshAnimeCollection() }
+
+		s.videoCore = videocore.New(videocore.NewVideoCoreOptions{
+			WsEventManager:             scoped,
+			Logger:                     a.Logger,
+			ContinuityManager:          a.ContinuityManager,
+			MetadataProviderRef:        a.MetadataProviderRef,
+			DiscordPresence:            a.DiscordPresence,
+			PlatformRef:                s.platformRef,
+			RefreshAnimeCollectionFunc: refresh,
+			IsOfflineRef:               a.IsOfflineRef(),
+		})
+		s.nativePlayer = nativeplayer.New(nativeplayer.NewNativePlayerOptions{
+			WsEventManager: scoped,
+			Logger:         a.Logger,
+			VideoCore:      s.videoCore,
+		})
+		s.directStream = directstream.NewManager(directstream.NewManagerOptions{
+			Logger:                     a.Logger,
+			WSEventManager:             scoped,
+			ContinuityManager:          a.ContinuityManager,
+			MetadataProviderRef:        a.MetadataProviderRef,
+			DiscordPresence:            a.DiscordPresence,
+			PlatformRef:                s.platformRef,
+			RefreshAnimeCollectionFunc: refresh,
+			IsOfflineRef:               a.IsOfflineRef(),
+			NativePlayer:               s.nativePlayer,
+			VideoCore:                  s.videoCore,
+			HMACTokenFunc: func(endpoint string, symbol string) string {
+				qp, err := a.GetServerPasswordHMACAuth().GenerateQueryParam(endpoint, symbol)
+				if err != nil {
+					return ""
+				}
+				return qp
+			},
+		})
+		s.playback = playbackmanager.New(&playbackmanager.NewPlaybackManagerOptions{
+			Logger:                     a.Logger,
+			WSEventManager:             scoped,
+			PlatformRef:                s.platformRef,
+			MetadataProviderRef:        a.MetadataProviderRef,
+			Database:                   a.Database,
+			DiscordPresence:            a.DiscordPresence,
+			IsOfflineRef:               a.IsOfflineRef(),
+			ContinuityManager:          a.ContinuityManager,
+			RefreshAnimeCollectionFunc: refresh,
+		})
+
+		// Apply the user's effective settings (shared server settings + their overrides).
+		s.applyModuleSettings()
+	})
+}
+
+// applyModuleSettings pushes the user's effective settings into their session
+// modules (mirrors the relevant parts of App.InitOrRefreshModules).
+func (s *UserSession) applyModuleSettings() {
+	a := s.app
+	settings, err := a.Database.GetSettings()
+	if err != nil || settings == nil {
+		return
+	}
+	if !s.IsAdmin {
+		if ov, _ := a.Database.GetUserOverrides(s.UserID); ov != nil {
+			settings = db.CloneSettings(settings)
+			ov.ApplyTo(settings)
+		}
+	}
+	if s.videoCore != nil {
+		s.videoCore.SetSettings(settings)
+	}
+	if settings.Library != nil && s.playback != nil {
+		if a.MediaPlayerRepository != nil {
+			s.playback.SetMediaPlayerRepository(a.MediaPlayerRepository)
+		}
+		s.playback.SetSettings(&playbackmanager.Settings{
+			AutoPlayNextEpisode: settings.GetLibrary().AutoPlayNextEpisode,
+		})
+	}
+	if settings.Library != nil && s.directStream != nil {
+		s.directStream.SetSettings(&directstream.Settings{
+			AutoPlayNextEpisode: settings.GetLibrary().AutoPlayNextEpisode,
+			AutoUpdateProgress:  settings.GetLibrary().AutoUpdateProgress,
+		})
+	}
+}
+
+// DirectStream returns the session's DirectStream manager (admin → App global).
+func (s *UserSession) DirectStream() *directstream.Manager {
+	if s.IsAdmin {
+		return s.app.DirectStreamManager
+	}
+	s.ensureModules()
+	return s.directStream
+}
+
+// Playback returns the session's PlaybackManager (admin → App global).
+func (s *UserSession) Playback() *playbackmanager.PlaybackManager {
+	if s.IsAdmin {
+		return s.app.PlaybackManager
+	}
+	s.ensureModules()
+	return s.playback
+}
+
+// VideoCore returns the session's VideoCore (admin → App global).
+func (s *UserSession) VideoCore() *videocore.VideoCore {
+	if s.IsAdmin {
+		return s.app.VideoCore
+	}
+	s.ensureModules()
+	return s.videoCore
+}
+
+// NativePlayer returns the session's NativePlayer (admin → App global).
+func (s *UserSession) NativePlayer() *nativeplayer.NativePlayer {
+	if s.IsAdmin {
+		return s.app.NativePlayer
+	}
+	s.ensureModules()
+	return s.nativePlayer
 }
 
 func emptyAnimeCollection() *anilist.AnimeCollection {
@@ -58,19 +203,6 @@ func emptyMangaCollection() *anilist.MangaCollection {
 		MediaListCollection: &anilist.MangaCollection_MediaListCollection{
 			Lists: []*anilist.MangaCollection_MediaListCollection_Lists{},
 		},
-	}
-}
-
-// SetStreamOwner records which user owns the currently-active stream/playback so the
-// shared streaming/playback modules' broadcast events route only to that user (and
-// to local/unidentified clients). Called at each stream/playback start handler.
-//
-// ponytail: single active stream server-wide today → one owner at a time. True
-// simultaneous independent streams need per-session module instances (the larger
-// streaming split), at which point this is replaced by per-session scoped managers.
-func (a *App) SetStreamOwner(userID uint) {
-	if a.streamEvents != nil {
-		a.streamEvents.SetOwner(userID)
 	}
 }
 
