@@ -175,6 +175,10 @@ func (a *App) initModulesOnce() {
 			_, _ = a.RefreshAnimeCollection()
 		},
 		IsOfflineRef: a.IsOfflineRef(),
+		// App-global (admin) instance: scoped to the admin user, and also accepts untagged
+		// connections (local/desktop/password-less installs that never tag their WS conn).
+		UserID:                adminID,
+		AcceptUnscopedClients: true,
 	})
 
 	// +---------------------+

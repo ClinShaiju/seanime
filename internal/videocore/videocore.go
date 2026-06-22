@@ -3,6 +3,7 @@ package videocore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"seanime/internal/api/anilist"
 	"seanime/internal/api/metadata_provider"
 	"seanime/internal/continuity"
@@ -29,6 +30,15 @@ type (
 	VideoCore struct {
 		wsEventManager              events.WSEventManagerInterface
 		clientPlayerEventSubscriber *events.ClientEventSubscriber
+		// userID is the Seanime user this VideoCore belongs to (per-session). Inbound
+		// client (player) events are processed only when their source connection belongs
+		// to this user — otherwise two users' players would cross-process each other's
+		// events (the single client-event stream is shared; subscribers are broadcast to).
+		userID uint
+		// acceptUnscopedClients is true for the App-global (admin) VideoCore so it still
+		// handles connections with no user id (local / password-less / desktop installs,
+		// which never tag their WS connection). Per-session VideoCores set this false.
+		acceptUnscopedClients bool
 
 		translatorService *TranslatorService
 
@@ -75,21 +85,33 @@ type (
 		PlatformRef                *util.Ref[platform.Platform]
 		RefreshAnimeCollectionFunc func()
 		IsOfflineRef               *util.Ref[bool]
+		// UserID scopes this VideoCore to a Seanime user (per-session). 0 + the global
+		// instance should set AcceptUnscopedClients so local/desktop installs keep working.
+		UserID uint
+		// AcceptUnscopedClients lets this VideoCore also handle connections with no user id
+		// (untagged WS connections). Set true only for the App-global (admin) instance.
+		AcceptUnscopedClients bool
 	}
 )
 
 // New returns a new instance of VideoCore. There should be only one for the lifetime of the app.
 func New(opts NewVideoCoreOptions) *VideoCore {
 	vc := &VideoCore{
-		wsEventManager:              opts.WsEventManager,
-		continuityManager:           opts.ContinuityManager,
-		discordPresence:             opts.DiscordPresence,
-		metadataProviderRef:         opts.MetadataProviderRef,
-		platformRef:                 opts.PlatformRef,
-		refreshAnimeCollectionFunc:  opts.RefreshAnimeCollectionFunc,
-		isOfflineRef:                opts.IsOfflineRef,
-		subscribers:                 result.NewMap[string, *Subscriber](),
-		clientPlayerEventSubscriber: opts.WsEventManager.SubscribeToClientVideoCoreEvents("videocore"),
+		wsEventManager:             opts.WsEventManager,
+		continuityManager:          opts.ContinuityManager,
+		discordPresence:            opts.DiscordPresence,
+		metadataProviderRef:        opts.MetadataProviderRef,
+		platformRef:                opts.PlatformRef,
+		refreshAnimeCollectionFunc: opts.RefreshAnimeCollectionFunc,
+		isOfflineRef:               opts.IsOfflineRef,
+		userID:                     opts.UserID,
+		acceptUnscopedClients:      opts.AcceptUnscopedClients,
+		subscribers:                result.NewMap[string, *Subscriber](),
+		// Unique subscription key per user: the WSEventManager's client-event subscriber
+		// map is global, so a fixed key would make per-session VideoCores overwrite each
+		// other (only the last would receive client player events). Keying by user keeps
+		// every session's VideoCore registered; ownership is enforced in listenToClientEvents.
+		clientPlayerEventSubscriber: opts.WsEventManager.SubscribeToClientVideoCoreEvents(fmt.Sprintf("videocore:u%d", opts.UserID)),
 		logger:                      opts.Logger,
 		eventBus:                    make(chan VideoEvent, 100),
 		dispatcherStop:              make(chan struct{}),
@@ -873,6 +895,17 @@ func (vc *VideoCore) listenToClientEvents() {
 				eventClientID := playerEvent.ClientId
 				if eventClientID == "" {
 					eventClientID = clientEvent.ClientID
+				}
+
+				// Ownership: the client-event stream is shared across all per-session
+				// VideoCores (subscribers are broadcast to). Only process events whose
+				// source connection belongs to THIS VideoCore's user, so two users' players
+				// never cross-process. The global (admin) instance also accepts untagged
+				// connections (local/desktop) via acceptUnscopedClients.
+				if connUID, ok := vc.wsEventManager.GetConnUserID(eventClientID); ok {
+					if connUID != vc.userID && !(vc.acceptUnscopedClients && connUID == 0) {
+						continue
+					}
 				}
 
 				// Validate that the event is from the current client

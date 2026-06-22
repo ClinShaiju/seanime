@@ -112,6 +112,9 @@ func (s *UserSession) ensureModules() {
 			PlatformRef:                s.platformRef,
 			RefreshAnimeCollectionFunc: refresh,
 			IsOfflineRef:               a.IsOfflineRef(),
+			// Per-session: process only this user's client (player) events.
+			UserID:                s.UserID,
+			AcceptUnscopedClients: false,
 		})
 		s.nativePlayer = nativeplayer.New(nativeplayer.NewNativePlayerOptions{
 			WsEventManager: scoped,

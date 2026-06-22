@@ -17,6 +17,10 @@ type WSEventManagerInterface interface {
 	SendEventTo(clientId string, t string, payload interface{}, noLog ...bool)
 	GetClientIds() []string
 	GetClientPlatform(clientId string) string
+	// GetConnUserID returns the Seanime user id associated with a connection
+	// (clientId), for routing inbound client events to the owning user's modules.
+	// ok is false when no connection with that id is registered.
+	GetConnUserID(clientId string) (userID uint, ok bool)
 	SubscribeToClientEvents(id string) *ClientEventSubscriber
 	SubscribeToClientNativePlayerEvents(id string) *ClientEventSubscriber
 	SubscribeToClientVideoCoreEvents(id string) *ClientEventSubscriber
@@ -168,6 +172,19 @@ func (m *WSEventManager) SetConnUserID(id string, userID uint) {
 			conn.UserID = userID
 		}
 	}
+}
+
+// GetConnUserID returns the user id associated with a connection id, for routing
+// inbound client (player) events to the module instance that owns that user.
+func (m *WSEventManager) GetConnUserID(clientId string) (uint, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, conn := range m.Conns {
+		if conn.ID == clientId {
+			return conn.UserID, true
+		}
+	}
+	return 0, false
 }
 
 // SendEventToUser sends an event to every connection belonging to the given user

@@ -24,6 +24,9 @@ func (s *ScopedWSEventManager) SendEventTo(clientId string, t string, payload in
 }
 
 func (s *ScopedWSEventManager) GetClientIds() []string { return s.inner.GetClientIds() }
+func (s *ScopedWSEventManager) GetConnUserID(clientId string) (uint, bool) {
+	return s.inner.GetConnUserID(clientId)
+}
 func (s *ScopedWSEventManager) GetClientPlatform(clientId string) string {
 	return s.inner.GetClientPlatform(clientId)
 }

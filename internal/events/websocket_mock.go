@@ -69,6 +69,10 @@ func (m *MockWSEventManager) GetClientPlatform(clientId string) string {
 	return ""
 }
 
+func (m *MockWSEventManager) GetConnUserID(clientId string) (uint, bool) {
+	return 0, false
+}
+
 func (m *MockWSEventManager) SubscribeToClientEvents(id string) *ClientEventSubscriber {
 	subscriber := &ClientEventSubscriber{
 		Channel: make(chan *WebsocketClientEvent),
