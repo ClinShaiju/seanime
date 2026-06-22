@@ -111,9 +111,13 @@ func (s *UserSession) ensureModules() {
 		scoped := events.NewScopedWSEventManager(a.WSEventManager, s.UserID)
 		refresh := func() { _, _ = s.RefreshAnimeCollection() }
 		// Child logger so EVERY log line from this user's session modules (videocore,
-		// nativeplayer, directstream, playback) carries userID — per-user attribution
+		// nativeplayer, directstream, playback) carries the username — per-user attribution
 		// without tagging each call site.
-		sl := a.Logger.With().Uint("userID", s.UserID).Logger()
+		uname := "anon"
+		if u, err := a.Database.GetUserByID(s.UserID); err == nil && u != nil {
+			uname = u.Username
+		}
+		sl := a.Logger.With().Str("user", uname).Logger()
 		sessionLogger := &sl
 
 		// Per-user continuity (resume positions): own file-cache bucket so a user's

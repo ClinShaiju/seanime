@@ -184,6 +184,17 @@ func (r *Repository) InitializeProvider(settings *models.DebridSettings) error {
 	return nil
 }
 
+// usernameFor resolves a userID to a username for logging (per-user attribution).
+func (r *Repository) usernameFor(userID uint) string {
+	if userID == 0 {
+		return "anon"
+	}
+	if u, err := r.db.GetUserByID(userID); err == nil && u != nil {
+		return u.Username
+	}
+	return fmt.Sprintf("u%d", userID)
+}
+
 func (r *Repository) GetProvider() (debrid.Provider, error) {
 	p, found := r.provider.Get()
 	if !found {

@@ -390,9 +390,12 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 	// Per-user request log (helps attribute streams/mpv launches to a specific user when
 	// debugging multi-user playback — e.g. a browser client using the default/external
 	// player launches mpv server-side).
-	if u := h.CurrentUser(c); u != nil {
+	// Log only real (non-preload) starts. The speculative preload layer (hover / entry /
+	// next-episode prewarm) fires this endpoint frequently with preload=true; logging those
+	// would spam the request log.
+	if u := h.CurrentUser(c); u != nil && !b.Preload {
 		h.App.Logger.Info().
-			Str("user", u.Username).Uint("userID", u.ID).
+			Str("user", u.Username).
 			Str("playbackType", string(b.PlaybackType)).
 			Int("mediaId", b.MediaId).
 			Msg("debrid: stream start requested")

@@ -50,6 +50,16 @@ func NewLogger() *zerolog.Logger {
 		FormatMessage: ZerologFormatMessagePretty,
 		FieldsExclude: fieldsExclude,
 		FieldsOrder:   fieldsOrder,
+		// Highlight the per-request "user" field (green) so it's easy to scan who made a
+		// request / who a log line belongs to. Other field names keep the default cyan.
+		// Console only — the file writer stays plain (NoColor) so logs have no escape codes.
+		FormatFieldName: func(i interface{}) string {
+			name := fmt.Sprintf("%v", i)
+			if name == "user" {
+				return colorizeb(name+"=", colorGreen)
+			}
+			return colorizeb(name+"=", colorCyan)
+		},
 	}
 
 	fileOutput := zerolog.ConsoleWriter{

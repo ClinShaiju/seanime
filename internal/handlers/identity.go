@@ -107,9 +107,22 @@ func setIdentity(c echo.Context, u *models.User) {
 
 // RequestUsername returns the resolved username for a request, or "anon" when the
 // request carries no user session. Used to tag every access-log line with the user.
+//
+// It resolves directly from the Bearer token (and the password-less admin fallback)
+// rather than reading the request context, because the access-log enricher runs before
+// IdentityMiddleware has populated the context — reading the context there always
+// yielded "anon".
 func (h *Handler) RequestUsername(c echo.Context) string {
-	if v, ok := c.Get(ctxUsername).(string); ok && v != "" {
-		return v
+	if token := bearerToken(c.Request()); token != "" {
+		if u, err := h.App.Database.GetSessionUser(token); err == nil && u != nil {
+			return u.Username
+		}
+	}
+	// Local/password-less install → the trusted operator is the admin.
+	if h.App.Config.Server.Password == "" {
+		if admin, err := h.App.Database.GetAdminUser(); err == nil && admin != nil {
+			return admin.Username
+		}
 	}
 	return "anon"
 }
