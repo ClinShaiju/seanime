@@ -59,6 +59,55 @@ Choose the appropriate command based on your target platform:
 
 **Important**: The web interface must be built first before building the server.
 
+### 3. Building Seanime Denshi (Desktop Client)
+
+Denshi is an Electron app (`seanime-denshi/`) that bundles its **own** build of the
+web interface (`seanime-denshi/web-denshi/`) and serves it over the `app://`
+protocol. It is independent of the server's embedded `web/` — so any web change you
+want in Denshi requires rebuilding **and re-bundling** the Denshi web, then
+repackaging the app. (This is why an out-of-date Denshi can lag behind the server's
+web features, e.g. the multi-user login screen.)
+
+1. **Build the web in Denshi mode** (from `seanime-web/`):
+   ```bash
+   npm run build:denshi
+   ```
+   This uses `.env.denshi` (`SEA_PUBLIC_PLATFORM=desktop`, `SEA_PUBLIC_DESKTOP=electron`)
+   and outputs to `seanime-web/out-denshi/` (note: the Denshi output dir is
+   `out-denshi`, not `out`).
+
+2. **Swap the bundled web** — replace the old bundle with the fresh build:
+   ```bash
+   rm -rf seanime-denshi/web-denshi
+   cp -r seanime-web/out-denshi seanime-denshi/web-denshi
+   ```
+   (`main.js` serves `path.join(__dirname, "../web-denshi")`. There is no automated
+   copy step — do this manually.)
+
+3. **Package the app** (from `seanime-denshi/`):
+   ```bash
+   npm run build:win      # Windows x64 NSIS installer
+   # or: npm run build:mac   (arm64)   /   npm run build:linux   (x64 AppImage)
+   ```
+   The installer is written to `seanime-denshi/dist/`, e.g.
+   `seanime-denshi/dist/seanime-denshi-<version>_Windows_x64.exe`.
+
+**Prerequisites for `build:win`:**
+- `seanime-denshi/electron-dist/` — the **custom Electron runtime** (HEVC + AC3/E-AC-3
+  software decode). `build:win` passes `-c.electronDist=electron-dist`, so fresh
+  installers already bundle it (no post-install re-apply needed on first install).
+  To refresh it, re-extract the patched runtime zip into `electron-dist/`. See the
+  Denshi runtime notes for how the patched Electron is produced and why
+  `electron-updater` auto-updates revert the codecs (and the re-apply script).
+  `build:mac`/`build:linux` download stock Electron from the configured mirror
+  instead (no custom codecs).
+- `seanime-denshi/binaries/seanime-server-windows.exe` — the bundled server sidecar.
+  Denshi spawns it only when no remote server is configured; with a `serverUrl` set
+  (Settings → Server) it talks to a remote/VPS server and skips the sidecar.
+
+Code signing is skipped if no signing identity is configured (the build logs
+"signing is skipped"); the resulting installer is unsigned but functional.
+
 ---
 
 ## Development Guide
