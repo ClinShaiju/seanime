@@ -8,7 +8,6 @@ import (
 	"seanime/internal/events"
 	"seanime/internal/platforms/anilist_platform"
 	"seanime/internal/platforms/platform"
-	"seanime/internal/platforms/simulated_platform"
 	"seanime/internal/user"
 	"seanime/internal/util"
 
@@ -40,6 +39,26 @@ type UserSession struct {
 	user             *user.User
 	anilistClientRef *util.Ref[anilist.AnilistClient]
 	platformRef      *util.Ref[platform.Platform]
+	// linked is true once this user has connected their own AniList account. An
+	// unlinked non-admin user has an EMPTY collection (a clean slate) — it must never
+	// fall back to the shared simulated/local collection, which is the admin's data.
+	linked bool
+}
+
+func emptyAnimeCollection() *anilist.AnimeCollection {
+	return &anilist.AnimeCollection{
+		MediaListCollection: &anilist.AnimeCollection_MediaListCollection{
+			Lists: []*anilist.AnimeCollection_MediaListCollection_Lists{},
+		},
+	}
+}
+
+func emptyMangaCollection() *anilist.MangaCollection {
+	return &anilist.MangaCollection{
+		MediaListCollection: &anilist.MangaCollection_MediaListCollection{
+			Lists: []*anilist.MangaCollection_MediaListCollection_Lists{},
+		},
+	}
 }
 
 // SessionFor resolves the session for a user id. The admin (or a zero id / unknown
@@ -99,19 +118,18 @@ func (a *App) buildUserSession(userID uint) *UserSession {
 	}
 
 	clientRef := util.NewRef[anilist.AnilistClient](anilist.NewAnilistClient(token, a.AnilistCacheDir))
+	linked := clientRef.Get().IsAuthenticated()
 
-	var plat platform.Platform
-	if clientRef.Get().IsAuthenticated() {
-		plat = anilist_platform.NewAnilistPlatform(clientRef, a.ExtensionBankRef, a.Logger, a.Database, func() {
-			a.logoutUserFromAnilist(userID)
-		})
-	} else if sp, err := simulated_platform.NewSimulatedPlatform(a.LocalManager, clientRef, a.ExtensionBankRef, a.Logger, a.Database); err == nil {
-		plat = sp
-	} else {
-		// Last resort: share the app platform rather than nil-panic.
-		return a.adminSession()
+	// Always build a real AniList platform — NOT the simulated platform, which is
+	// backed by the shared LocalManager (the admin's offline data). An unlinked user
+	// gets a clean slate: empty collections (see the getters below) + working public
+	// browse/search through the unauthenticated client.
+	plat := anilist_platform.NewAnilistPlatform(clientRef, a.ExtensionBankRef, a.Logger, a.Database, func() {
+		a.logoutUserFromAnilist(userID)
+	})
+	if linked {
+		plat.SetUsername(usr.Viewer.Name)
 	}
-	plat.SetUsername(usr.Viewer.Name)
 
 	return &UserSession{
 		app:              a,
@@ -119,6 +137,7 @@ func (a *App) buildUserSession(userID uint) *UserSession {
 		user:             usr,
 		anilistClientRef: clientRef,
 		platformRef:      util.NewRef[platform.Platform](plat),
+		linked:           linked,
 	}
 }
 
@@ -223,12 +242,18 @@ func (s *UserSession) GetAnimeCollection(bypassCache bool) (*anilist.AnimeCollec
 	if s.IsAdmin {
 		return s.app.GetAnimeCollection(bypassCache)
 	}
+	if !s.linked {
+		return emptyAnimeCollection(), nil
+	}
 	return s.platformRef.Get().GetAnimeCollection(context.Background(), bypassCache)
 }
 
 func (s *UserSession) GetRawAnimeCollection(bypassCache bool) (*anilist.AnimeCollection, error) {
 	if s.IsAdmin {
 		return s.app.GetRawAnimeCollection(bypassCache)
+	}
+	if !s.linked {
+		return emptyAnimeCollection(), nil
 	}
 	return s.platformRef.Get().GetRawAnimeCollection(context.Background(), bypassCache)
 }
@@ -237,12 +262,18 @@ func (s *UserSession) GetMangaCollection(bypassCache bool) (*anilist.MangaCollec
 	if s.IsAdmin {
 		return s.app.GetMangaCollection(bypassCache)
 	}
+	if !s.linked {
+		return emptyMangaCollection(), nil
+	}
 	return s.platformRef.Get().GetMangaCollection(context.Background(), bypassCache)
 }
 
 func (s *UserSession) GetRawMangaCollection(bypassCache bool) (*anilist.MangaCollection, error) {
 	if s.IsAdmin {
 		return s.app.GetRawMangaCollection(bypassCache)
+	}
+	if !s.linked {
+		return emptyMangaCollection(), nil
 	}
 	return s.platformRef.Get().GetRawMangaCollection(context.Background(), bypassCache)
 }
@@ -255,6 +286,9 @@ func (s *UserSession) RefreshAnimeCollection() (*anilist.AnimeCollection, error)
 	if s.IsAdmin {
 		return s.app.RefreshAnimeCollection()
 	}
+	if !s.linked {
+		return emptyAnimeCollection(), nil
+	}
 	ret, err := s.platformRef.Get().RefreshAnimeCollection(context.Background())
 	if err != nil {
 		return nil, err
@@ -266,6 +300,9 @@ func (s *UserSession) RefreshAnimeCollection() (*anilist.AnimeCollection, error)
 func (s *UserSession) RefreshMangaCollection() (*anilist.MangaCollection, error) {
 	if s.IsAdmin {
 		return s.app.RefreshMangaCollection()
+	}
+	if !s.linked {
+		return emptyMangaCollection(), nil
 	}
 	mc, err := s.platformRef.Get().RefreshMangaCollection(context.Background())
 	if err != nil {
