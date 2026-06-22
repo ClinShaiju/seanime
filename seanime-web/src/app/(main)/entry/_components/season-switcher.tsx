@@ -24,7 +24,7 @@ export function SeasonSwitcher({ mediaId }: { mediaId: string | number | null | 
     const searchParams = useSearchParams()
     const [mergedSeason, setMergedSeason] = useAtom(__entry_mergedSeasonAtom)
 
-    const groupSeasons = !!serverStatus?.settings?.library?.groupSeasons
+    const groupSeasons = !!serverStatus?.themeSettings?.groupSeasons
     const { data: franchise } = useGetAnimeFranchise(mediaId, groupSeasons)
 
     const currentId = Number(mediaId)

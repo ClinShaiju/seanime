@@ -457,6 +457,12 @@ type Theme struct {
 	HideAnimeSpoilerTitles          bool `gorm:"column:hide_anime_spoiler_titles" json:"hideAnimeSpoilerTitles"`
 	HideAnimeSpoilerDescriptions    bool `gorm:"column:hide_anime_spoiler_descriptions" json:"hideAnimeSpoilerDescriptions"`
 	HideAnimeSpoilerSkipNextEpisode bool `gorm:"column:hide_anime_spoiler_skip_next_episode" json:"hideAnimeSpoilerSkipNextEpisode"`
+
+	// Season-select grouping (presentation only; per-user). Lives on the theme so it
+	// sits with the other UI prefs and saves via the per-user theme form.
+	GroupSeasons          bool `gorm:"column:group_seasons" json:"groupSeasons"`
+	HideFranchiseSpinoffs bool `gorm:"column:hide_franchise_spinoffs" json:"hideFranchiseSpinoffs"`
+	HideFranchiseRecaps   bool `gorm:"column:hide_franchise_recaps" json:"hideFranchiseRecaps"`
 }
 
 type HomeItem struct {

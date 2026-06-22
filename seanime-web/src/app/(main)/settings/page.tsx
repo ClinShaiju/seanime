@@ -673,27 +673,6 @@ export default function Page() {
                                             </Button>
                                         </div>
 
-                                        <SettingsCard title="Season grouping">
-                                            <Field.Switch
-                                                side="right"
-                                                name="groupSeasons"
-                                                label="Group seasons"
-                                                help="Show multi-season anime as one entry with a season switcher (like Stremio), and collapse seasons into one card in your lists. Presentation only — AniList tracking is unchanged."
-                                            />
-                                            <Field.Switch
-                                                side="right"
-                                                name="hideFranchiseSpinoffs"
-                                                label="Hide spin-offs"
-                                                help="Drop spin-off entries from the season switcher dropdown. Side stories, recaps, movies, OVAs and specials are kept."
-                                            />
-                                            <Field.Switch
-                                                side="right"
-                                                name="hideFranchiseRecaps"
-                                                label="Hide recaps"
-                                                help="Drop recap entries from the season switcher dropdown."
-                                            />
-                                        </SettingsCard>
-
                                         <ServerSettings isPending={isPending} />
 
                                     </TabsContent>

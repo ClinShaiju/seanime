@@ -25,11 +25,8 @@ type UserOverrides struct {
 	// Manga: default provider + progress; local source dir stays server/admin.
 	MangaDefaultProvider    string `json:"mangaDefaultProvider"`
 	MangaAutoUpdateProgress bool   `json:"mangaAutoUpdateProgress"`
-	// Library: season-grouping (presentation) + per-user playback prefs. The default
-	// playback / episode source stays admin (locked).
-	GroupSeasons          bool `json:"groupSeasons"`
-	HideFranchiseSpinoffs bool `json:"hideFranchiseSpinoffs"`
-	HideFranchiseRecaps   bool `json:"hideFranchiseRecaps"`
+	// Library: per-user playback prefs. The default playback / episode source stays
+	// admin (locked). Season-grouping lives on the per-user Theme instead.
 	AutoUpdateProgress    bool `json:"autoUpdateProgress"`
 	AutoPlayNextEpisode   bool `json:"autoPlayNextEpisode"`
 	EnableWatchContinuity bool `json:"enableWatchContinuity"`
@@ -60,9 +57,6 @@ func (o *UserOverrides) ApplyTo(s *Settings) {
 		s.Manga.AutoUpdateProgress = o.MangaAutoUpdateProgress
 	}
 	if s.Library != nil {
-		s.Library.GroupSeasons = o.GroupSeasons
-		s.Library.HideFranchiseSpinoffs = o.HideFranchiseSpinoffs
-		s.Library.HideFranchiseRecaps = o.HideFranchiseRecaps
 		s.Library.AutoUpdateProgress = o.AutoUpdateProgress
 		s.Library.AutoPlayNextEpisode = o.AutoPlayNextEpisode
 		s.Library.EnableWatchContinuity = o.EnableWatchContinuity
@@ -84,9 +78,6 @@ func ExtractUserOverrides(s *Settings) *UserOverrides {
 		o.MangaAutoUpdateProgress = s.Manga.AutoUpdateProgress
 	}
 	if s.Library != nil {
-		o.GroupSeasons = s.Library.GroupSeasons
-		o.HideFranchiseSpinoffs = s.Library.HideFranchiseSpinoffs
-		o.HideFranchiseRecaps = s.Library.HideFranchiseRecaps
 		o.AutoUpdateProgress = s.Library.AutoUpdateProgress
 		o.AutoPlayNextEpisode = s.Library.AutoPlayNextEpisode
 		o.EnableWatchContinuity = s.Library.EnableWatchContinuity

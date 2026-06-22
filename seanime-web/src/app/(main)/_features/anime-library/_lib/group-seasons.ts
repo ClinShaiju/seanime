@@ -152,7 +152,7 @@ function buildRefMap(refs: Anime_FranchiseRefEntry[]): Map<number, Anime_Franchi
 // list unchanged, so the library renders immediately and collapses progressively.
 export function useGroupedCollectionList(collectionList: Anime_LibraryCollectionList[]): Anime_LibraryCollectionList[] {
     const serverStatus = useServerStatus()
-    const groupSeasons = !!serverStatus?.settings?.library?.groupSeasons
+    const groupSeasons = !!serverStatus?.themeSettings?.groupSeasons
 
     const allIds = React.useMemo(
         () => groupSeasons ? collectionList.flatMap(l => l.entries ?? []).map(e => e.mediaId) : [],
@@ -173,7 +173,7 @@ export function useGroupedCollectionList(collectionList: Anime_LibraryCollection
 // "all" view). Here collapsing is across statuses since it's a single merged list.
 export function useGroupedEntries(entries: Anime_LibraryCollectionEntry[]): GroupedLibraryEntry[] {
     const serverStatus = useServerStatus()
-    const groupSeasons = !!serverStatus?.settings?.library?.groupSeasons
+    const groupSeasons = !!serverStatus?.themeSettings?.groupSeasons
 
     const allIds = React.useMemo(
         () => groupSeasons ? entries.map(e => e.mediaId) : [],
@@ -202,7 +202,7 @@ export function useGroupedById<T extends {
     repFirst = false,
 ): Array<T & { __franchiseSeasons?: number; __franchiseMembers?: T[] }> {
     const serverStatus = useServerStatus()
-    const groupSeasons = enabled && !!serverStatus?.settings?.library?.groupSeasons
+    const groupSeasons = enabled && !!serverStatus?.themeSettings?.groupSeasons
 
     const allIds = React.useMemo(
         () => groupSeasons ? items.map(m => m.id) : [],
@@ -233,7 +233,7 @@ export function useGroupedAnilistEntries(
     enabled: boolean,
 ): GroupedAnilistEntry[] {
     const serverStatus = useServerStatus()
-    const groupSeasons = enabled && !!serverStatus?.settings?.library?.groupSeasons
+    const groupSeasons = enabled && !!serverStatus?.themeSettings?.groupSeasons
 
     const allIds = React.useMemo(
         () => groupSeasons ? entries.map(e => e.media?.id).filter((x): x is number => !!x) : [],

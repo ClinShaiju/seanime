@@ -65,6 +65,9 @@ const themeSchema = defineSchema(({ z }) => z.object({
     continueWatchingDefaultSorting: z.string().default(THEME_DEFAULT_VALUES.continueWatchingDefaultSorting),
     animeLibraryCollectionDefaultSorting: z.string().default(THEME_DEFAULT_VALUES.animeLibraryCollectionDefaultSorting),
     mangaLibraryCollectionDefaultSorting: z.string().default(THEME_DEFAULT_VALUES.mangaLibraryCollectionDefaultSorting),
+    groupSeasons: z.boolean().default(false),
+    hideFranchiseSpinoffs: z.boolean().default(false),
+    hideFranchiseRecaps: z.boolean().default(false),
     showAnimeUnwatchedCount: z.boolean().default(THEME_DEFAULT_VALUES.showAnimeUnwatchedCount),
     showMangaUnreadCount: z.boolean().default(THEME_DEFAULT_VALUES.showMangaUnreadCount),
     hideEpisodeCardDescription: z.boolean().default(THEME_DEFAULT_VALUES.hideEpisodeCardDescription),
@@ -494,6 +497,9 @@ export function UISettings() {
                 continueWatchingDefaultSorting: themeSettings?.continueWatchingDefaultSorting,
                 animeLibraryCollectionDefaultSorting: themeSettings?.animeLibraryCollectionDefaultSorting,
                 mangaLibraryCollectionDefaultSorting: themeSettings?.mangaLibraryCollectionDefaultSorting,
+                groupSeasons: themeSettings?.groupSeasons ?? false,
+                hideFranchiseSpinoffs: themeSettings?.hideFranchiseSpinoffs ?? false,
+                hideFranchiseRecaps: themeSettings?.hideFranchiseRecaps ?? false,
                 showAnimeUnwatchedCount: themeSettings?.showAnimeUnwatchedCount,
                 showMangaUnreadCount: themeSettings?.showMangaUnreadCount,
                 hideEpisodeCardDescription: themeSettings?.hideEpisodeCardDescription,
@@ -609,6 +615,27 @@ export function UISettings() {
                                 />
 
 
+                            </SettingsCard>
+
+                            <SettingsCard title="Season grouping">
+                                <Field.Switch
+                                    side="right"
+                                    name="groupSeasons"
+                                    label="Group seasons"
+                                    help="Show multi-season anime as one entry with a season switcher (like Stremio), and collapse seasons into one card in your lists. Presentation only — AniList tracking is unchanged."
+                                />
+                                <Field.Switch
+                                    side="right"
+                                    name="hideFranchiseSpinoffs"
+                                    label="Hide spin-offs"
+                                    help="Drop spin-off entries from the season switcher dropdown. Side stories, recaps, movies, OVAs and specials are kept."
+                                />
+                                <Field.Switch
+                                    side="right"
+                                    name="hideFranchiseRecaps"
+                                    label="Hide recaps"
+                                    help="Drop recap entries from the season switcher dropdown."
+                                />
                             </SettingsCard>
 
                             <SettingsCard>

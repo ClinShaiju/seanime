@@ -4199,6 +4199,9 @@ export type Models_Theme = {
     hideAnimeSpoilerTitles: boolean
     hideAnimeSpoilerDescriptions: boolean
     hideAnimeSpoilerSkipNextEpisode: boolean
+    groupSeasons?: boolean
+    hideFranchiseSpinoffs?: boolean
+    hideFranchiseRecaps?: boolean
     id: number
     createdAt?: string
     updatedAt?: string

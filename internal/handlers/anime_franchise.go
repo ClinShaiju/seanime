@@ -60,12 +60,12 @@ func (h *Handler) HandleGetAnimeFranchise(c echo.Context) error {
 	}
 	// Optionally drop spin-offs and/or recaps from the dropdown. Filtered post-cache (on a
 	// copy) so toggling a setting takes effect immediately without invalidating the cache.
-	if s, e := h.App.Database.GetSettings(); e == nil && s.Library != nil {
+	if theme, e := h.App.Database.GetTheme(h.dataUserID(c)); e == nil && theme != nil {
 		hide := map[string]bool{}
-		if s.Library.HideFranchiseSpinoffs {
+		if theme.HideFranchiseSpinoffs {
 			hide["SPIN_OFF"] = true
 		}
-		if s.Library.HideFranchiseRecaps {
+		if theme.HideFranchiseRecaps {
 			hide["SUMMARY"] = true
 		}
 		if len(hide) > 0 {
