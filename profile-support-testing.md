@@ -88,12 +88,33 @@ Pick ONE:
 
 ---
 
+## J. Per-user AniList (P3 slice A) — NEW, verify this round
+
+Multi-user AniList: each user now links their **own** AniList account and sees/edits
+their **own** collection. Admin (cvslinc) is unchanged.
+
+Best with **two AniList accounts** (or verify the isolation direction with one):
+- [ ] As **cvslinc** (admin): link AniList → admin's collection/lists load as before. Library, Schedule, Discover all work.
+- [ ] As **bob** (regular user), before linking: library/lists show empty/simulated (no crash); Discover/search still works.
+- [ ] As **bob**, link a *different* AniList account → bob sees **bob's** collection, not cvslinc's. Viewer name/avatar (top-right) is bob's.
+- [ ] Edit a list entry as bob (score/status/progress, or mark watched via online-stream progress) → updates **bob's** AniList list; cvslinc's is untouched.
+- [ ] AniList **Stats** and **lists-page tag filters** show bob's data, not cvslinc's (cache-leak check).
+- [ ] Switch back to cvslinc → still their own collection/stats. No cross-contamination either direction.
+- [ ] Single-user sanity: admin only, no regular users → behaves exactly as before.
+
+Known still-shared after this slice (expected, lands in slice B/C):
+- Playback / resume positions / "currently watching" tracking still run through the
+  shared (admin) modules — a regular user's *watch tracking* and *streaming* are not
+  yet their own. Per-session playback + the streaming split are next.
+
+---
+
 ## Known gaps — NOT bugs (don't report these as failures)
 
 These are intentionally deferred to later phases:
 - **Theme and playlists ARE now per-user** (P6). But **continuity (resume positions) and auto-select profiles are still shared** — they're driven by the playback flow, which isn't per-user until P3/P4.
 - **Server/library settings are still global/admin** — the settings table split (server vs user prefs) is P2-backend.
-- **AniList is shared** — all users currently see the admin's AniList account/collection. (P3)
+- ~~**AniList is shared**~~ DONE (P3 slice A) — each user links their own AniList account and sees/edits their own collection. (Per-session *playback/stream* state is the remaining slice B/C.)
 - **No in-app user-logout button** — use localStorage clear or the AniList "Sign out". (added later, P3)
 - **WebSocket events are broadcast** — the per-user primitive (WSConn.UserID/SendEventToUser) is in place and the client sends its session on /events, but existing emitters still broadcast; per-user routing lands with P3/P4. (P5)
 - **Streaming is one global session** — two users streaming simultaneously will collide. (P4)
