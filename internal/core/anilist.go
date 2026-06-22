@@ -210,6 +210,10 @@ func (a *App) LoginToAnilist(token string) error {
 
 	a.Logger.Info().Msg("app: Authenticated to AniList")
 
+	// On a networked server the admin has its own cached per-user session (not the global
+	// delegate); evict it so it rebuilds with the freshly-linked account/token.
+	a.sessions.Delete(a.adminUserID())
+
 	anilistPlatform := anilist_platform.NewAnilistPlatform(a.AnilistClientRef, a.ExtensionBankRef, a.Logger, a.Database, a.LogoutFromAnilist)
 	a.UpdatePlatform(anilistPlatform)
 
@@ -255,6 +259,9 @@ func (a *App) LogoutFromAnilist() {
 	})
 
 	a.Logger.Debug().Msg("app: Logged out from AniList, switched to simulated platform")
+
+	// Networked server: evict the admin's cached per-user session so it rebuilds unlinked.
+	a.sessions.Delete(a.adminUserID())
 
 	a.InitOrRefreshModules()
 	a.InitOrRefreshAnilistData()

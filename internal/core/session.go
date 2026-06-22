@@ -9,7 +9,6 @@ import (
 	"seanime/internal/api/anilist"
 	"seanime/internal/continuity"
 	"seanime/internal/database/db"
-	"seanime/internal/database/models"
 	"seanime/internal/directstream"
 	"seanime/internal/events"
 	"seanime/internal/library/playbackmanager"
@@ -313,8 +312,15 @@ func (a *App) SessionFor(userID uint) *UserSession {
 		}
 		return a.anonymousSession()
 	}
-	if admin, err := a.Database.GetAdminUser(); err == nil && admin != nil && admin.ID == userID {
-		return a.adminSession()
+	// Local/password-less install: the admin is the trusted single operator and uses the
+	// App-global plane directly (zero overhead, single-user behaviour unchanged). On a
+	// networked (password-protected) server EVERY user — admin included — gets their own
+	// independent session (own AniList account, cache, modules, data) so multiple users,
+	// even multiple admins, use the server independently.
+	if a.Config.Server.Password == "" {
+		if admin, err := a.Database.GetAdminUser(); err == nil && admin != nil && admin.ID == userID {
+			return a.adminSession()
+		}
 	}
 	sess, err := a.sessions.GetOrSet(userID, func() (*UserSession, error) {
 		return a.buildUserSession(userID), nil
@@ -358,14 +364,14 @@ func (a *App) adminUserID() uint {
 	return 0
 }
 
-// buildUserSession constructs a non-admin user's own AniList platform from their
-// linked account token (or a simulated platform if they haven't linked one).
+// buildUserSession constructs a user's own AniList platform + per-user cache from their
+// linked account token (or an unauthenticated/empty platform if they haven't linked one).
+// On a networked server this runs for EVERY user including admins, so each gets an
+// independent identity/cache/module plane. (On a local/password-less install the admin
+// short-circuits to the App-global delegate in SessionFor and never reaches here.)
 func (a *App) buildUserSession(userID uint) *UserSession {
 	u, err := a.Database.GetUserByID(userID)
 	if err != nil || u == nil {
-		return a.adminSession()
-	}
-	if u.Role == models.UserRoleAdmin {
 		return a.adminSession()
 	}
 

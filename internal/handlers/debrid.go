@@ -387,6 +387,17 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 
 	b.ClientId = getRequestClientId(c, b.ClientId)
 
+	// Per-user request log (helps attribute streams/mpv launches to a specific user when
+	// debugging multi-user playback — e.g. a browser client using the default/external
+	// player launches mpv server-side).
+	if u := h.CurrentUser(c); u != nil {
+		h.App.Logger.Info().
+			Str("user", u.Username).Uint("userID", u.ID).
+			Str("playbackType", string(b.PlaybackType)).
+			Int("mediaId", b.MediaId).
+			Msg("debrid: stream start requested")
+	}
+
 	userAgent := c.Request().Header.Get("User-Agent")
 
 	if b.Torrent != nil {

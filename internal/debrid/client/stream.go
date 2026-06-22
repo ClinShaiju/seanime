@@ -208,6 +208,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 	s.repository.previousStreamOptions = mo.Some(opts)
 
 	s.repository.logger.Info().
+		Uint("userID", opts.UserID).
 		Str("clientId", opts.ClientId).
 		Any("playbackType", opts.PlaybackType).
 		Int("mediaId", opts.MediaId).Msgf("debridstream: Starting stream for episode %s", opts.AniDBEpisode)

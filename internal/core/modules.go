@@ -43,6 +43,11 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// systemUserID is a reserved user id used to scope the App-global (system) streaming
+// modules on a networked server so they never match a real user's connection. No real
+// user row can have this id.
+const systemUserID = ^uint(0)
+
 // initModulesOnce will initialize modules that need to persist.
 // This function is called once after the App instance is created.
 // The settings of these modules will be set/refreshed in InitOrRefreshModules.
@@ -59,6 +64,19 @@ func (a *App) initModulesOnce() {
 		adminID = admin.ID
 	}
 	a.adminEvents = events.NewScopedWSEventManager(a.WSEventManager, adminID)
+
+	// Global VideoCore scope. On a local/password-less install the admin uses the global
+	// modules directly, so the global VideoCore claims the admin's id and also accepts
+	// untagged (local/desktop) connections. On a networked (password) server EVERY user —
+	// including the admin — has their own session VideoCore, so the global one must NOT
+	// claim any real user's client events (it would double-process the admin's). Scope it
+	// to a system sentinel that matches no real connection.
+	globalVideoCoreUserID := adminID
+	globalAcceptUnscoped := true
+	if a.Config.Server.Password != "" {
+		globalVideoCoreUserID = systemUserID
+		globalAcceptUnscoped = false
+	}
 
 	a.LocalManager.SetRefreshAnilistCollectionsFunc(func() {
 		_, _ = a.RefreshAnimeCollection()
@@ -175,10 +193,11 @@ func (a *App) initModulesOnce() {
 			_, _ = a.RefreshAnimeCollection()
 		},
 		IsOfflineRef: a.IsOfflineRef(),
-		// App-global (admin) instance: scoped to the admin user, and also accepts untagged
-		// connections (local/desktop/password-less installs that never tag their WS conn).
-		UserID:                adminID,
-		AcceptUnscopedClients: true,
+		// Local install: admin id + accept untagged conns. Networked: system sentinel so
+		// the global VideoCore never claims a real user's client events (each user, incl
+		// admin, has their own session VideoCore).
+		UserID:                globalVideoCoreUserID,
+		AcceptUnscopedClients: globalAcceptUnscoped,
 	})
 
 	// +---------------------+
