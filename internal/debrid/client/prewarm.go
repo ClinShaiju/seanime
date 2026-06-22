@@ -24,17 +24,22 @@ func (r *Repository) PrewarmStreams(ctx context.Context, targets []*StartStreamO
 			continue
 		}
 		opts.Preload = true
-		_ = r.streamManager.preloadStream(ctx, opts)
+		// Per-user: prewarm into the target user's own StreamManager so each user's preload
+		// cache is theirs and is consumed when THEY play.
+		_ = r.smFor(opts.UserID).preloadStream(ctx, opts)
 	}
 }
 
-// ClearAllPreloads drops every cached/in-flight preload. Used on provider/account change so a
-// stale URL from a previous debrid account is never served.
+// ClearAllPreloads drops every cached/in-flight preload across ALL users. Used on
+// provider/account change so a stale URL from a previous debrid account is never served.
 func (r *Repository) ClearAllPreloads() {
-	if r.streamManager == nil {
+	if r.streamManagers == nil {
 		return
 	}
-	r.streamManager.preloadMu.Lock()
-	r.streamManager.clearAllPreloadsLocked()
-	r.streamManager.preloadMu.Unlock()
+	r.streamManagers.Range(func(_ uint, sm *StreamManager) bool {
+		sm.preloadMu.Lock()
+		sm.clearAllPreloadsLocked()
+		sm.preloadMu.Unlock()
+		return true
+	})
 }

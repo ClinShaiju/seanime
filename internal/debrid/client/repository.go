@@ -53,8 +53,13 @@ type (
 		// nil → fall back to wsEventManager (admin-scoped). Injected by core.
 		sessionEventsFunc func(userID uint) events.WSEventManagerInterface
 
-		playbackManager     *playbackmanager.PlaybackManager
-		streamManager       *StreamManager
+		playbackManager *playbackmanager.PlaybackManager
+		// streamManagers holds one StreamManager per user. Each owns its own per-stream
+		// state (current torrent item, stream URL, download/playback cancel funcs, preload
+		// cache), so two users streaming at once can't cancel or overwrite each other's
+		// in-flight resolve (the cause of "stuck at downloading 100%" / "player opens then
+		// immediately closes" when both start at the same time).
+		streamManagers      *result.Map[uint, *StreamManager]
 		completeAnimeCache  *anilist.CompleteAnimeCache
 		metadataProviderRef *util.Ref[metadata_provider.Provider]
 		platformRef         *util.Ref[platform.Platform]
@@ -101,9 +106,8 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		directStreamManager:   opts.DirectStreamManager,
 		sessionModulesFunc:    opts.SessionModulesFunc,
 		sessionEventsFunc:     opts.SessionEventsFunc,
+		streamManagers:        result.NewMap[uint, *StreamManager](),
 	}
-
-	ret.streamManager = NewStreamManager(ret)
 
 	ret.autoSelect = autoselect.New(&autoselect.NewAutoSelectOptions{
 		Logger:            opts.Logger,
@@ -321,21 +325,41 @@ func (r *Repository) CancelDownload(itemID string) error {
 	return nil
 }
 
+// smFor returns the per-user StreamManager, creating it on first use. Each user's
+// stream state is isolated so concurrent streams never clobber each other.
+func (r *Repository) smFor(userID uint) *StreamManager {
+	sm, _ := r.streamManagers.GetOrSet(userID, func() (*StreamManager, error) {
+		return NewStreamManager(r), nil
+	})
+	return sm
+}
+
 func (r *Repository) StartStream(ctx context.Context, opts *StartStreamOptions) error {
-	return r.streamManager.startStream(ctx, opts)
+	return r.smFor(opts.UserID).startStream(ctx, opts)
 }
 
 // PreloadStream resolves and caches the next episode's stream URL for instant playback.
 func (r *Repository) PreloadStream(ctx context.Context, opts *StartStreamOptions) error {
-	return r.streamManager.preloadStream(ctx, opts)
+	return r.smFor(opts.UserID).preloadStream(ctx, opts)
 }
 
+// GetStreamURL returns the stream URL of any currently-active stream. With per-user
+// stream managers there may be several; this returns the first non-empty one (used by
+// single-host features like Nakama/plugins).
 func (r *Repository) GetStreamURL() (string, bool) {
-	return r.streamManager.currentStreamUrl, r.streamManager.currentStreamUrl != ""
+	var url string
+	r.streamManagers.Range(func(_ uint, sm *StreamManager) bool {
+		if sm.currentStreamUrl != "" {
+			url = sm.currentStreamUrl
+			return false
+		}
+		return true
+	})
+	return url, url != ""
 }
 
 func (r *Repository) CancelStream(opts *CancelStreamOptions) {
-	r.streamManager.cancelStream(opts)
+	r.smFor(opts.UserID).cancelStream(opts)
 }
 
 func (r *Repository) GetPreviousStreamOptions() (*StartStreamOptions, bool) {

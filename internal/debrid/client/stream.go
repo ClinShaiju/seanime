@@ -40,6 +40,10 @@ type (
 		// consume so re-pressing/restarting the same episode is instant; deleted on episode end
 		// (a different episode starts, or the stream is cancelled). TTL is the staleness backstop.
 		lastConsumedKey string
+		// previousStreamOptions is THIS user's last stream options, used by cancelStream to
+		// resolve the right per-user directStream. (The repository keeps a separate
+		// last-active copy for host/plugin accessors.)
+		previousStreamOptions mo.Option[*StartStreamOptions]
 	}
 
 	// preloadedDebridStream holds a fully-resolved debrid stream URL for a future episode.
@@ -94,6 +98,9 @@ type (
 	CancelStreamOptions struct {
 		// Whether to remove the torrent from the debrid service
 		RemoveTorrent bool `json:"removeTorrent"`
+		// UserID selects which user's stream to cancel (per-user stream managers). 0 falls
+		// back to the system/admin manager. The handler sets it from the request user.
+		UserID uint `json:"-"`
 	}
 )
 
@@ -106,10 +113,11 @@ const (
 
 func NewStreamManager(repository *Repository) *StreamManager {
 	return &StreamManager{
-		repository:           repository,
-		currentTorrentItemId: "",
-		preloads:             make(map[string]*preloadedDebridStream),
-		preloadInflight:      make(map[string]context.CancelFunc),
+		repository:            repository,
+		currentTorrentItemId:  "",
+		preloads:              make(map[string]*preloadedDebridStream),
+		preloadInflight:       make(map[string]context.CancelFunc),
+		previousStreamOptions: mo.None[*StartStreamOptions](),
 	}
 }
 
@@ -205,7 +213,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		}
 	}
 
-	s.repository.previousStreamOptions = mo.Some(opts)
+	s.previousStreamOptions = mo.Some(opts)              // this user's last stream (for cancel)
+	s.repository.previousStreamOptions = mo.Some(opts)   // last-active (host/plugin accessors)
 
 	s.repository.logger.Info().
 		Uint("userID", opts.UserID).
@@ -236,7 +245,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 	if opts.PlaybackType == PlaybackTypeNativePlayer {
 		s.ds(opts).BeginOpen(opts.ClientId, "Selecting torrent...", func() {
-			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true})
+			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true, UserID: opts.UserID})
 		})
 	}
 
@@ -724,9 +733,10 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 	}
 	s.preloadMu.Unlock()
 
-	// Resolve the directStream of the user who owns the stream being cancelled.
+	// Resolve the directStream of the user who owns the stream being cancelled — THIS
+	// manager's own last stream (per-user), not the repository's last-active copy.
 	var prevOpts *StartStreamOptions
-	if p, ok := s.repository.previousStreamOptions.Get(); ok {
+	if p, ok := s.previousStreamOptions.Get(); ok {
 		prevOpts = p
 	}
 	if dm := s.ds(prevOpts); dm != nil {
@@ -1034,7 +1044,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	// The native player needs an open session before we hand it the stream.
 	if opts.PlaybackType == PlaybackTypeNativePlayer {
 		s.ds(opts).BeginOpen(opts.ClientId, "Loading preloaded stream...", func() {
-			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true})
+			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true, UserID: opts.UserID})
 		})
 		if !s.ds(opts).IsOpenActive(opts.ClientId) {
 			return nil

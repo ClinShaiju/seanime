@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"seanime/internal/api/anilist"
+	"seanime/internal/continuity"
 	debrid_client "seanime/internal/debrid/client"
 	"seanime/internal/library/anime"
 	"seanime/internal/util"
@@ -57,10 +58,10 @@ func selectPrewarmTargets(cands []prewarmCandidate, max int) []prewarmTarget {
 }
 
 // buildPrewarmCandidates cross-references the watch history (recency) with the AniList collection
-// (progress, episode count) for shows the user is currently watching/repeating.
-func (a *App) buildPrewarmCandidates() ([]prewarmCandidate, map[int]*anilist.BaseAnime) {
-	collection, err := a.GetAnimeCollection(false)
-	if err != nil || collection == nil || collection.GetMediaListCollection() == nil {
+// (progress, episode count) for shows the user is currently watching/repeating. The collection
+// and continuity manager are the specific user's (per-user prewarm).
+func (a *App) buildPrewarmCandidates(collection *anilist.AnimeCollection, cont *continuity.Manager) ([]prewarmCandidate, map[int]*anilist.BaseAnime) {
+	if collection == nil || collection.GetMediaListCollection() == nil || cont == nil {
 		return nil, nil
 	}
 
@@ -91,7 +92,7 @@ func (a *App) buildPrewarmCandidates() ([]prewarmCandidate, map[int]*anilist.Bas
 		}
 	}
 
-	history := a.ContinuityManager.GetWatchHistory()
+	history := cont.GetWatchHistory()
 	cands := make([]prewarmCandidate, 0, len(history))
 	mediaById := make(map[int]*anilist.BaseAnime, len(history))
 	for mediaId, item := range history {
@@ -123,14 +124,52 @@ func (a *App) prewarmContinueWatchingStreams() {
 	if settings == nil || !settings.PreloadNextStream {
 		return
 	}
-	if a.ContinuityManager == nil {
+
+	// Per-user prewarm: the admin plus every active per-user session. Each user's next-up
+	// episodes are resolved from THEIR collection + continuity and cached in THEIR stream
+	// manager (opts.UserID), so prewarm data and cache are never shared across users.
+	seen := make(map[uint]bool)
+	var sessions []*UserSession
+	addSession := func(s *UserSession) {
+		if s == nil || seen[s.UserID] {
+			return
+		}
+		seen[s.UserID] = true
+		sessions = append(sessions, s)
+	}
+	addSession(a.SessionFor(a.adminUserID()))
+	a.sessions.Range(func(_ uint, s *UserSession) bool {
+		addSession(s)
+		return true
+	})
+
+	var allOpts []*debrid_client.StartStreamOptions
+	for _, s := range sessions {
+		allOpts = append(allOpts, a.buildPrewarmOptsForSession(s)...)
+	}
+	if len(allOpts) == 0 {
 		return
 	}
 
-	cands, mediaById := a.buildPrewarmCandidates()
+	a.Logger.Debug().Int("count", len(allOpts)).Int("users", len(sessions)).Msg("app: Prewarming continue-watching streams")
+	a.DebridClientRepository.PrewarmStreams(context.Background(), allOpts)
+}
+
+// buildPrewarmOptsForSession resolves one user's continue-watching prewarm targets from
+// their own collection + continuity, tagging each with their UserID so it caches in their
+// own stream manager.
+func (a *App) buildPrewarmOptsForSession(s *UserSession) []*debrid_client.StartStreamOptions {
+	if s == nil {
+		return nil
+	}
+	collection, err := s.GetAnimeCollection(false)
+	if err != nil {
+		return nil
+	}
+	cands, mediaById := a.buildPrewarmCandidates(collection, s.Continuity())
 	targets := selectPrewarmTargets(cands, prewarmContinueWatchingCount)
 	if len(targets) == 0 {
-		return
+		return nil
 	}
 
 	opts := make([]*debrid_client.StartStreamOptions, 0, len(targets))
@@ -155,6 +194,7 @@ func (a *App) prewarmContinueWatchingStreams() {
 			MediaId:       t.mediaId,
 			EpisodeNumber: t.nextEp,
 			AniDBEpisode:  aniDBEpisode,
+			UserID:        s.UserID,
 			AutoSelect:    true,
 			Preload:       true,
 			// Priority: this is the continue-watching next-up set the user actually clicks — it must
@@ -166,13 +206,7 @@ func (a *App) prewarmContinueWatchingStreams() {
 			PrewarmMetadata: true,
 		})
 	}
-
-	if len(opts) == 0 {
-		return
-	}
-
-	a.Logger.Debug().Int("count", len(opts)).Msg("app: Prewarming continue-watching streams")
-	a.DebridClientRepository.PrewarmStreams(context.Background(), opts)
+	return opts
 }
 
 // startContinueWatchingPrewarmLoop runs the prewarm on a low-frequency ticker. Each tick is a cheap

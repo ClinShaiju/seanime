@@ -458,6 +458,12 @@ func (h *Handler) HandleDebridCancelStream(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
+	if b.Options == nil {
+		b.Options = &debrid_client.CancelStreamOptions{}
+	}
+	// Scope the cancel to the requesting user's stream manager (per-user streams).
+	b.Options.UserID = h.dataUserID(c)
+
 	h.App.DebridClientRepository.CancelStream(b.Options)
 
 	return h.RespondWithData(c, true)
