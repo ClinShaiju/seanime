@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"seanime/internal/api/anilist"
 	"seanime/internal/continuity"
 	"seanime/internal/database/db"
@@ -21,6 +23,17 @@ import (
 
 	"github.com/goccy/go-json"
 )
+
+// userAnilistCacheDir returns a per-user AniList cache directory under the shared
+// cache root. The AniList disk cache keys by query params only (not the token), so a
+// shared directory would let one user's cached collection/lists/viewer be served to
+// another (cross-user data bleed). Each non-admin user gets their own subdirectory.
+// The admin keeps the root dir (single-tenant upgrades unchanged).
+func userAnilistCacheDir(root string, userID uint) string {
+	dir := filepath.Join(root, fmt.Sprintf("u%d", userID))
+	_ = os.MkdirAll(dir, 0o755)
+	return dir
+}
 
 var errInvalidToken = errors.New("token is empty")
 
@@ -324,7 +337,7 @@ func (a *App) adminSession() *UserSession {
 // platform for public browse/search only. Built once and cached.
 func (a *App) anonymousSession() *UserSession {
 	a.anonSessionOnce.Do(func() {
-		clientRef := util.NewRef[anilist.AnilistClient](anilist.NewAnilistClient("", a.AnilistCacheDir))
+		clientRef := util.NewRef[anilist.AnilistClient](anilist.NewAnilistClient("", userAnilistCacheDir(a.AnilistCacheDir, 0)))
 		plat := anilist_platform.NewAnilistPlatform(clientRef, a.ExtensionBankRef, a.Logger, a.Database, func() {})
 		a.anonSession = &UserSession{
 			app:              a,
@@ -368,7 +381,7 @@ func (a *App) buildUserSession(userID uint) *UserSession {
 		usr = user.NewSimulatedUser()
 	}
 
-	clientRef := util.NewRef[anilist.AnilistClient](anilist.NewAnilistClient(token, a.AnilistCacheDir))
+	clientRef := util.NewRef[anilist.AnilistClient](anilist.NewAnilistClient(token, userAnilistCacheDir(a.AnilistCacheDir, userID)))
 	linked := clientRef.Get().IsAuthenticated()
 
 	// Always build a real AniList platform — NOT the simulated platform, which is
