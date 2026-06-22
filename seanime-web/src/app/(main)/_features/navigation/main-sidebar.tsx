@@ -207,6 +207,7 @@ function SidebarFooter({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogo
     const pathname = usePathname()
     const serverStatus = useServerStatus()
     const user = useCurrentUser()
+    const { mutate: userLogout } = useUserLogout()
 
     // Extensions
     const { data: updateData } = useGetExtensionUpdateData()
@@ -383,11 +384,19 @@ function SidebarFooter({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogo
                         isCurrent: pathname === ("/settings"),
                     },
                     ...(ctx.isBelowBreakpoint ? [
-                        {
-                            iconType: user?.isSimulated ? FiLogIn : BiLogOut,
-                            name: user?.isSimulated ? "Sign in" : "Sign out",
-                            onClick: user?.isSimulated ? () => setLoginModal(true) : confirmSignOut.open,
-                        },
+                        serverStatus?.serverHasPassword
+                            // Multi-user: Sign out = profile sign-out (AniList is in Settings → Integrations).
+                            ? {
+                                iconType: BiLogOut,
+                                name: "Sign out",
+                                onClick: () => userLogout(),
+                            }
+                            // Local/single-user: Sign out = AniList sign-out.
+                            : {
+                                iconType: user?.isSimulated ? FiLogIn : BiLogOut,
+                                name: user?.isSimulated ? "Sign in" : "Sign out",
+                                onClick: user?.isSimulated ? () => setLoginModal(true) : confirmSignOut.open,
+                            },
                     ] : []),
                 ]}
             />
@@ -450,15 +459,20 @@ function SidebarUser({ isCollapsed, expandedSidebar, onLogout }: { isCollapsed: 
                     open={dropdownOpen}
                     onOpenChange={setDropdownOpen}
                 >
-                    {!user.isSimulated ? <DropdownMenuItem onClick={confirmSignOut.open}>
-                        <BiLogOut /> Sign out
-                    </DropdownMenuItem> : <DropdownMenuItem onClick={() => setLoginModal(true)}>
-                        <BiLogIn /> Log in with AniList
-                    </DropdownMenuItem>}
-                    {/* Profile (session) logout — only in multi-user mode (server password set) */}
-                    {serverStatus?.serverHasPassword && <DropdownMenuItem onClick={() => userLogout()}>
-                        <BiLogOut /> Log out of profile
-                    </DropdownMenuItem>}
+                    {serverStatus?.serverHasPassword
+                        // Multi-user: the top-level "Sign out" is the PROFILE sign-out.
+                        // AniList connect/disconnect lives in Settings → Integrations now.
+                        ? <DropdownMenuItem onClick={() => userLogout()}>
+                            <BiLogOut /> Sign out
+                        </DropdownMenuItem>
+                        // Local/single-user: no profiles — "Sign out" is the AniList sign-out.
+                        : (!user.isSimulated
+                            ? <DropdownMenuItem onClick={confirmSignOut.open}>
+                                <BiLogOut /> Sign out
+                            </DropdownMenuItem>
+                            : <DropdownMenuItem onClick={() => setLoginModal(true)}>
+                                <BiLogIn /> Log in with AniList
+                            </DropdownMenuItem>)}
                 </DropdownMenu>
             </div>}
 

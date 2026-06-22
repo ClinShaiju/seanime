@@ -19,6 +19,7 @@ import { SettingsIsDirty, SettingsSubmitButton } from "@/app/(main)/settings/_co
 import { AnimeLibrarySettings } from "@/app/(main)/settings/_containers/anime-library-settings"
 import { DebridSettings } from "@/app/(main)/settings/_containers/debrid-settings"
 import { FilecacheSettings } from "@/app/(main)/settings/_containers/filecache-settings"
+import { IntegrationsSettings } from "@/app/(main)/settings/_containers/integrations-settings"
 import { LogsSettings } from "@/app/(main)/settings/_containers/logs-settings"
 import { MangaSettings } from "@/app/(main)/settings/_containers/manga-settings"
 import { MediastreamSettings } from "@/app/(main)/settings/_containers/mediastream-settings"
@@ -307,6 +308,10 @@ export default function Page() {
                                         value="discord"
                                         className="group"
                                     ><FaDiscord className="text-xl mr-3 transition-transform duration-200" /> Discord</TabsTrigger>
+                                    <TabsTrigger
+                                        value="integrations"
+                                        className="group"
+                                    ><MdOutlineConnectWithoutContact className="text-xl mr-3 transition-transform duration-200" /> Integrations</TabsTrigger>
                                 </Card>
 
                                 {/*<div className="text-xs lg:text-[--muted] text-center py-1.5 uppercase px-3 border-gray-800 tracking-wide font-medium">*/}
@@ -1081,6 +1086,12 @@ export default function Page() {
                         <TabsContent value="debrid" className={tabContentClass}>
 
                             {isAdmin ? <DebridSettings /> : <UserDebridSettings />}
+
+                        </TabsContent>
+
+                        <TabsContent value="integrations" className={tabContentClass}>
+
+                            <IntegrationsSettings />
 
                         </TabsContent>
                     </div>
