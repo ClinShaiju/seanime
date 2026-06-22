@@ -23,23 +23,24 @@ import (
 func (h *Handler) HandleGetAnimeCollection(c echo.Context) error {
 
 	bypassCache := c.Request().Method == "POST"
+	sess := h.userSession(c)
 
 	if !bypassCache {
 		// Get the user's anilist collection
-		animeCollection, err := h.App.GetAnimeCollection(false)
+		animeCollection, err := sess.GetAnimeCollection(false)
 		if err != nil {
 			return h.RespondWithError(c, err)
 		}
 		return h.RespondWithData(c, animeCollection)
 	}
 
-	animeCollection, err := h.App.RefreshAnimeCollection()
+	animeCollection, err := sess.RefreshAnimeCollection()
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
 
 	go func() {
-		_, _ = h.App.RefreshMangaCollection()
+		_, _ = sess.RefreshMangaCollection()
 	}()
 
 	return h.RespondWithData(c, animeCollection)
@@ -56,7 +57,7 @@ func (h *Handler) HandleGetRawAnimeCollection(c echo.Context) error {
 	bypassCache := c.Request().Method == "POST"
 
 	// Get the user's anilist collection
-	animeCollection, err := h.App.GetRawAnimeCollection(bypassCache)
+	animeCollection, err := h.userSession(c).GetRawAnimeCollection(bypassCache)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -64,7 +65,8 @@ func (h *Handler) HandleGetRawAnimeCollection(c echo.Context) error {
 	return h.RespondWithData(c, animeCollection)
 }
 
-var tagsCache *anilist.MediaTagMap
+// tagsCache is keyed by user id so one user's collection tags never leak to another.
+var tagsCache = result.NewMap[uint, anilist.MediaTagMap]()
 
 // HandleGetRawAnimeCollectionTags
 //
@@ -73,26 +75,27 @@ var tagsCache *anilist.MediaTagMap
 //	@returns anilist.MediaTagMap
 //	@route /api/v1/anilist/collection/raw/tags [GET]
 func (h *Handler) HandleGetRawAnimeCollectionTags(c echo.Context) error {
+	sess := h.userSession(c)
 	h.App.OnRefreshAnilistCollectionFuncs.Set("HandleGetRawAnimeCollectionTags", func() {
-		tagsCache = nil
+		tagsCache = result.NewMap[uint, anilist.MediaTagMap]()
 	})
 
-	if tagsCache != nil {
-		return h.RespondWithData(c, *tagsCache)
+	if cached, ok := tagsCache.Get(sess.UserID); ok {
+		return h.RespondWithData(c, cached)
 	}
 
-	userName := h.App.GetUsername()
-	if userName == "" || h.App.GetUser().IsSimulated {
+	userName := sess.Username()
+	if userName == "" || sess.User().IsSimulated {
 		return h.RespondWithData(c, anilist.MediaTagMap{})
 	}
 
-	ret, err := h.App.AnilistPlatformRef.Get().GetAnilistClient().AnimeCollectionTags(c.Request().Context(), &userName)
+	ret, err := sess.Platform().GetAnilistClient().AnimeCollectionTags(c.Request().Context(), &userName)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
 
 	tags := anilist.MediaTagMapFromAnimeCollectionTags(ret)
-	tagsCache = &tags
+	tagsCache.Set(sess.UserID, tags)
 
 	return h.RespondWithData(c, tags)
 }
@@ -122,7 +125,8 @@ func (h *Handler) HandleEditAnilistListEntry(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	err := h.App.AnilistPlatformRef.Get().UpdateEntry(
+	sess := h.userSession(c)
+	err := sess.Platform().UpdateEntry(
 		c.Request().Context(),
 		*p.MediaId,
 		p.Status,
@@ -137,12 +141,12 @@ func (h *Handler) HandleEditAnilistListEntry(c echo.Context) error {
 
 	switch p.Type {
 	case "anime":
-		_, _ = h.App.RefreshAnimeCollection()
+		_, _ = sess.RefreshAnimeCollection()
 	case "manga":
-		_, _ = h.App.RefreshMangaCollection()
+		_, _ = sess.RefreshMangaCollection()
 	default:
-		_, _ = h.App.RefreshAnimeCollection()
-		_, _ = h.App.RefreshMangaCollection()
+		_, _ = sess.RefreshAnimeCollection()
+		_, _ = sess.RefreshMangaCollection()
 	}
 
 	return h.RespondWithData(c, true)
@@ -241,12 +245,13 @@ func (h *Handler) HandleDeleteAnilistListEntry(c echo.Context) error {
 		return h.RespondWithError(c, errors.New("missing parameters"))
 	}
 
+	sess := h.userSession(c)
 	var listEntryID int
 
 	switch *p.Type {
 	case "anime":
 		// Get the list entry ID
-		animeCollection, err := h.App.GetAnimeCollection(false)
+		animeCollection, err := sess.GetAnimeCollection(false)
 		if err != nil {
 			return h.RespondWithError(c, err)
 		}
@@ -258,7 +263,7 @@ func (h *Handler) HandleDeleteAnilistListEntry(c echo.Context) error {
 		listEntryID = listEntry.ID
 	case "manga":
 		// Get the list entry ID
-		mangaCollection, err := h.App.GetMangaCollection(false)
+		mangaCollection, err := sess.GetMangaCollection(false)
 		if err != nil {
 			return h.RespondWithError(c, err)
 		}
@@ -271,16 +276,16 @@ func (h *Handler) HandleDeleteAnilistListEntry(c echo.Context) error {
 	}
 
 	// Delete the list entry
-	err := h.App.AnilistPlatformRef.Get().DeleteEntry(c.Request().Context(), *p.MediaId, listEntryID)
+	err := sess.Platform().DeleteEntry(c.Request().Context(), *p.MediaId, listEntryID)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
 
 	switch *p.Type {
 	case "anime":
-		_, _ = h.App.RefreshAnimeCollection()
+		_, _ = sess.RefreshAnimeCollection()
 	case "manga":
-		_, _ = h.App.RefreshMangaCollection()
+		_, _ = sess.RefreshMangaCollection()
 	}
 
 	return h.RespondWithData(c, true)
@@ -450,28 +455,30 @@ var anilistMissedSequelsCache = result.NewCache[int, []*anilist.BaseAnime]()
 //	@returns []anilist.BaseAnime
 func (h *Handler) HandleAnilistListMissedSequels(c echo.Context) error {
 
-	cached, ok := anilistMissedSequelsCache.Get(1)
+	sess := h.userSession(c)
+	cacheKey := int(sess.UserID)
+	cached, ok := anilistMissedSequelsCache.Get(cacheKey)
 	if ok {
 		return h.RespondWithData(c, cached)
 	}
 
 	// Get complete anime collection
-	animeCollection, err := h.App.AnilistPlatformRef.Get().GetAnimeCollectionWithRelations(c.Request().Context())
+	animeCollection, err := sess.Platform().GetAnimeCollectionWithRelations(c.Request().Context())
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
 
 	ret, err := anilist.ListMissedSequels(
-		h.App.AnilistPlatformRef.Get().GetAnilistClient(),
+		sess.Platform().GetAnilistClient(),
 		animeCollection,
 		h.App.Logger,
-		h.App.GetUserAnilistToken(),
+		sess.AnilistToken(),
 	)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
 
-	anilistMissedSequelsCache.SetT(1, ret, time.Hour*4)
+	anilistMissedSequelsCache.SetT(cacheKey, ret, time.Hour*4)
 
 	return h.RespondWithData(c, ret)
 }
@@ -487,12 +494,14 @@ var anilistStatsCache = result.NewCache[int, *anilist.Stats]()
 //	@route /api/v1/anilist/stats [GET]
 //	@returns anilist.Stats
 func (h *Handler) HandleGetAniListStats(c echo.Context) error {
-	cached, ok := anilistStatsCache.Get(0)
+	sess := h.userSession(c)
+	cacheKey := int(sess.UserID)
+	cached, ok := anilistStatsCache.Get(cacheKey)
 	if ok {
 		return h.RespondWithData(c, cached)
 	}
 
-	stats, err := h.App.AnilistPlatformRef.Get().GetViewerStats(c.Request().Context())
+	stats, err := sess.Platform().GetViewerStats(c.Request().Context())
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -505,7 +514,7 @@ func (h *Handler) HandleGetAniListStats(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	anilistStatsCache.SetT(0, ret, time.Hour*1)
+	anilistStatsCache.SetT(cacheKey, ret, time.Hour*1)
 
 	return h.RespondWithData(c, ret)
 }

@@ -23,7 +23,8 @@ import (
 //	@returns anime.LibraryCollection
 func (h *Handler) HandleGetLibraryCollection(c echo.Context) error {
 
-	animeCollection, err := h.App.GetAnimeCollection(false)
+	sess := h.userSession(c)
+	animeCollection, err := sess.GetAnimeCollection(false)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -166,7 +167,7 @@ func (h *Handler) HandleGetLibraryCollection(c echo.Context) error {
 
 	libraryCollection, err := anime.NewLibraryCollection(c.Request().Context(), &anime.NewLibraryCollectionOptions{
 		AnimeCollection:     animeCollection,
-		PlatformRef:         h.App.AnilistPlatformRef,
+		PlatformRef:         sess.PlatformRef(),
 		LocalFiles:          lfs,
 		MetadataProviderRef: h.App.MetadataProviderRef,
 	})
@@ -228,28 +229,37 @@ func (h *Handler) HandleGetLibraryCollection(c echo.Context) error {
 //	@returns []anime.ScheduleItem
 func (h *Handler) HandleGetAnimeCollectionSchedule(c echo.Context) error {
 
+	sess := h.userSession(c)
+
 	// Invalidate the cache when the Anilist collection is refreshed
 	h.App.AddOnRefreshAnilistCollectionFunc("HandleGetAnimeCollectionSchedule", func() {
 		anime.ClearScheduleCache()
 	})
 
-	if ret, ok := anime.GetScheduleCache(); ok {
-		return h.RespondWithData(c, ret)
+	// The schedule is derived from the user's own collection. The schedule cache is a
+	// single global value, so only the admin reads/writes it; other users compute
+	// fresh to avoid leaking the admin's schedule (ponytail: fine — not a hot path).
+	if sess.IsAdmin {
+		if ret, ok := anime.GetScheduleCache(); ok {
+			return h.RespondWithData(c, ret)
+		}
 	}
 
-	animeSchedule, err := h.App.AnilistPlatformRef.Get().GetAnimeAiringSchedule(c.Request().Context())
+	animeSchedule, err := sess.Platform().GetAnimeAiringSchedule(c.Request().Context())
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
 
-	animeCollection, err := h.App.GetAnimeCollection(false)
+	animeCollection, err := sess.GetAnimeCollection(false)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
 
 	ret := anime.GetScheduleItems(animeSchedule, animeCollection)
 
-	anime.SetScheduleCache(ret)
+	if sess.IsAdmin {
+		anime.SetScheduleCache(ret)
+	}
 
 	return h.RespondWithData(c, ret)
 }
@@ -272,13 +282,14 @@ func (h *Handler) HandleAddUnknownMedia(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
+	sess := h.userSession(c)
 	// Add non-added media entries to AniList collection
-	if err := h.App.AnilistPlatformRef.Get().AddMediaToCollection(c.Request().Context(), b.MediaIds); err != nil {
+	if err := sess.Platform().AddMediaToCollection(c.Request().Context(), b.MediaIds); err != nil {
 		return h.RespondWithError(c, errors.New("error: Anilist responded with an error, this is most likely a rate limit issue"))
 	}
 
 	// Bypass the cache
-	animeCollection, err := h.App.GetAnimeCollection(true)
+	animeCollection, err := sess.GetAnimeCollection(true)
 	if err != nil {
 		return h.RespondWithError(c, errors.New("error: Anilist responded with an error, wait one minute before refreshing"))
 	}

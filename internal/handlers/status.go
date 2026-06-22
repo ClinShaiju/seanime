@@ -83,7 +83,6 @@ func (h *Handler) newRestrictedStatus() *Status {
 // NewStatus returns a new Status struct.
 // It uses the RouteCtx to get the App instance containing the Database instance.
 func (h *Handler) NewStatus(c echo.Context) *Status {
-	var dbAcc *models.Account
 	var currentUser *user.User
 	var settings *models.Settings
 	var theme *models.Theme
@@ -100,14 +99,13 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 		return h.newRestrictedStatus()
 	}
 
-	// Get the user from the database (if logged in)
-	if dbAcc, _ = h.App.Database.GetAccount(); dbAcc != nil {
-		currentUser, _ = user.NewUser(dbAcc)
-		if currentUser != nil {
-			currentUser.Token = "HIDDEN"
-		}
+	// Get the acting user's AniList viewer (admin → app-global account; other users →
+	// their own linked account). The token is hidden before returning to the client.
+	if cu := h.userSession(c).User(); cu != nil {
+		cp := *cu
+		cp.Token = "HIDDEN"
+		currentUser = &cp
 	} else {
-		// If the user is not logged in, create a simulated user
 		currentUser = user.NewSimulatedUser()
 	}
 

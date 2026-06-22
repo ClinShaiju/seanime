@@ -24,7 +24,9 @@ func (h *Handler) HandleLogin(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	if err := h.App.LoginToAnilist(b.Token); err != nil {
+	// Link the AniList account to the acting user (admin routes through the
+	// App-global login so the shared modules stay wired exactly as before).
+	if err := h.App.LoginUserToAnilist(h.dataUserID(c), b.Token); err != nil {
 		return h.RespondWithError(c, err)
 	}
 
@@ -44,7 +46,7 @@ func (h *Handler) HandleLogin(c echo.Context) error {
 //	@route /api/v1/auth/logout [POST]
 //	@returns handlers.Status
 func (h *Handler) HandleLogout(c echo.Context) error {
-	h.App.LogoutFromAnilist()
+	h.App.LogoutUserFromAnilist(h.dataUserID(c))
 
 	status := h.NewStatus(c)
 	return h.RespondWithData(c, status)

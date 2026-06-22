@@ -53,7 +53,8 @@ func (h *Handler) getAnimeEntry(c echo.Context, lfs []*anime.LocalFile, mId int)
 	}
 
 	// Get the user's anilist collection
-	animeCollection, err := h.App.GetAnimeCollection(false)
+	sess := h.userSession(c)
+	animeCollection, err := sess.GetAnimeCollection(false)
 	if err != nil {
 		return nil, err
 	}
@@ -67,9 +68,9 @@ func (h *Handler) getAnimeEntry(c echo.Context, lfs []*anime.LocalFile, mId int)
 		MediaId:             mId,
 		LocalFiles:          lfs,
 		AnimeCollection:     animeCollection,
-		PlatformRef:         h.App.AnilistPlatformRef,
+		PlatformRef:         sess.PlatformRef(),
 		MetadataProviderRef: h.App.MetadataProviderRef,
-		IsSimulated:         h.App.GetUser().IsSimulated,
+		IsSimulated:         sess.User().IsSimulated,
 	})
 	if err != nil {
 		return nil, err
@@ -465,18 +466,23 @@ func (h *Handler) HandleAnimeEntryManualMatch(c echo.Context) error {
 //	@route /api/v1/library/missing-episodes [GET]
 //	@returns anime.MissingEpisodes
 func (h *Handler) HandleGetMissingEpisodes(c echo.Context) error {
+	sess := h.userSession(c)
 	h.App.AddOnRefreshAnilistCollectionFunc("HandleGetMissingEpisodes", func() {
 		anime.ClearMissingEpisodesCache()
 	})
 
-	if missingEpisodesCache, ok := anime.GetMissingEpisodesCache(); ok {
-		return h.RespondWithData(c, missingEpisodesCache)
+	// Cache is a single global value derived from the user's collection — admin-only
+	// to avoid cross-user leakage (non-admin computes fresh).
+	if sess.IsAdmin {
+		if missingEpisodesCache, ok := anime.GetMissingEpisodesCache(); ok {
+			return h.RespondWithData(c, missingEpisodesCache)
+		}
 	}
 
 	// Get the user's anilist collection
 	// Do not bypass the cache, since this handler might be called multiple times, and we don't want to spam the API
 	// A cron job will refresh the cache every 10 minutes
-	animeCollection, err := h.App.GetAnimeCollection(false)
+	animeCollection, err := sess.GetAnimeCollection(false)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -503,7 +509,9 @@ func (h *Handler) HandleGetMissingEpisodes(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	anime.SetMissingEpisodesCache(event.MissingEpisodes)
+	if sess.IsAdmin {
+		anime.SetMissingEpisodesCache(event.MissingEpisodes)
+	}
 
 	return h.RespondWithData(c, event.MissingEpisodes)
 }
@@ -520,16 +528,18 @@ var upcomingEpisodesCache *anime.UpcomingEpisodes
 //	@route /api/v1/library/upcoming-episodes [GET]
 //	@returns anime.UpcomingEpisodes
 func (h *Handler) HandleGetUpcomingEpisodes(c echo.Context) error {
+	sess := h.userSession(c)
 	h.App.AddOnRefreshAnilistCollectionFunc("HandleGetUpcomingEpisodes", func() {
 		upcomingEpisodesCache = nil
 	})
 
-	if upcomingEpisodesCache != nil {
+	// Global cache derived from the user's collection — admin-only (non-admin fresh).
+	if sess.IsAdmin && upcomingEpisodesCache != nil {
 		return h.RespondWithData(c, upcomingEpisodesCache)
 	}
 
 	// Get the user's anilist collection
-	animeCollection, err := h.App.GetAnimeCollection(false)
+	animeCollection, err := sess.GetAnimeCollection(false)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -545,7 +555,9 @@ func (h *Handler) HandleGetUpcomingEpisodes(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	upcomingEpisodesCache = event.UpcomingEpisodes
+	if sess.IsAdmin {
+		upcomingEpisodesCache = event.UpcomingEpisodes
+	}
 
 	return h.RespondWithData(c, event.UpcomingEpisodes)
 }
@@ -641,7 +653,8 @@ func (h *Handler) HandleUpdateAnimeEntryProgress(c echo.Context) error {
 	}
 
 	// Update the progress on AniList
-	err := h.App.AnilistPlatformRef.Get().UpdateEntryProgress(
+	sess := h.userSession(c)
+	err := sess.Platform().UpdateEntryProgress(
 		c.Request().Context(),
 		b.MediaId,
 		b.EpisodeNumber,
@@ -651,7 +664,7 @@ func (h *Handler) HandleUpdateAnimeEntryProgress(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	_, _ = h.App.RefreshAnimeCollection() // Refresh the AniList collection
+	_, _ = sess.RefreshAnimeCollection() // Refresh the AniList collection
 
 	return h.RespondWithData(c, true)
 }
@@ -677,7 +690,7 @@ func (h *Handler) HandleUpdateAnimeEntryRepeat(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	err := h.App.AnilistPlatformRef.Get().UpdateEntryRepeat(
+	err := h.userSession(c).Platform().UpdateEntryRepeat(
 		c.Request().Context(),
 		b.MediaId,
 		b.Repeat,

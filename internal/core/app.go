@@ -153,7 +153,11 @@ type (
 		Flags            SeanimeFlags
 
 		// Internal state
-		user                 *user.User
+		user *user.User
+		// sessions holds per-user identity sessions (their own AniList platform +
+		// collection). The admin uses a thin delegate over the App globals and is
+		// not stored here. See session.go.
+		sessions             *result.Map[uint, *UserSession]
 		previousVersion      string
 		moduleMu             sync.Mutex
 		ServerReady          bool
@@ -440,6 +444,7 @@ func NewApp(configOpts *ConfigOptions, selfupdater *updater.SelfUpdater) *App {
 		SelfUpdater:                     selfupdater,
 		moduleMu:                        sync.Mutex{},
 		OnRefreshAnilistCollectionFuncs: result.NewMap[string, func()](),
+		sessions:                        result.NewMap[uint, *UserSession](),
 		HookManager:                     hookManager,
 		isOfflineRef:                    isOfflineRef,
 		ServerPasswordHash:              serverPasswordHash,

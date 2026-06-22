@@ -1,0 +1,276 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"seanime/internal/api/anilist"
+	"seanime/internal/database/models"
+	"seanime/internal/events"
+	"seanime/internal/platforms/anilist_platform"
+	"seanime/internal/platforms/platform"
+	"seanime/internal/platforms/simulated_platform"
+	"seanime/internal/user"
+	"seanime/internal/util"
+
+	"github.com/goccy/go-json"
+)
+
+var errInvalidToken = errors.New("token is empty")
+
+// UserSession bundles the per-user identity plane: a user's own AniList platform
+// (their token + client) and the collection it serves. Shared engines (extensions,
+// metadata, torrent/debrid/transcode) are reached through the App by reference, not
+// copied per user.
+//
+// The admin (server owner) session is a thin delegate over the App's existing
+// global platform and modules, so a single-user install behaves exactly as before —
+// no extra platform is built, nothing is duplicated. Only additional logged-in
+// users get their own platform instance.
+//
+// Per-session *stateful* modules (PlaybackManager/DirectStream/VideoCore/…) and the
+// streaming split land in the following slices; for now non-admin sessions own the
+// identity+collection read plane and delegate stateful playback to the shared
+// (admin) modules.
+type UserSession struct {
+	app     *App
+	UserID  uint
+	IsAdmin bool
+
+	// Non-admin only — admin reads these live off the App.
+	user             *user.User
+	anilistClientRef *util.Ref[anilist.AnilistClient]
+	platformRef      *util.Ref[platform.Platform]
+}
+
+// SessionFor resolves the session for a user id. The admin (or a zero id / unknown
+// user) gets the App-global delegate; any other user gets a lazily-built, cached
+// per-user session.
+func (a *App) SessionFor(userID uint) *UserSession {
+	if userID == 0 {
+		return a.adminSession()
+	}
+	if admin, err := a.Database.GetAdminUser(); err == nil && admin != nil && admin.ID == userID {
+		return a.adminSession()
+	}
+	sess, err := a.sessions.GetOrSet(userID, func() (*UserSession, error) {
+		return a.buildUserSession(userID), nil
+	})
+	if err != nil || sess == nil {
+		return a.adminSession()
+	}
+	return sess
+}
+
+// adminSession returns a fresh delegate over the App globals. It is intentionally
+// not cached: the App's user/platform can be swapped (login/logout) and the
+// accessors read them live, so a per-call struct is always current and cheap.
+func (a *App) adminSession() *UserSession {
+	return &UserSession{app: a, IsAdmin: true, UserID: a.adminUserID()}
+}
+
+func (a *App) adminUserID() uint {
+	if admin, err := a.Database.GetAdminUser(); err == nil && admin != nil {
+		return admin.ID
+	}
+	return 0
+}
+
+// buildUserSession constructs a non-admin user's own AniList platform from their
+// linked account token (or a simulated platform if they haven't linked one).
+func (a *App) buildUserSession(userID uint) *UserSession {
+	u, err := a.Database.GetUserByID(userID)
+	if err != nil || u == nil {
+		return a.adminSession()
+	}
+	if u.Role == models.UserRoleAdmin {
+		return a.adminSession()
+	}
+
+	token := ""
+	var usr *user.User
+	if acc, err := a.Database.GetAccountForUser(u); err == nil && acc != nil {
+		token = acc.Token
+		if built, err := user.NewUser(acc); err == nil {
+			usr = built
+		}
+	}
+	if usr == nil {
+		usr = user.NewSimulatedUser()
+	}
+
+	clientRef := util.NewRef[anilist.AnilistClient](anilist.NewAnilistClient(token, a.AnilistCacheDir))
+
+	var plat platform.Platform
+	if clientRef.Get().IsAuthenticated() {
+		plat = anilist_platform.NewAnilistPlatform(clientRef, a.ExtensionBankRef, a.Logger, a.Database, func() {
+			a.logoutUserFromAnilist(userID)
+		})
+	} else if sp, err := simulated_platform.NewSimulatedPlatform(a.LocalManager, clientRef, a.ExtensionBankRef, a.Logger, a.Database); err == nil {
+		plat = sp
+	} else {
+		// Last resort: share the app platform rather than nil-panic.
+		return a.adminSession()
+	}
+	plat.SetUsername(usr.Viewer.Name)
+
+	return &UserSession{
+		app:              a,
+		UserID:           userID,
+		user:             usr,
+		anilistClientRef: clientRef,
+		platformRef:      util.NewRef[platform.Platform](plat),
+	}
+}
+
+// LoginUserToAnilist links an AniList token to a specific user, persisting their own
+// Account row and (re)building their session. The admin routes through the existing
+// App-global LoginToAnilist so the shared modules stay wired exactly as before.
+func (a *App) LoginUserToAnilist(userID uint, token string) error {
+	admin, _ := a.Database.GetAdminUser()
+	if userID == 0 || (admin != nil && admin.ID == userID) {
+		return a.LoginToAnilist(token)
+	}
+
+	if token == "" {
+		return errInvalidToken
+	}
+
+	client := anilist.NewAnilistClient(token, a.AnilistCacheDir)
+	getViewer, err := client.GetViewer(context.Background())
+	if err != nil {
+		a.Logger.Error().Err(err).Msg("app: User could not authenticate to AniList")
+		return err
+	}
+	if getViewer == nil || getViewer.Viewer == nil || len(getViewer.Viewer.Name) == 0 {
+		return errInvalidToken
+	}
+
+	viewerBytes, _ := json.Marshal(getViewer.Viewer)
+	if _, err := a.Database.UpsertAccountForUser(userID, getViewer.Viewer.Name, token, viewerBytes); err != nil {
+		return err
+	}
+
+	// Drop any cached session so the next resolve rebuilds with the new token.
+	a.sessions.Delete(userID)
+	a.Logger.Info().Uint("userId", userID).Msg("app: User authenticated to AniList")
+	return nil
+}
+
+// LogoutUserFromAnilist unlinks a user's AniList account. The admin routes through
+// the App-global logout (switches the shared platform to simulated); other users
+// just clear their own account and session.
+func (a *App) LogoutUserFromAnilist(userID uint) {
+	admin, _ := a.Database.GetAdminUser()
+	if userID == 0 || (admin != nil && admin.ID == userID) {
+		a.LogoutFromAnilist()
+		return
+	}
+	a.logoutUserFromAnilist(userID)
+}
+
+// logoutUserFromAnilist clears a user's AniList token (called when their token is
+// detected invalid) and evicts their session so it rebuilds as simulated.
+func (a *App) logoutUserFromAnilist(userID uint) {
+	if u, err := a.Database.GetUserByID(userID); err == nil && u != nil {
+		_, _ = a.Database.UpsertAccountForUser(userID, "", "", nil)
+	}
+	a.sessions.Delete(userID)
+}
+
+// -------------------------------------------------------------------------------- //
+// Identity + collection accessors
+// -------------------------------------------------------------------------------- //
+
+func (s *UserSession) PlatformRef() *util.Ref[platform.Platform] {
+	if s.IsAdmin {
+		return s.app.AnilistPlatformRef
+	}
+	return s.platformRef
+}
+
+func (s *UserSession) Platform() platform.Platform {
+	return s.PlatformRef().Get()
+}
+
+func (s *UserSession) User() *user.User {
+	if s.IsAdmin {
+		return s.app.GetUser()
+	}
+	if s.user == nil {
+		return user.NewSimulatedUser()
+	}
+	return s.user
+}
+
+func (s *UserSession) Username() string {
+	u := s.User()
+	if u == nil || u.Viewer == nil {
+		return ""
+	}
+	return u.Viewer.GetName()
+}
+
+// AnilistToken returns the user's AniList token, or "" for a simulated user.
+func (s *UserSession) AnilistToken() string {
+	u := s.User()
+	if u == nil || u.Token == user.SimulatedUserToken {
+		return ""
+	}
+	return u.Token
+}
+
+func (s *UserSession) GetAnimeCollection(bypassCache bool) (*anilist.AnimeCollection, error) {
+	if s.IsAdmin {
+		return s.app.GetAnimeCollection(bypassCache)
+	}
+	return s.platformRef.Get().GetAnimeCollection(context.Background(), bypassCache)
+}
+
+func (s *UserSession) GetRawAnimeCollection(bypassCache bool) (*anilist.AnimeCollection, error) {
+	if s.IsAdmin {
+		return s.app.GetRawAnimeCollection(bypassCache)
+	}
+	return s.platformRef.Get().GetRawAnimeCollection(context.Background(), bypassCache)
+}
+
+func (s *UserSession) GetMangaCollection(bypassCache bool) (*anilist.MangaCollection, error) {
+	if s.IsAdmin {
+		return s.app.GetMangaCollection(bypassCache)
+	}
+	return s.platformRef.Get().GetMangaCollection(context.Background(), bypassCache)
+}
+
+func (s *UserSession) GetRawMangaCollection(bypassCache bool) (*anilist.MangaCollection, error) {
+	if s.IsAdmin {
+		return s.app.GetRawMangaCollection(bypassCache)
+	}
+	return s.platformRef.Get().GetRawMangaCollection(context.Background(), bypassCache)
+}
+
+// RefreshAnimeCollection refreshes the session's collection. For the admin this is
+// the full App refresh (which fans the collection out to the shared stateful
+// modules); for a non-admin it refreshes only their platform and notifies just that
+// user (per-session stateful modules arrive in the next slice).
+func (s *UserSession) RefreshAnimeCollection() (*anilist.AnimeCollection, error) {
+	if s.IsAdmin {
+		return s.app.RefreshAnimeCollection()
+	}
+	ret, err := s.platformRef.Get().RefreshAnimeCollection(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	s.app.WSEventManager.SendEventToUser(s.UserID, events.RefreshedAnilistAnimeCollection, nil)
+	return ret, nil
+}
+
+func (s *UserSession) RefreshMangaCollection() (*anilist.MangaCollection, error) {
+	if s.IsAdmin {
+		return s.app.RefreshMangaCollection()
+	}
+	mc, err := s.platformRef.Get().RefreshMangaCollection(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	s.app.WSEventManager.SendEventToUser(s.UserID, events.RefreshedAnilistMangaCollection, nil)
+	return mc, nil
+}

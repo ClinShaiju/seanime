@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"seanime/internal/core"
 	"seanime/internal/database/models"
 	"strings"
 
@@ -105,6 +106,13 @@ func (h *Handler) dataUserID(c echo.Context) uint {
 		return admin.ID
 	}
 	return 0
+}
+
+// userSession resolves the per-user identity session (their own AniList platform +
+// collection) for a request. Falls back to the admin/App-global delegate when no
+// user is resolved, so single-user installs are unchanged.
+func (h *Handler) userSession(c echo.Context) *core.UserSession {
+	return h.App.SessionFor(h.dataUserID(c))
 }
 
 // CurrentUser returns the resolved user for the request, or nil if none.
