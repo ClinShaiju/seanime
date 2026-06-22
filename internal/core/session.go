@@ -79,13 +79,12 @@ func (a *App) SetStreamOwner(userID uint) {
 // per-user session.
 func (a *App) SessionFor(userID uint) *UserSession {
 	if userID == 0 {
-		// No resolved user. The admin delegate applies for local (password-less)
-		// installs, and — until RequireUserLogin is enabled — for networked installs
-		// too (so pre-login clients keep working). With the hardening on, an
-		// unauthenticated request on a password-protected server gets an anonymous,
+		// No resolved user. The admin delegate applies only for local (password-less)
+		// installs, where the operator is the trusted admin. On a networked
+		// (password-protected) server an unauthenticated request gets an anonymous,
 		// data-less session: it must log in. This is what stops a client that only
 		// knows the shared server password from inheriting admin data.
-		if a.Config.Server.Password == "" || !a.Config.Server.RequireUserLogin {
+		if a.Config.Server.Password == "" {
 			return a.adminSession()
 		}
 		return a.anonymousSession()

@@ -109,10 +109,11 @@ func (h *Handler) dataUserID(c echo.Context) uint {
 	if id := h.CurrentUserID(c); id != 0 {
 		return id
 	}
-	// Admin fallback applies for local (password-less) installs, and — until the
-	// RequireUserLogin hardening is enabled — for networked installs too, so that
-	// pre-login clients (e.g. an old bundled Denshi web build) keep working.
-	if h.App.Config.Server.Password == "" || !h.App.Config.Server.RequireUserLogin {
+	// Admin fallback applies only for local (password-less) installs, where the
+	// operator legitimately is the admin. On a networked (password-protected) server
+	// an unauthenticated request must NOT inherit the admin's identity/data: knowing
+	// the shared server password is not the same as being the admin.
+	if h.App.Config.Server.Password == "" {
 		if admin, err := h.App.Database.GetAdminUser(); err == nil && admin != nil {
 			return admin.ID
 		}
