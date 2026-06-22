@@ -140,6 +140,19 @@ user, both with AniList linked) and, ideally, **two devices/windows at once**.
 
 ---
 
+## L. Anon browse-only + per-user debrid auto-select (DEPLOYED, sha 4facc61b)
+
+**Anon may browse, not stream (security) — verified server-side, confirm in UI:**
+- [ ] A client that knows the server password but is NOT logged in as a user (e.g. an old/non-login client, or before logging in): can browse Discover/library (empty), but attempting to start a debrid/torrent/built-in stream is rejected (403). Logged-in users stream normally. Local desktop (no server password) unaffected.
+
+**Per-user debrid auto-select (custom vs server default):**
+- [ ] As a regular user → Settings → Debrid → "Auto-select" card → toggle **"Use server default auto-select"** OFF → the profile editor button appears → open it → set resolution/language/codecs/ranking → save. (Save the toggle too.)
+- [ ] That user's debrid auto-pick now follows THEIR profile; cvslinc's (admin) auto-pick still follows the server default. They don't affect each other.
+- [ ] Toggle back ON → user falls back to the server default again.
+- [ ] Admin's existing auto-select profile is unchanged (backfilled to admin on upgrade).
+
+---
+
 ## Known gaps — NOT bugs (don't report these as failures)
 
 DONE since earlier rounds: Theme, playlists, AniList account/collection, per-user
