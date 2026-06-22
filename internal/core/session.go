@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"seanime/internal/api/anilist"
+	"seanime/internal/continuity"
 	"seanime/internal/database/db"
 	"seanime/internal/database/models"
 	"seanime/internal/directstream"
@@ -55,11 +57,38 @@ type UserSession struct {
 	// wired to a ScopedWSEventManager fixed to this user so two users stream
 	// independently. Shared engines (torrent client, debrid account, transcoder,
 	// metadata, continuity) are injected by reference.
-	modulesOnce  sync.Once
-	videoCore    *videocore.VideoCore
-	nativePlayer *nativeplayer.NativePlayer
-	directStream *directstream.Manager
-	playback     *playbackmanager.PlaybackManager
+	modulesOnce    sync.Once
+	continuityOnce sync.Once
+	videoCore      *videocore.VideoCore
+	nativePlayer   *nativeplayer.NativePlayer
+	directStream   *directstream.Manager
+	playback       *playbackmanager.PlaybackManager
+	continuity     *continuity.Manager
+}
+
+// ensureContinuity lazily builds just this user's continuity (watch-history)
+// manager — separate from the heavy streaming modules so reading resume data on an
+// entry page doesn't spin up videoCore/directStream/etc.
+func (s *UserSession) ensureContinuity() {
+	s.continuityOnce.Do(func() {
+		a := s.app
+		s.continuity = continuity.NewManager(&continuity.NewManagerOptions{
+			FileCacher: a.FileCacher,
+			Logger:     a.Logger,
+			Database:   a.Database,
+			BucketName: fmt.Sprintf("%s_u%d", continuity.WatchHistoryBucketName, s.UserID),
+		})
+		if settings, err := a.Database.GetSettings(); err == nil && settings != nil && settings.Library != nil {
+			eff := settings
+			if ov, _ := a.Database.GetUserOverrides(s.UserID); ov != nil {
+				eff = db.CloneSettings(settings)
+				ov.ApplyTo(eff)
+			}
+			s.continuity.SetSettings(&continuity.Settings{
+				WatchContinuityEnabled: eff.GetLibrary().EnableWatchContinuity,
+			})
+		}
+	})
 }
 
 // ensureModules lazily builds this (non-admin) session's own streaming/playback
@@ -70,10 +99,14 @@ func (s *UserSession) ensureModules() {
 		scoped := events.NewScopedWSEventManager(a.WSEventManager, s.UserID)
 		refresh := func() { _, _ = s.RefreshAnimeCollection() }
 
+		// Per-user continuity (resume positions): own file-cache bucket so a user's
+		// watch history never overwrites another's for the same media.
+		s.ensureContinuity()
+
 		s.videoCore = videocore.New(videocore.NewVideoCoreOptions{
 			WsEventManager:             scoped,
 			Logger:                     a.Logger,
-			ContinuityManager:          a.ContinuityManager,
+			ContinuityManager:          s.continuity,
 			MetadataProviderRef:        a.MetadataProviderRef,
 			DiscordPresence:            a.DiscordPresence,
 			PlatformRef:                s.platformRef,
@@ -88,7 +121,7 @@ func (s *UserSession) ensureModules() {
 		s.directStream = directstream.NewManager(directstream.NewManagerOptions{
 			Logger:                     a.Logger,
 			WSEventManager:             scoped,
-			ContinuityManager:          a.ContinuityManager,
+			ContinuityManager:          s.continuity,
 			MetadataProviderRef:        a.MetadataProviderRef,
 			DiscordPresence:            a.DiscordPresence,
 			PlatformRef:                s.platformRef,
@@ -112,7 +145,7 @@ func (s *UserSession) ensureModules() {
 			Database:                   a.Database,
 			DiscordPresence:            a.DiscordPresence,
 			IsOfflineRef:               a.IsOfflineRef(),
-			ContinuityManager:          a.ContinuityManager,
+			ContinuityManager:          s.continuity,
 			RefreshAnimeCollectionFunc: refresh,
 		})
 
@@ -152,6 +185,16 @@ func (s *UserSession) applyModuleSettings() {
 			AutoUpdateProgress:  settings.GetLibrary().AutoUpdateProgress,
 		})
 	}
+	// continuity settings are applied in ensureContinuity (its own lazy init).
+}
+
+// Continuity returns the session's continuity (watch-history) manager (admin → App global).
+func (s *UserSession) Continuity() *continuity.Manager {
+	if s.IsAdmin {
+		return s.app.ContinuityManager
+	}
+	s.ensureContinuity()
+	return s.continuity
 }
 
 // DirectStream returns the session's DirectStream manager (admin → App global).

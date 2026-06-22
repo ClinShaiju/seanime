@@ -49,12 +49,20 @@ type (
 		FileCacher *filecache.Cacher
 		Logger     *zerolog.Logger
 		Database   *db.Database
+		// BucketName overrides the watch-history file-cache bucket. Empty = the default
+		// (admin / single-user). Per-user sessions pass a user-scoped name so each
+		// user's resume positions are isolated.
+		BucketName string
 	}
 )
 
 // NewManager creates a new Manager, it should be initialized once.
 func NewManager(opts *NewManagerOptions) *Manager {
-	watchHistoryFileCacheBucket := filecache.NewBucket(WatchHistoryBucketName, time.Hour*24*99999)
+	bucketName := WatchHistoryBucketName
+	if opts.BucketName != "" {
+		bucketName = opts.BucketName
+	}
+	watchHistoryFileCacheBucket := filecache.NewBucket(bucketName, time.Hour*24*99999)
 
 	ret := &Manager{
 		fileCacher:                  opts.FileCacher,
