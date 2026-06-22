@@ -523,18 +523,28 @@ func (t *TorBox) GetTorrents() (ret []*debrid.TorrentItem, err error) {
 // a magnet that already exists (and gets the same id back).
 func (t *TorBox) getTorrentsCached() ([]*Torrent, error) {
 	t.mylistMu.Lock()
-	defer t.mylistMu.Unlock()
-
 	if t.mylist != nil && time.Since(t.mylistAt) < 6*time.Second {
-		return t.mylist, nil
+		cached := t.mylist
+		t.mylistMu.Unlock()
+		return cached, nil
 	}
+	t.mylistMu.Unlock()
 
+	// Fetch the mylist WITHOUT holding the lock. Previously the slow
+	// /torrents/mylist?bypass_cache=true fetch ran under mylistMu, so two users starting a
+	// debrid stream at once serialized here (AddTorrent's dedup) — the 2nd waited for the
+	// 1st's full fetch. Releasing the lock lets concurrent resolves run in parallel; the
+	// worst case is a couple of redundant fetches, which is harmless (TorBox dedups
+	// server-side and staleness here only affects the dedup optimization).
 	torrents, err := t.getTorrents()
 	if err != nil {
 		return nil, err
 	}
+
+	t.mylistMu.Lock()
 	t.mylist = torrents
 	t.mylistAt = time.Now()
+	t.mylistMu.Unlock()
 	return torrents, nil
 }
 
