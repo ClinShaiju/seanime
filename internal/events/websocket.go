@@ -209,6 +209,25 @@ func (m *WSEventManager) SendEventToUserOrUnscoped(userID uint, t string, payloa
 	}
 }
 
+// SendEventToIfOwner sends to the connection with clientId only if it belongs to
+// the given owner user (or is an unidentified UserID==0 local client). It scopes a
+// streaming module's client-targeted re-emit to the user who owns the active stream,
+// so a different user's reconnecting client cannot pull the global playback state.
+func (m *WSEventManager) SendEventToIfOwner(clientId string, ownerUserID uint, t string, payload interface{}, noLog ...bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, conn := range m.Conns {
+		if conn.ID != clientId {
+			continue
+		}
+		if conn.UserID != ownerUserID && conn.UserID != 0 {
+			return // client belongs to another user — drop
+		}
+		_ = conn.Conn.WriteJSON(WSEvent{Type: t, Payload: payload})
+		return
+	}
+}
+
 func (m *WSEventManager) RemoveConn(id string) {
 	for i, conn := range m.Conns {
 		if conn.ID == id {

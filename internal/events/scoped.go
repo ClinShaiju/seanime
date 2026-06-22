@@ -44,7 +44,15 @@ func (s *OwnerScopedWSEventManager) SendEvent(t string, payload interface{}) {
 }
 
 func (s *OwnerScopedWSEventManager) SendEventTo(clientId string, t string, payload interface{}, noLog ...bool) {
-	s.inner.SendEventTo(clientId, t, payload, noLog...)
+	// Client-targeted sends from the streaming modules must also respect the active
+	// owner: a different user's reconnecting client requesting "what's playing"
+	// must not be handed the global stream state. With no owner set, pass through.
+	owner := s.owner.Load()
+	if owner == 0 {
+		s.inner.SendEventTo(clientId, t, payload, noLog...)
+		return
+	}
+	s.inner.SendEventToIfOwner(clientId, uint(owner), t, payload, noLog...)
 }
 
 func (s *OwnerScopedWSEventManager) GetClientIds() []string {
