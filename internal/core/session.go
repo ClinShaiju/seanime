@@ -233,6 +233,17 @@ func (s *UserSession) NativePlayer() *nativeplayer.NativePlayer {
 	return s.nativePlayer
 }
 
+// Events returns the WS event manager scoped to this session's user, so a user's
+// streaming overlay/loader events (debrid "Selecting/Adding torrent…", indefinite
+// loaders) reach only them. Admin → the App's admin-scoped manager (the same instance
+// the global modules use); non-admin → a manager fixed to their user id.
+func (s *UserSession) Events() events.WSEventManagerInterface {
+	if s.IsAdmin {
+		return s.app.adminEvents
+	}
+	return events.NewScopedWSEventManager(s.app.WSEventManager, s.UserID)
+}
+
 func emptyAnimeCollection() *anilist.AnimeCollection {
 	return &anilist.AnimeCollection{
 		MediaListCollection: &anilist.AnimeCollection_MediaListCollection{

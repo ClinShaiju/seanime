@@ -45,6 +45,10 @@ type (
 		// stream so multiple users stream independently. nil → fall back to the global
 		// (admin) modules above. Injected by core (App.SessionFor based).
 		sessionModulesFunc func(userID uint) (*directstream.Manager, *playbackmanager.PlaybackManager)
+		// sessionEventsFunc resolves the WS event manager scoped to the streaming user, so
+		// a user's stream overlay/loader events reach only them (not always the admin).
+		// nil → fall back to wsEventManager (admin-scoped). Injected by core.
+		sessionEventsFunc func(userID uint) events.WSEventManagerInterface
 
 		playbackManager     *playbackmanager.PlaybackManager
 		streamManager       *StreamManager
@@ -69,6 +73,8 @@ type (
 		PlatformRef         *util.Ref[platform.Platform]
 		// SessionModulesFunc resolves per-user DirectStream + PlaybackManager (optional).
 		SessionModulesFunc func(userID uint) (*directstream.Manager, *playbackmanager.PlaybackManager)
+		// SessionEventsFunc resolves the WS event manager scoped to a user (optional).
+		SessionEventsFunc func(userID uint) events.WSEventManagerInterface
 	}
 )
 
@@ -90,6 +96,7 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		previousStreamOptions: mo.None[*StartStreamOptions](),
 		directStreamManager:   opts.DirectStreamManager,
 		sessionModulesFunc:    opts.SessionModulesFunc,
+		sessionEventsFunc:     opts.SessionEventsFunc,
 	}
 
 	ret.streamManager = NewStreamManager(ret)

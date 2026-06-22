@@ -153,6 +153,44 @@ user, both with AniList linked) and, ideally, **two devices/windows at once**.
 
 ---
 
+## M. Bug-fix round (from iOS/Denshi test feedback) — NOT yet deployed
+
+Three issues were reported from testing (tenji anon + cvslinc/bob). Status of each:
+
+**M1. Anon could still trigger torrent work (FIXED, server-verifiable).**
+Root cause: only the *stream-start* handlers were guarded; the debrid/torrent *operation*
+endpoints (file-previews → adds the torrent to debrid to read files, add-torrent, etc.)
+were open, so an anon's "watch" attempt ran "selecting/adding torrent" before the final
+start 403'd. Now `h.UserOnly` guards the debrid + torrentstream operation routes too.
+- [ ] As anon (server password, no login): `POST /debrid/torrents/file-previews`,
+  `/debrid/torrents`, `/torrentstream/torrent-file-previews` → **403**. (curl-checkable.)
+- [ ] No "selecting/adding torrent" overlay appears for an anon at all — the attempt is
+  rejected up front, not mid-flight.
+- [ ] Logged-in user: all of the above still work.
+
+**M2. cvslinc (admin) saw bob's "selecting/adding torrent" overlay (FIXED).**
+Root cause: the debrid Repository is a singleton wired to the *admin-scoped* event
+manager, so EVERY user's stream overlay/loader events were emitted to the admin. Now the
+repo routes overlay events to the streaming user (`SessionEventsFunc` → `session.Events()`).
+- [ ] bob streams via debrid → bob (not cvslinc) sees the "Selecting/Adding/Downloading"
+  overlay. cvslinc sees nothing of bob's.
+- [ ] cvslinc streams → cvslinc sees his own overlay. No cross-bleed either direction.
+
+**M3. cvslinc saw NONE of his own currently-watching/progress; bob's progress kept
+advancing after his player closed (NOT fixed — needs the two-client test loop).**
+This is the playback-*tracking* plane (currently-watching badge + progress popup +
+stop-on-close), which is still entangled with the global modules and depends on how each
+client tags its `/events` WS connection (`?session=`). It couldn't be reproduced from
+static analysis. Re-test AFTER M1/M2 are deployed:
+- [ ] Does cvslinc see his own currently-watching/progress again once M2 is in? (M2 may
+  or may not resolve it.)
+- [ ] Does bob's progress stop when bob closes the player?
+- If either still fails, it's the **torrentstream/tracking per-user pass** (the deferred,
+  entangled work) — capture server logs during the repro so it can be fixed with evidence
+  rather than blind.
+
+---
+
 ## Known gaps — NOT bugs (don't report these as failures)
 
 DONE since earlier rounds: Theme, playlists, AniList account/collection, per-user

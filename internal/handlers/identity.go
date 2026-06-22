@@ -71,6 +71,21 @@ func (h *Handler) guardStreamingUser(c echo.Context) error {
 	return nil
 }
 
+// UserOnly is per-route middleware that rejects anonymous requests (server-password
+// only, no user session) with a 403 — the same gate as guardStreamingUser, applied at
+// the router. Use it on debrid/torrent *operation* endpoints (add torrent, file
+// previews, etc.) so an anon may browse but never drive debrid/torrent work. On a
+// local password-less install dataUserID resolves to the admin, so only networked-anon
+// is blocked.
+func (h *Handler) UserOnly(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if err := h.guardStreamingUser(c); err != nil {
+			return err
+		}
+		return next(c)
+	}
+}
+
 // AdminOnly is per-route middleware that rejects non-admin requests with a 403. Apply
 // it to server-configuration endpoints so configuring the server always requires an
 // authenticated admin.

@@ -264,6 +264,10 @@ func (a *App) initModulesOnce() {
 			sess := a.SessionFor(userID)
 			return sess.DirectStream(), sess.Playback()
 		},
+		// Route stream overlay/loader events to the streaming user (not always the admin).
+		SessionEventsFunc: func(userID uint) events.WSEventManagerInterface {
+			return a.SessionFor(userID).Events()
+		},
 	})
 
 	plugin.GlobalAppContext.SetModulesPartial(plugin.AppContextModules{

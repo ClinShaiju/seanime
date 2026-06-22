@@ -492,11 +492,13 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1.GET("/torrentstream/settings", h.HandleGetTorrentstreamSettings)
 	v1.PATCH("/torrentstream/settings", h.HandleSaveTorrentstreamSettings, h.AdminOnly)
 	v1.POST("/torrentstream/start", h.HandleTorrentstreamStartStream)
-	v1.POST("/torrentstream/stop", h.HandleTorrentstreamStopStream)
-	v1.POST("/torrentstream/drop", h.HandleTorrentstreamDropTorrent)
-	v1.POST("/torrentstream/torrent-file-previews", h.HandleGetTorrentstreamTorrentFilePreviews)
+	// Operation endpoints: anon (server-password only, no user session) may browse but
+	// not drive torrent work. (start guards inline via guardStreamingUser.)
+	v1.POST("/torrentstream/stop", h.HandleTorrentstreamStopStream, h.UserOnly)
+	v1.POST("/torrentstream/drop", h.HandleTorrentstreamDropTorrent, h.UserOnly)
+	v1.POST("/torrentstream/torrent-file-previews", h.HandleGetTorrentstreamTorrentFilePreviews, h.UserOnly)
 	v1.POST("/torrentstream/batch-history", h.HandleGetTorrentstreamBatchHistory)
-	v1.POST("/torrentstream/batch-history/delete", h.HandleDeleteTorrentstreamBatchHistory)
+	v1.POST("/torrentstream/batch-history/delete", h.HandleDeleteTorrentstreamBatchHistory, h.UserOnly)
 	v1.GET("/torrentstream/stream/*", h.HandleTorrentstreamServeStream)
 
 	//
@@ -562,13 +564,15 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 
 	v1.GET("/debrid/settings", h.HandleGetDebridSettings)
 	v1.PATCH("/debrid/settings", h.HandleSaveDebridSettings, h.AdminOnly)
-	v1.POST("/debrid/torrents", h.HandleDebridAddTorrents)
-	v1.POST("/debrid/torrents/download", h.HandleDebridDownloadTorrent)
-	v1.POST("/debrid/torrents/cancel", h.HandleDebridCancelDownload)
-	v1.DELETE("/debrid/torrent", h.HandleDebridDeleteTorrent)
-	v1.GET("/debrid/torrents", h.HandleDebridGetTorrents)
-	v1.POST("/debrid/torrents/info", h.HandleDebridGetTorrentInfo)
-	v1.POST("/debrid/torrents/file-previews", h.HandleDebridGetTorrentFilePreviews)
+	// Operation endpoints: anon (server-password only, no user session) may browse but
+	// not drive debrid work (add torrent, file previews → adds to debrid to read files).
+	v1.POST("/debrid/torrents", h.HandleDebridAddTorrents, h.UserOnly)
+	v1.POST("/debrid/torrents/download", h.HandleDebridDownloadTorrent, h.UserOnly)
+	v1.POST("/debrid/torrents/cancel", h.HandleDebridCancelDownload, h.UserOnly)
+	v1.DELETE("/debrid/torrent", h.HandleDebridDeleteTorrent, h.UserOnly)
+	v1.GET("/debrid/torrents", h.HandleDebridGetTorrents, h.UserOnly)
+	v1.POST("/debrid/torrents/info", h.HandleDebridGetTorrentInfo, h.UserOnly)
+	v1.POST("/debrid/torrents/file-previews", h.HandleDebridGetTorrentFilePreviews, h.UserOnly)
 	v1.POST("/debrid/stream/start", h.HandleDebridStartStream)
 	v1.POST("/debrid/stream/cancel", h.HandleDebridCancelStream)
 
