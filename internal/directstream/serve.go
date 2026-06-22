@@ -8,6 +8,18 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+// ServesStreamID reports whether this manager's currently-active stream has the
+// given playback id. Used to route a serve request (which carries ?id=<playbackId>)
+// to the right per-user manager when several users stream at once.
+func (m *Manager) ServesStreamID(id string) bool {
+	if id == "" {
+		return false
+	}
+	m.playbackMu.Lock()
+	defer m.playbackMu.Unlock()
+	return m.currentPlaybackId == id
+}
+
 // ServeEchoStream is a proxy to the current stream.
 // It sits in between the player and the real stream (whether it's a local file, torrent, or http stream).
 //

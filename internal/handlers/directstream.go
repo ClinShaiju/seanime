@@ -44,7 +44,7 @@ func (h *Handler) HandleDirectstreamPlayLocalFile(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	return h.App.DirectStreamManager.PlayLocalFile(c.Request().Context(), directstream.PlayLocalFileOptions{
+	return h.userSession(c).DirectStream().PlayLocalFile(c.Request().Context(), directstream.PlayLocalFileOptions{
 		ClientId:   b.ClientId,
 		Path:       b.Path,
 		LocalFiles: lfs,
@@ -107,14 +107,17 @@ func (h *Handler) HandleDirectstreamConvertSubs(c echo.Context) error {
 }
 
 func (h *Handler) HandleDirectstreamGetStream() http.Handler {
-	streamHandler := h.App.DirectStreamManager.ServeEchoStream()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h != nil && h.App != nil && h.App.Config != nil && !canConsumeMedia(r, h.App.Config.Server.Password, h.App.Config.Server.AccessAllowlist) {
 			http.Error(w, errPrivilegedExecutionDenied.Error(), http.StatusForbidden)
 			return
 		}
 
-		streamHandler.ServeHTTP(w, r)
+		// Route to the manager that owns this stream id (per-user sessions may each be
+		// streaming at once). The serve request comes from the media player and may not
+		// carry a user session, so we resolve by the ?id= playback id, not the request user.
+		mgr := h.App.ResolveDirectStreamManager(r.URL.Query().Get("id"))
+		mgr.ServeEchoStream().ServeHTTP(w, r)
 	})
 }
 
@@ -123,5 +126,11 @@ func (h *Handler) HandleDirectstreamGetAttachments(c echo.Context) error {
 		return err
 	}
 
-	return h.App.DirectStreamManager.ServeEchoAttachments(c)
+	// Route to the manager owning this stream: by ?id= when present (player request),
+	// else the acting user's session.
+	mgr := h.userSession(c).DirectStream()
+	if id := c.QueryParam("id"); id != "" {
+		mgr = h.App.ResolveDirectStreamManager(id)
+	}
+	return mgr.ServeEchoAttachments(c)
 }

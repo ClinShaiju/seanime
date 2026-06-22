@@ -259,6 +259,11 @@ func (a *App) initModulesOnce() {
 		PlaybackManager:     a.PlaybackManager,
 		TorrentRepository:   a.TorrentRepository,
 		DirectStreamManager: a.DirectStreamManager,
+		// Route playback to the streaming user's own session modules (per-user streams).
+		SessionModulesFunc: func(userID uint) (*directstream.Manager, *playbackmanager.PlaybackManager) {
+			sess := a.SessionFor(userID)
+			return sess.DirectStream(), sess.Playback()
+		},
 	})
 
 	plugin.GlobalAppContext.SetModulesPartial(plugin.AppContextModules{

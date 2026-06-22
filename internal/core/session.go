@@ -206,6 +206,28 @@ func emptyMangaCollection() *anilist.MangaCollection {
 	}
 }
 
+// ResolveDirectStreamManager finds the DirectStream manager whose active stream has
+// the given playback id (the ?id= in a serve URL). With per-user sessions several
+// managers may be streaming at once; the id disambiguates them. Falls back to the
+// admin global when no match (back-compat / unknown id).
+func (a *App) ResolveDirectStreamManager(id string) *directstream.Manager {
+	if a.DirectStreamManager != nil && a.DirectStreamManager.ServesStreamID(id) {
+		return a.DirectStreamManager
+	}
+	var found *directstream.Manager
+	a.sessions.Range(func(_ uint, s *UserSession) bool {
+		if s != nil && s.directStream != nil && s.directStream.ServesStreamID(id) {
+			found = s.directStream
+			return false
+		}
+		return true
+	})
+	if found != nil {
+		return found
+	}
+	return a.DirectStreamManager
+}
+
 // SessionFor resolves the session for a user id. The admin (or a zero id / unknown
 // user) gets the App-global delegate; any other user gets a lazily-built, cached
 // per-user session.

@@ -41,6 +41,10 @@ type (
 		downloadLoopCancelFunc context.CancelFunc
 		torrentRepository      *torrent.Repository
 		directStreamManager    *directstream.Manager
+		// sessionModulesFunc resolves the per-user DirectStream + PlaybackManager for a
+		// stream so multiple users stream independently. nil → fall back to the global
+		// (admin) modules above. Injected by core (App.SessionFor based).
+		sessionModulesFunc func(userID uint) (*directstream.Manager, *playbackmanager.PlaybackManager)
 
 		playbackManager     *playbackmanager.PlaybackManager
 		streamManager       *StreamManager
@@ -63,6 +67,8 @@ type (
 		DirectStreamManager *directstream.Manager
 		MetadataProviderRef *util.Ref[metadata_provider.Provider]
 		PlatformRef         *util.Ref[platform.Platform]
+		// SessionModulesFunc resolves per-user DirectStream + PlaybackManager (optional).
+		SessionModulesFunc func(userID uint) (*directstream.Manager, *playbackmanager.PlaybackManager)
 	}
 )
 
@@ -83,6 +89,7 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		ctxMap:                result.NewMap[string, context.CancelFunc](),
 		previousStreamOptions: mo.None[*StartStreamOptions](),
 		directStreamManager:   opts.DirectStreamManager,
+		sessionModulesFunc:    opts.SessionModulesFunc,
 	}
 
 	ret.streamManager = NewStreamManager(ret)

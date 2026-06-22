@@ -30,7 +30,7 @@ func (h *Handler) HandlePlaybackPlayVideo(c echo.Context) error {
 		return err
 	}
 
-	err = h.App.PlaybackManager.StartPlayingUsingMediaPlayer(&playbackmanager.StartPlayingOptions{
+	err = h.userSession(c).Playback().StartPlayingUsingMediaPlayer(&playbackmanager.StartPlayingOptions{
 		Payload:   b.Path,
 		UserAgent: c.Request().Header.Get("User-Agent"),
 		ClientId:  "",
@@ -59,7 +59,7 @@ func (h *Handler) HandlePlaybackPlayRandomVideo(c echo.Context) error {
 		return err
 	}
 
-	err = h.App.PlaybackManager.StartRandomVideo(&playbackmanager.StartRandomVideoOptions{
+	err = h.userSession(c).Playback().StartRandomVideo(&playbackmanager.StartRandomVideoOptions{
 		UserAgent: c.Request().Header.Get("User-Agent"),
 		ClientId:  "",
 	})
@@ -79,12 +79,12 @@ func (h *Handler) HandlePlaybackPlayRandomVideo(c echo.Context) error {
 //	@returns int
 func (h *Handler) HandlePlaybackSyncCurrentProgress(c echo.Context) error {
 
-	err := h.App.PlaybackManager.SyncCurrentProgress()
+	err := h.userSession(c).Playback().SyncCurrentProgress()
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
 
-	mId, _ := h.App.PlaybackManager.GetCurrentMediaID()
+	mId, _ := h.userSession(c).Playback().GetCurrentMediaID()
 
 	return h.RespondWithData(c, mId)
 }
@@ -98,7 +98,7 @@ func (h *Handler) HandlePlaybackSyncCurrentProgress(c echo.Context) error {
 //	@returns bool
 func (h *Handler) HandlePlaybackPlayNextEpisode(c echo.Context) error {
 
-	err := h.App.PlaybackManager.PlayNextEpisode()
+	err := h.userSession(c).Playback().PlayNextEpisode()
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -114,7 +114,7 @@ func (h *Handler) HandlePlaybackPlayNextEpisode(c echo.Context) error {
 //	@returns *anime.LocalFile
 func (h *Handler) HandlePlaybackGetNextEpisode(c echo.Context) error {
 
-	lf := h.App.PlaybackManager.GetNextEpisode()
+	lf := h.userSession(c).Playback().GetNextEpisode()
 	return h.RespondWithData(c, lf)
 }
 
@@ -126,7 +126,7 @@ func (h *Handler) HandlePlaybackGetNextEpisode(c echo.Context) error {
 //	@returns bool
 func (h *Handler) HandlePlaybackAutoPlayNextEpisode(c echo.Context) error {
 
-	err := h.App.PlaybackManager.AutoPlayNextEpisode()
+	err := h.userSession(c).Playback().AutoPlayNextEpisode()
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
@@ -159,7 +159,7 @@ func (h *Handler) HandlePlaybackStartPlaylist(c echo.Context) error {
 	//	return h.RespondWithError(c, err)
 	//}
 	//
-	//err = h.App.PlaybackManager.StartPlaylist(playlist)
+	//err = h.userSession(c).Playback().StartPlaylist(playlist)
 	//if err != nil {
 	//	return h.RespondWithError(c, err)
 	//}
@@ -175,7 +175,7 @@ func (h *Handler) HandlePlaybackStartPlaylist(c echo.Context) error {
 //	@returns bool
 func (h *Handler) HandlePlaybackCancelCurrentPlaylist(c echo.Context) error {
 
-	//err := h.App.PlaybackManager.CancelCurrentPlaylist()
+	//err := h.userSession(c).Playback().CancelCurrentPlaylist()
 	//if err != nil {
 	//	return h.RespondWithError(c, err)
 	//}
@@ -191,7 +191,7 @@ func (h *Handler) HandlePlaybackCancelCurrentPlaylist(c echo.Context) error {
 //	@returns bool
 func (h *Handler) HandlePlaybackPlaylistNext(c echo.Context) error {
 
-	//err := h.App.PlaybackManager.RequestNextPlaylistFile()
+	//err := h.userSession(c).Playback().RequestNextPlaylistFile()
 	//if err != nil {
 	//	return h.RespondWithError(c, err)
 	//}
@@ -222,7 +222,7 @@ func (h *Handler) HandlePlaybackStartManualTracking(c echo.Context) error {
 
 	b.ClientId = getRequestClientId(c, b.ClientId)
 
-	err := h.App.PlaybackManager.StartManualProgressTracking(&playbackmanager.StartManualProgressTrackingOptions{
+	err := h.userSession(c).Playback().StartManualProgressTracking(&playbackmanager.StartManualProgressTrackingOptions{
 		ClientId:      b.ClientId,
 		MediaId:       b.MediaId,
 		EpisodeNumber: b.EpisodeNumber,
@@ -242,7 +242,7 @@ func (h *Handler) HandlePlaybackStartManualTracking(c echo.Context) error {
 //	@returns bool
 func (h *Handler) HandlePlaybackCancelManualTracking(c echo.Context) error {
 
-	h.App.PlaybackManager.CancelManualProgressTracking()
+	h.userSession(c).Playback().CancelManualProgressTracking()
 
 	return h.RespondWithData(c, true)
 }

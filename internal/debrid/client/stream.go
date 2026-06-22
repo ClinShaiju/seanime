@@ -74,6 +74,9 @@ type (
 		FileIndex         *int                        // Index of the file to stream (Manual selection)
 		UserAgent         string
 		ClientId          string
+		// UserID is the Seanime user who owns this stream; routes playback/events to
+		// their per-session modules so users stream independently. 0 = admin/global.
+		UserID            uint
 		PlaybackType      StreamPlaybackType
 		AutoSelect        bool
 		BatchEpisodeFiles *hibiketorrent.BatchEpisodeFiles
@@ -134,6 +137,28 @@ const (
 	PlaybackTypeNativePlayer   StreamPlaybackType = "nativeplayer"
 	PlaybackTypeExternalPlayer StreamPlaybackType = "externalPlayerLink"
 )
+
+// ds resolves the DirectStream manager for this stream's user (per-session), or the
+// global (admin) one when no per-user resolver/user is set.
+func (s *StreamManager) ds(opts *StartStreamOptions) *directstream.Manager {
+	if s.repository.sessionModulesFunc != nil && opts != nil {
+		if dm, _ := s.repository.sessionModulesFunc(opts.UserID); dm != nil {
+			return dm
+		}
+	}
+	return s.repository.directStreamManager
+}
+
+// pb resolves the PlaybackManager for this stream's user (per-session), or the
+// global (admin) one when no per-user resolver/user is set.
+func (s *StreamManager) pb(opts *StartStreamOptions) *playbackmanager.PlaybackManager {
+	if s.repository.sessionModulesFunc != nil && opts != nil {
+		if _, pm := s.repository.sessionModulesFunc(opts.UserID); pm != nil {
+			return pm
+		}
+	}
+	return s.repository.playbackManager
+}
 
 // startStream is called by the client to start streaming a torrent
 func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOptions) (err error) {
@@ -196,7 +221,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 	//}()
 
 	if opts.PlaybackType == PlaybackTypeNativePlayer {
-		s.repository.directStreamManager.BeginOpen(opts.ClientId, "Selecting torrent...", func() {
+		s.ds(opts).BeginOpen(opts.ClientId, "Selecting torrent...", func() {
 			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true})
 		})
 	}
@@ -209,7 +234,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		s.repository.wsEventManager.SendEvent(events.HideIndefiniteLoader, "debridstream")
 		return err
 	}
-	if opts.PlaybackType == PlaybackTypeNativePlayer && !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+	if opts.PlaybackType == PlaybackTypeNativePlayer && !s.ds(opts).IsOpenActive(opts.ClientId) {
 		s.repository.wsEventManager.SendEvent(events.HideIndefiniteLoader, "debridstream")
 		return nil
 	}
@@ -235,7 +260,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		pt, err := s.repository.findBestTorrent(provider, media, opts.EpisodeNumber)
 		if err != nil {
 			if opts.PlaybackType == PlaybackTypeNativePlayer {
-				s.repository.directStreamManager.AbortOpen(opts.ClientId, err)
+				s.ds(opts).AbortOpen(opts.ClientId, err)
 			}
 			s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
 				Status:      StreamStatusFailed,
@@ -275,7 +300,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			pt, err := s.repository.findBestTorrentFromManualSelection(provider, selectedTorrent, media, opts.EpisodeNumber, chosenFileIndex)
 			if err != nil {
 				if opts.PlaybackType == PlaybackTypeNativePlayer {
-					s.repository.directStreamManager.AbortOpen(opts.ClientId, err)
+					s.ds(opts).AbortOpen(opts.ClientId, err)
 				}
 				s.repository.wsEventManager.SendEvent(events.DebridStreamState, StreamState{
 					Status:      StreamStatusFailed,
@@ -293,12 +318,12 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 	if selectedTorrent == nil {
 		if opts.PlaybackType == PlaybackTypeNativePlayer {
-			s.repository.directStreamManager.AbortOpen(opts.ClientId, fmt.Errorf("debridstream: Failed to start stream, no torrent provided"))
+			s.ds(opts).AbortOpen(opts.ClientId, fmt.Errorf("debridstream: Failed to start stream, no torrent provided"))
 		}
 		s.repository.wsEventManager.SendEvent(events.HideIndefiniteLoader, "debridstream")
 		return fmt.Errorf("debridstream: Failed to start stream, no torrent provided")
 	}
-	if opts.PlaybackType == PlaybackTypeNativePlayer && !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+	if opts.PlaybackType == PlaybackTypeNativePlayer && !s.ds(opts).IsOpenActive(opts.ClientId) {
 		s.repository.wsEventManager.SendEvent(events.HideIndefiniteLoader, "debridstream")
 		return nil
 	}
@@ -379,7 +404,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			go func() {
 				for item := range itemCh {
 					if opts.PlaybackType == PlaybackTypeNativePlayer {
-						if !s.repository.directStreamManager.UpdateOpenStep(opts.ClientId, fmt.Sprintf("Awaiting stream: %d%%", item.CompletionPercentage)) {
+						if !s.ds(opts).UpdateOpenStep(opts.ClientId, fmt.Sprintf("Awaiting stream: %d%%", item.CompletionPercentage)) {
 							return
 						}
 					}
@@ -408,7 +433,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 				ready()
 				return
 			}
-			if opts.PlaybackType == PlaybackTypeNativePlayer && !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+			if opts.PlaybackType == PlaybackTypeNativePlayer && !s.ds(opts).IsOpenActive(opts.ClientId) {
 				ready()
 				return
 			}
@@ -555,17 +580,17 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 			var playbackSubscriberCtx context.Context
 			playbackSubscriberCtx, s.playbackSubscriberCtxCancelFunc = context.WithCancel(context.Background())
-			playbackSubscriber := s.repository.playbackManager.SubscribeToPlaybackStatus("debridstream")
+			playbackSubscriber := s.pb(opts).SubscribeToPlaybackStatus("debridstream")
 
 			// Sends the stream to the media player
 			// DEVNOTE: Events are handled by the torrentstream.Repository module
-			err = s.repository.playbackManager.StartStreamingUsingMediaPlayer(windowTitle, &playbackmanager.StartPlayingOptions{
+			err = s.pb(opts).StartStreamingUsingMediaPlayer(windowTitle, &playbackmanager.StartPlayingOptions{
 				Payload:   streamUrl,
 				UserAgent: opts.UserAgent,
 				ClientId:  opts.ClientId,
 			}, media, aniDbEpisode)
 			if err != nil {
-				go s.repository.playbackManager.UnsubscribeFromPlaybackStatus("debridstream")
+				go s.pb(opts).UnsubscribeFromPlaybackStatus("debridstream")
 				if s.playbackSubscriberCtxCancelFunc != nil {
 					s.playbackSubscriberCtxCancelFunc()
 					s.playbackSubscriberCtxCancelFunc = nil
@@ -592,14 +617,14 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 				select {
 				case <-playbackSubscriberCtx.Done():
 					s.repository.wsEventManager.SendEvent(events.HideIndefiniteLoader, "debridstream")
-					s.repository.playbackManager.UnsubscribeFromPlaybackStatus("debridstream")
+					s.pb(opts).UnsubscribeFromPlaybackStatus("debridstream")
 					s.currentStreamUrl = ""
 				case event := <-playbackSubscriber.EventCh:
 					switch event.(type) {
 					case playbackmanager.StreamStartedEvent:
 						s.repository.wsEventManager.SendEvent(events.HideIndefiniteLoader, "debridstream")
 					case playbackmanager.StreamStoppedEvent:
-						go s.repository.playbackManager.UnsubscribeFromPlaybackStatus("debridstream")
+						go s.pb(opts).UnsubscribeFromPlaybackStatus("debridstream")
 						s.currentStreamUrl = ""
 					}
 				}
@@ -627,10 +652,10 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 				Message:     "External player link sent",
 			})
 		case PlaybackTypeNativePlayer:
-			if !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+			if !s.ds(opts).IsOpenActive(opts.ClientId) {
 				return
 			}
-			err := s.repository.directStreamManager.PlayDebridStream(ctx, filepath, directstream.PlayDebridStreamOptions{
+			err := s.ds(opts).PlayDebridStream(ctx, filepath, directstream.PlayDebridStreamOptions{
 				StreamUrl:    streamUrl,
 				MediaId:      media.ID,
 				AnidbEpisode: opts.AniDBEpisode,
@@ -685,8 +710,13 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 	}
 	s.preloadMu.Unlock()
 
-	if s.repository.directStreamManager != nil {
-		s.repository.directStreamManager.CloseOpen("")
+	// Resolve the directStream of the user who owns the stream being cancelled.
+	var prevOpts *StartStreamOptions
+	if p, ok := s.repository.previousStreamOptions.Get(); ok {
+		prevOpts = p
+	}
+	if dm := s.ds(prevOpts); dm != nil {
+		dm.CloseOpen("")
 	}
 
 	if s.downloadCtxCancelFunc != nil {
@@ -951,8 +981,8 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 		// Pre-parse MKV metadata for high-certainty targets (next-episode preloads) so the
 		// play-time "Loading metadata" step is near-instant. Zero disk; gated by PrewarmMetadata
 		// so the speculative continue-watching prewarm doesn't download fonts it may never use.
-		if opts.PrewarmMetadata && streamUrl != "" && preloadCtx.Err() == nil && s.repository.directStreamManager != nil {
-			s.repository.directStreamManager.PrewarmStreamMetadata(streamUrl)
+		if opts.PrewarmMetadata && streamUrl != "" && preloadCtx.Err() == nil && s.ds(opts) != nil {
+			s.ds(opts).PrewarmStreamMetadata(streamUrl)
 		}
 	}()
 
@@ -989,10 +1019,10 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 
 	// The native player needs an open session before we hand it the stream.
 	if opts.PlaybackType == PlaybackTypeNativePlayer {
-		s.repository.directStreamManager.BeginOpen(opts.ClientId, "Loading preloaded stream...", func() {
+		s.ds(opts).BeginOpen(opts.ClientId, "Loading preloaded stream...", func() {
 			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true})
 		})
-		if !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+		if !s.ds(opts).IsOpenActive(opts.ClientId) {
 			return nil
 		}
 	}
@@ -1028,10 +1058,10 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 
 	switch opts.PlaybackType {
 	case PlaybackTypeNativePlayer:
-		if !s.repository.directStreamManager.IsOpenActive(opts.ClientId) {
+		if !s.ds(opts).IsOpenActive(opts.ClientId) {
 			return nil
 		}
-		err = s.repository.directStreamManager.PlayDebridStream(streamCtx, cached.filepath, directstream.PlayDebridStreamOptions{
+		err = s.ds(opts).PlayDebridStream(streamCtx, cached.filepath, directstream.PlayDebridStreamOptions{
 			StreamUrl:    streamUrl,
 			MediaId:      media.ID,
 			AnidbEpisode: opts.AniDBEpisode,
