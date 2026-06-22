@@ -38,6 +38,9 @@ type (
 		settings               *models.DebridSettings
 		wsEventManager         events.WSEventManagerInterface
 		ctxMap                 *result.Map[string, context.CancelFunc]
+		// queuedDownloadFailures counts consecutive GetTorrent failures per queued item, so
+		// the download loop can drop a stale row instead of polling a dead item forever.
+		queuedDownloadFailures *result.Map[string, int]
 		downloadLoopCancelFunc context.CancelFunc
 		torrentRepository      *torrent.Repository
 		directStreamManager    *directstream.Manager
@@ -92,8 +95,9 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		playbackManager:       opts.PlaybackManager,
 		metadataProviderRef:   opts.MetadataProviderRef,
 		completeAnimeCache:    anilist.NewCompleteAnimeCache(),
-		ctxMap:                result.NewMap[string, context.CancelFunc](),
-		previousStreamOptions: mo.None[*StartStreamOptions](),
+		ctxMap:                 result.NewMap[string, context.CancelFunc](),
+		queuedDownloadFailures: result.NewMap[string, int](),
+		previousStreamOptions:  mo.None[*StartStreamOptions](),
 		directStreamManager:   opts.DirectStreamManager,
 		sessionModulesFunc:    opts.SessionModulesFunc,
 		sessionEventsFunc:     opts.SessionEventsFunc,

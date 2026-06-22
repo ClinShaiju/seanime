@@ -110,6 +110,11 @@ func (s *UserSession) ensureModules() {
 		a := s.app
 		scoped := events.NewScopedWSEventManager(a.WSEventManager, s.UserID)
 		refresh := func() { _, _ = s.RefreshAnimeCollection() }
+		// Child logger so EVERY log line from this user's session modules (videocore,
+		// nativeplayer, directstream, playback) carries userID — per-user attribution
+		// without tagging each call site.
+		sl := a.Logger.With().Uint("userID", s.UserID).Logger()
+		sessionLogger := &sl
 
 		// Per-user continuity (resume positions): own file-cache bucket so a user's
 		// watch history never overwrites another's for the same media.
@@ -117,7 +122,7 @@ func (s *UserSession) ensureModules() {
 
 		s.videoCore = videocore.New(videocore.NewVideoCoreOptions{
 			WsEventManager:             scoped,
-			Logger:                     a.Logger,
+			Logger:                     sessionLogger,
 			ContinuityManager:          s.continuity,
 			MetadataProviderRef:        a.MetadataProviderRef,
 			DiscordPresence:            a.DiscordPresence,
@@ -130,11 +135,11 @@ func (s *UserSession) ensureModules() {
 		})
 		s.nativePlayer = nativeplayer.New(nativeplayer.NewNativePlayerOptions{
 			WsEventManager: scoped,
-			Logger:         a.Logger,
+			Logger:         sessionLogger,
 			VideoCore:      s.videoCore,
 		})
 		s.directStream = directstream.NewManager(directstream.NewManagerOptions{
-			Logger:                     a.Logger,
+			Logger:                     sessionLogger,
 			WSEventManager:             scoped,
 			ContinuityManager:          s.continuity,
 			MetadataProviderRef:        a.MetadataProviderRef,
@@ -153,7 +158,7 @@ func (s *UserSession) ensureModules() {
 			},
 		})
 		s.playback = playbackmanager.New(&playbackmanager.NewPlaybackManagerOptions{
-			Logger:                     a.Logger,
+			Logger:                     sessionLogger,
 			WSEventManager:             scoped,
 			PlatformRef:                s.platformRef,
 			MetadataProviderRef:        a.MetadataProviderRef,

@@ -29,6 +29,11 @@ var (
 	ErrDownloadAlreadyActive = errors.New("debrid: download already active")
 )
 
+// maxQueuedDownloadFailures is how many consecutive GetTorrent failures a queued debrid
+// item tolerates (loop runs ~once/minute) before it's dropped as stale, instead of being
+// polled forever (the cause of endless Torbox 500 spam).
+const maxQueuedDownloadFailures = 10
+
 func (r *Repository) launchDownloadLoop(ctx context.Context) {
 	r.logger.Trace().Msg("debrid: Starting download loop")
 	go func() {
@@ -71,9 +76,32 @@ func (r *Repository) processQueuedDownloads(provider debrid.Provider) {
 
 		item, err := provider.GetTorrent(dbItem.TorrentItemID)
 		if err != nil {
-			r.logger.Err(err).Str("torrentItemId", dbItem.TorrentItemID).Msg("debrid: Failed to get queued torrent")
+			// Count consecutive failures. A row the provider no longer has (deleted/expired)
+			// or that keeps erroring would otherwise be polled forever every minute — the
+			// source of the endless Torbox 500 "Failed to get queued torrent" spam. After a
+			// threshold, drop the stale row.
+			// ponytail: count-based prune. A provider outage longer than
+			// ~maxQueuedDownloadFailures minutes will drop legit pending items (re-queue
+			// them). Raise the threshold if that becomes a problem.
+			n := 1
+			if prev, ok := r.queuedDownloadFailures.Get(dbItem.TorrentItemID); ok {
+				n = prev + 1
+			}
+			r.queuedDownloadFailures.Set(dbItem.TorrentItemID, n)
+			if n >= maxQueuedDownloadFailures {
+				r.logger.Warn().Str("torrentItemId", dbItem.TorrentItemID).Int("failures", n).
+					Msg("debrid: Dropping stale queued torrent after repeated fetch failures")
+				if delErr := r.db.DeleteDebridTorrentItemByDbId(dbItem.ID); delErr != nil {
+					r.logger.Err(delErr).Str("torrentItemId", dbItem.TorrentItemID).Msg("debrid: Failed to remove stale queued torrent")
+				}
+				r.queuedDownloadFailures.Delete(dbItem.TorrentItemID)
+			} else {
+				r.logger.Warn().Err(err).Str("torrentItemId", dbItem.TorrentItemID).Int("attempt", n).Msg("debrid: Failed to get queued torrent")
+			}
 			continue
 		}
+		// Recovered — reset the failure counter.
+		r.queuedDownloadFailures.Delete(dbItem.TorrentItemID)
 		if item == nil || !item.IsReady {
 			continue
 		}
