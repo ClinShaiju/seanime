@@ -1,9 +1,10 @@
 import { useLogout } from "@/api/hooks/auth.hooks"
+import { isLoginModalOpenAtom } from "@/app/(main)/_atoms/server-status.atoms"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { SettingsCard, SettingsPageHeader } from "@/app/(main)/settings/_components/settings-card"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
 import { Button } from "@/components/ui/button"
-import { ANILIST_OAUTH_URL } from "@/lib/server/config"
+import { useSetAtom } from "jotai"
 import React from "react"
 import { MdOutlineConnectWithoutContact } from "react-icons/md"
 import { SiAnilist } from "react-icons/si"
@@ -14,6 +15,7 @@ import { SiAnilist } from "react-icons/si"
 export function IntegrationsSettings() {
     const status = useServerStatus()
     const { mutate: logout, isPending: isLoggingOut } = useLogout()
+    const setLoginModal = useSetAtom(isLoginModalOpenAtom)
 
     const user = status?.user
     const isConnected = !!user && !user.isSimulated
@@ -24,12 +26,11 @@ export function IntegrationsSettings() {
         onConfirm: () => logout(),
     })
 
+    // Open the existing "Log in with AniList" token-paste modal (Get token → paste →
+    // /auth/callback → per-user /auth/login), rather than redirecting to AniList OAuth.
     const handleConnect = React.useCallback(() => {
-        const url = status?.anilistClientId
-            ? `https://anilist.co/api/v2/oauth/authorize?client_id=${status.anilistClientId}&response_type=token`
-            : ANILIST_OAUTH_URL
-        window.open(url, "_self")
-    }, [status?.anilistClientId])
+        setLoginModal(true)
+    }, [setLoginModal])
 
     return (
         <>
