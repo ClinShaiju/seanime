@@ -61,6 +61,19 @@ func emptyMangaCollection() *anilist.MangaCollection {
 	}
 }
 
+// SetStreamOwner records which user owns the currently-active stream/playback so the
+// shared streaming/playback modules' broadcast events route only to that user (and
+// to local/unidentified clients). Called at each stream/playback start handler.
+//
+// ponytail: single active stream server-wide today → one owner at a time. True
+// simultaneous independent streams need per-session module instances (the larger
+// streaming split), at which point this is replaced by per-session scoped managers.
+func (a *App) SetStreamOwner(userID uint) {
+	if a.streamEvents != nil {
+		a.streamEvents.SetOwner(userID)
+	}
+}
+
 // SessionFor resolves the session for a user id. The admin (or a zero id / unknown
 // user) gets the App-global delegate; any other user gets a lazily-built, cached
 // per-user session.

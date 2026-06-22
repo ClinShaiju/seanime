@@ -87,6 +87,10 @@ type (
 
 		// Real-time communication
 		WSEventManager *events.WSEventManager
+		// streamEvents wraps WSEventManager and routes the shared streaming/playback
+		// modules' broadcast events to the current stream owner (see session/streaming
+		// scoping). Set via SetStreamOwner at each stream/playback start.
+		streamEvents *events.OwnerScopedWSEventManager
 
 		// Extensions
 		ExtensionRepository           *extension_repo.Repository

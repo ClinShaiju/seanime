@@ -190,6 +190,25 @@ func (m *WSEventManager) SendEventToUser(userID uint, t string, payload interfac
 	}
 }
 
+// SendEventToUserOrUnscoped sends an event to the given user's connections AND to
+// any connection with no associated user (UserID==0). The latter covers local /
+// password-less / desktop installs, where clients never present a session token and
+// so are never tagged with a user id — they are effectively the single local user
+// and must still receive scoped playback/stream events.
+func (m *WSEventManager) SendEventToUserOrUnscoped(userID uint, t string, payload interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, conn := range m.Conns {
+		if conn.UserID != userID && conn.UserID != 0 {
+			continue
+		}
+		_ = conn.Conn.WriteJSON(WSEvent{
+			Type:    t,
+			Payload: payload,
+		})
+	}
+}
+
 func (m *WSEventManager) RemoveConn(id string) {
 	for i, conn := range m.Conns {
 		if conn.ID == id {

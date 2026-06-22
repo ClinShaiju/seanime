@@ -50,6 +50,11 @@ func (a *App) initModulesOnce() {
 
 	_, _ = util.InitIOSDocumentsDir()
 
+	// Event manager for the shared streaming/playback modules: routes their broadcast
+	// events to the user who owns the active stream (multi-user profiles). Modules
+	// below are constructed with this instead of the raw WSEventManager.
+	a.streamEvents = events.NewOwnerScopedWSEventManager(a.WSEventManager)
+
 	a.LocalManager.SetRefreshAnilistCollectionsFunc(func() {
 		_, _ = a.RefreshAnimeCollection()
 		_, _ = a.RefreshMangaCollection()
@@ -107,7 +112,7 @@ func (a *App) initModulesOnce() {
 	// Playback Manager
 	a.PlaybackManager = playbackmanager.New(&playbackmanager.NewPlaybackManagerOptions{
 		Logger:              a.Logger,
-		WSEventManager:      a.WSEventManager,
+		WSEventManager:      a.streamEvents,
 		PlatformRef:         a.AnilistPlatformRef,
 		MetadataProviderRef: a.MetadataProviderRef,
 		Database:            a.Database,
@@ -155,7 +160,7 @@ func (a *App) initModulesOnce() {
 	// +---------------------+
 
 	a.VideoCore = videocore.New(videocore.NewVideoCoreOptions{
-		WsEventManager:      a.WSEventManager,
+		WsEventManager:      a.streamEvents,
 		Logger:              a.Logger,
 		ContinuityManager:   a.ContinuityManager,
 		MetadataProviderRef: a.MetadataProviderRef,
@@ -173,7 +178,7 @@ func (a *App) initModulesOnce() {
 
 	a.MediastreamRepository = mediastream.NewRepository(&mediastream.NewRepositoryOptions{
 		Logger:         a.Logger,
-		WSEventManager: a.WSEventManager,
+		WSEventManager: a.streamEvents,
 		FileCacher:     a.FileCacher,
 		VideoCore:      a.VideoCore,
 	})
@@ -187,7 +192,7 @@ func (a *App) initModulesOnce() {
 	// +---------------------+
 
 	a.NativePlayer = nativeplayer.New(nativeplayer.NewNativePlayerOptions{
-		WsEventManager: a.WSEventManager,
+		WsEventManager: a.streamEvents,
 		Logger:         a.Logger,
 		VideoCore:      a.VideoCore,
 	})
@@ -198,7 +203,7 @@ func (a *App) initModulesOnce() {
 
 	a.DirectStreamManager = directstream.NewManager(directstream.NewManagerOptions{
 		Logger:              a.Logger,
-		WSEventManager:      a.WSEventManager,
+		WSEventManager:      a.streamEvents,
 		ContinuityManager:   a.ContinuityManager,
 		MetadataProviderRef: a.MetadataProviderRef,
 		DiscordPresence:     a.DiscordPresence,
@@ -230,7 +235,7 @@ func (a *App) initModulesOnce() {
 		TorrentRepository:   a.TorrentRepository,
 		PlatformRef:         a.AnilistPlatformRef,
 		PlaybackManager:     a.PlaybackManager,
-		WSEventManager:      a.WSEventManager,
+		WSEventManager:      a.streamEvents,
 		Database:            a.Database,
 		DirectStreamManager: a.DirectStreamManager,
 		NativePlayer:        a.NativePlayer,
@@ -242,7 +247,7 @@ func (a *App) initModulesOnce() {
 
 	a.DebridClientRepository = debrid_client.NewRepository(&debrid_client.NewRepositoryOptions{
 		Logger:              a.Logger,
-		WSEventManager:      a.WSEventManager,
+		WSEventManager:      a.streamEvents,
 		Database:            a.Database,
 		MetadataProviderRef: a.MetadataProviderRef,
 		PlatformRef:         a.AnilistPlatformRef,
@@ -524,7 +529,7 @@ func (a *App) InitOrRefreshModules() {
 			MpcHc:             a.MediaPlayer.MpcHc,
 			Mpv:               a.MediaPlayer.Mpv, // Socket
 			Iina:              a.MediaPlayer.Iina,
-			WSEventManager:    a.WSEventManager,
+			WSEventManager:    a.streamEvents,
 			ContinuityManager: a.ContinuityManager,
 		})
 

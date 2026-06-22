@@ -362,6 +362,7 @@ func (h *Handler) HandleDebridGetTorrentFilePreviews(c echo.Context) error {
 //	@returns bool
 //	@route /api/v1/debrid/stream/start [POST]
 func (h *Handler) HandleDebridStartStream(c echo.Context) error {
+	h.App.SetStreamOwner(h.dataUserID(c))
 	type body struct {
 		MediaId           int                              `json:"mediaId"`
 		EpisodeNumber     int                              `json:"episodeNumber"`
