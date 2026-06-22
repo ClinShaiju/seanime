@@ -109,17 +109,61 @@ Known still-shared after this slice (expected, lands in slice B/C):
 
 ---
 
+## K. Per-session streaming + continuity (P3/P4) — DEPLOYED, verify this round
+
+Backend is on sha `d0d1c8ed`. These all need **two users** (cvslinc admin + a regular
+user, both with AniList linked) and, ideally, **two devices/windows at once**.
+
+**Hardening regression (must still hold):**
+- [ ] Browser: server password → user login → your data. Denshi (rebuilt build): server password prefilled → user login → your data. A client with NO user login sees empty.
+
+**Per-user DEBRID simultaneous (the main fix):**
+- [ ] cvslinc streams show A via Debrid; at the same time the regular user streams a **different** show B via Debrid. Both play independently.
+- [ ] Each profile's "Currently watching" tag + progress popup shows **only its own** show — no bleed, including after a page reload on either side.
+- [ ] Pressing "Currently watching" on one profile never jumps to the other's show.
+- [ ] Stopping/cancelling one user's stream does not affect the other's.
+
+**Per-user resume positions (continuity):**
+- [ ] cvslinc watches show X to ~10 min; regular user watches the SAME show X to a different time. Each user's resume position is their own (reopening resumes at their own spot, not the other's).
+- [ ] Toggling "watch continuity" off for one user doesn't change the other.
+
+**Per-user built-in local-file playback (if you have a local library):**
+- [ ] Two users play different local files simultaneously via the built-in player → independent, no bleed.
+
+**Regression — solo / admin:**
+- [ ] Your normal solo streaming (just cvslinc) works exactly as before (debrid, resume, progress→AniList).
+- [ ] Local desktop Denshi pointed at the VPS still plays (events reach it).
+
+**Expected NOT fixed yet (don't report as bugs):**
+- **Torrent streaming** (non-debrid torrentstream) is still single/global — two users torrent-streaming at once will still bleed/collide. Debrid is the fixed path.
+- Built-in **transcode** (mediastream) path still global.
+
+---
+
 ## Known gaps — NOT bugs (don't report these as failures)
 
-These are intentionally deferred to later phases:
-- **Theme and playlists ARE now per-user** (P6). But **continuity (resume positions) and auto-select profiles are still shared** — they're driven by the playback flow, which isn't per-user until P3/P4.
-- **Server/library settings are still global/admin** — the settings table split (server vs user prefs) is P2-backend.
-- ~~**AniList is shared**~~ DONE (P3 slice A) — each user links their own AniList account and sees/edits their own collection. (Per-session *playback/stream* state is the remaining slice B/C.)
-- **No in-app user-logout button** — use localStorage clear or the AniList "Sign out". (added later, P3)
-- **WebSocket events are broadcast** — the per-user primitive (WSConn.UserID/SendEventToUser) is in place and the client sends its session on /events, but existing emitters still broadcast; per-user routing lands with P3/P4. (P5)
-- **Streaming is one global session** — two users streaming simultaneously will collide. (P4)
-- **Secrets in status** — debrid API key etc. still returned to any authenticated client. (P2-backend)
-- **No resource concurrency limits** — not needed yet: transcode/torrentstream/debrid are each single-session today, so concurrency is already 1. Limits become meaningful only once P4 enables N per-user streams. (P8, after P4)
+DONE since earlier rounds: Theme, playlists, AniList account/collection, per-user
+settings overrides, anon-data hardening (default), per-user **debrid** streaming +
+serve routing, per-user **continuity** (resume positions). In-app user-logout exists
+(sidebar). Debrid API key redacted from non-admins. WS events for the per-session
+modules are now user-scoped.
+
+Still deferred (NOT bugs):
+- **Torrent streaming (torrentstream) is still global** — two users torrent-streaming
+  simultaneously will bleed/collide. Needs the same per-session pass as debrid PLUS
+  re-architecting its singleton playback-tracking loops (the entangled part). (next)
+- **Built-in transcode (mediastream) path still global** — lower priority; debrid
+  direct-play doesn't use it.
+- **Auto-select profiles still shared** — and there's local uncommitted WIP in
+  `internal/torrents/autoselect/`; left untouched.
+- **No resource concurrency limits** — now that debrid can run N per-user streams, the
+  shared debrid HTTP budget / transcoder could contend under load. Add semaphores when
+  it matters (deadlock-sensitive; wants a tested session). (P8)
+- **Watch-party rooms** not started (P7).
+- **Per-session modules accumulate per user** (no eviction) — fine for a small group.
+- **Per-session module settings are snapshot at build** — if a user changes
+  watch-continuity / autoplay after their session is built, it updates on next session
+  rebuild (re-login), not live. Minor.
 
 ## Recovery (if locked out of admin)
 
