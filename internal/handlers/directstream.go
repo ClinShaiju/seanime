@@ -135,5 +135,13 @@ func (h *Handler) HandleDirectstreamGetAttachments(c echo.Context) error {
 	if id := c.QueryParam("id"); id != "" {
 		mgr = h.App.ResolveDirectStreamManager(id)
 	}
+	// Font/attachment fetches are subresource requests that usually carry no user session
+	// and no ?id=, so the manager resolved above may not own the active stream (→ "no
+	// stream"). Fall back to whichever active stream actually has this font.
+	if filename := c.Param("*"); !mgr.HasAttachment(filename) {
+		if alt := h.App.ResolveDirectStreamManagerWithAttachment(filename); alt != nil {
+			mgr = alt
+		}
+	}
 	return mgr.ServeEchoAttachments(c)
 }

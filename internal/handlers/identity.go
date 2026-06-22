@@ -16,6 +16,7 @@ var errAdminRequired = errors.New("admin privileges required")
 const (
 	ctxUserID   = "userId"
 	ctxUserRole = "userRole"
+	ctxUsername = "username"
 )
 
 // IdentityMiddleware resolves the acting user for a request and stashes the user id
@@ -101,6 +102,16 @@ func (h *Handler) AdminOnly(next echo.HandlerFunc) echo.HandlerFunc {
 func setIdentity(c echo.Context, u *models.User) {
 	c.Set(ctxUserID, u.ID)
 	c.Set(ctxUserRole, u.Role)
+	c.Set(ctxUsername, u.Username)
+}
+
+// RequestUsername returns the resolved username for a request, or "anon" when the
+// request carries no user session. Used to tag every access-log line with the user.
+func (h *Handler) RequestUsername(c echo.Context) string {
+	if v, ok := c.Get(ctxUsername).(string); ok && v != "" {
+		return v
+	}
+	return "anon"
 }
 
 // bearerToken extracts the token from an `Authorization: Bearer <token>` header.

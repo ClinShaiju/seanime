@@ -302,6 +302,25 @@ func (a *App) ResolveDirectStreamManager(id string) *directstream.Manager {
 	return a.DirectStreamManager
 }
 
+// ResolveDirectStreamManagerWithAttachment finds the DirectStream manager whose active
+// stream contains the named attachment (font). Font subresource requests from the player
+// carry no user session or ?id=, so they can't be resolved by user — but the font lives
+// in exactly one active stream. Returns nil when no active stream has it.
+func (a *App) ResolveDirectStreamManagerWithAttachment(filename string) *directstream.Manager {
+	if a.DirectStreamManager != nil && a.DirectStreamManager.HasAttachment(filename) {
+		return a.DirectStreamManager
+	}
+	var found *directstream.Manager
+	a.sessions.Range(func(_ uint, s *UserSession) bool {
+		if s != nil && s.directStream != nil && s.directStream.HasAttachment(filename) {
+			found = s.directStream
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 // SessionFor resolves the session for a user id. The admin (or a zero id / unknown
 // user) gets the App-global delegate; any other user gets a lazily-built, cached
 // per-user session.

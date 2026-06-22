@@ -29,6 +29,19 @@ func (m *Manager) ServeEchoStream() http.Handler {
 	return m.getStreamHandler()
 }
 
+// HasAttachment reports whether this manager's current stream contains the named
+// attachment (font). Used to route a font request to the manager that actually owns the
+// active stream when the request carries no user session or ?id=.
+func (m *Manager) HasAttachment(filename string) bool {
+	stream, ok := m.currentStream.Get()
+	if !ok {
+		return false
+	}
+	filename, _ = url.PathUnescape(filename)
+	_, ok = stream.GetAttachmentByName(filename)
+	return ok
+}
+
 // ServeEchoAttachments serves the attachments loaded into memory from the current stream.
 func (m *Manager) ServeEchoAttachments(c echo.Context) error {
 	// Get the current stream

@@ -69,8 +69,9 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 			return false
 		},
 		Enricher: func(c echo.Context, logger zerolog.Context) zerolog.Context {
-			// Add which file the request came from
-			return logger.Str("file", c.Path())
+			// Tag every access-log line with the requesting user (username, or "anon" when
+			// the request carries no user session) and which route it hit.
+			return logger.Str("user", h.RequestUsername(c)).Str("file", c.Path())
 		},
 	}))
 
