@@ -22,14 +22,16 @@ type UserOverrides struct {
 	Notifications *NotificationSettings `json:"notifications,omitempty"`
 	// Discord rich-presence preferences (acted on client-side).
 	Discord *DiscordSettings `json:"discord,omitempty"`
-	// Manga: default provider + progress; local source dir stays server/admin.
+	// Manga: enable + default provider + progress; local source dir stays server/admin.
+	EnableManga             bool   `json:"enableManga"`
 	MangaDefaultProvider    string `json:"mangaDefaultProvider"`
 	MangaAutoUpdateProgress bool   `json:"mangaAutoUpdateProgress"`
-	// Library: per-user playback prefs. The default playback / episode source stays
-	// admin (locked). Season-grouping lives on the per-user Theme instead.
-	AutoUpdateProgress    bool `json:"autoUpdateProgress"`
-	AutoPlayNextEpisode   bool `json:"autoPlayNextEpisode"`
-	EnableWatchContinuity bool `json:"enableWatchContinuity"`
+	// Library: per-user playback/presentation prefs. The default playback / episode
+	// source stays admin (locked). Season-grouping lives on the per-user Theme instead.
+	AutoUpdateProgress       bool `json:"autoUpdateProgress"`
+	AutoPlayNextEpisode      bool `json:"autoPlayNextEpisode"`
+	EnableWatchContinuity    bool `json:"enableWatchContinuity"`
+	DisableAnimeCardTrailers bool `json:"disableAnimeCardTrailers"`
 	// Debrid: when UseServerDebrid is false the user supplies their own provider+key
 	// (the functional wiring — streaming through the user's debrid — lands with P4).
 	UseServerDebrid    bool   `json:"useServerDebrid"`
@@ -57,9 +59,11 @@ func (o *UserOverrides) ApplyTo(s *Settings) {
 		s.Manga.AutoUpdateProgress = o.MangaAutoUpdateProgress
 	}
 	if s.Library != nil {
+		s.Library.EnableManga = o.EnableManga
 		s.Library.AutoUpdateProgress = o.AutoUpdateProgress
 		s.Library.AutoPlayNextEpisode = o.AutoPlayNextEpisode
 		s.Library.EnableWatchContinuity = o.EnableWatchContinuity
+		s.Library.DisableAnimeCardTrailers = o.DisableAnimeCardTrailers
 	}
 }
 
@@ -78,9 +82,11 @@ func ExtractUserOverrides(s *Settings) *UserOverrides {
 		o.MangaAutoUpdateProgress = s.Manga.AutoUpdateProgress
 	}
 	if s.Library != nil {
+		o.EnableManga = s.Library.EnableManga
 		o.AutoUpdateProgress = s.Library.AutoUpdateProgress
 		o.AutoPlayNextEpisode = s.Library.AutoPlayNextEpisode
 		o.EnableWatchContinuity = s.Library.EnableWatchContinuity
+		o.DisableAnimeCardTrailers = s.Library.DisableAnimeCardTrailers
 	}
 	return o
 }

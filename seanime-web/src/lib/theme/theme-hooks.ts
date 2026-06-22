@@ -125,6 +125,9 @@ export const THEME_DEFAULT_VALUES: ThemeSettings = {
     hideAnimeSpoilerTitles: true,
     hideAnimeSpoilerDescriptions: true,
     hideAnimeSpoilerSkipNextEpisode: false,
+    groupSeasons: false,
+    hideFranchiseSpinoffs: false,
+    hideFranchiseRecaps: false,
 }
 
 export type ThemeSettingsHook = {
@@ -183,6 +186,9 @@ export function useThemeSettings(): ThemeSettingsHook {
         hideAnimeSpoilerTitles: getThemeValue("hideAnimeSpoilerTitles", serverStatus?.themeSettings),
         hideAnimeSpoilerDescriptions: getThemeValue("hideAnimeSpoilerDescriptions", serverStatus?.themeSettings),
         hideAnimeSpoilerSkipNextEpisode: getThemeValue("hideAnimeSpoilerSkipNextEpisode", serverStatus?.themeSettings),
+        groupSeasons: getThemeValue("groupSeasons", serverStatus?.themeSettings),
+        hideFranchiseSpinoffs: getThemeValue("hideFranchiseSpinoffs", serverStatus?.themeSettings),
+        hideFranchiseRecaps: getThemeValue("hideFranchiseRecaps", serverStatus?.themeSettings),
     }
 }
 
