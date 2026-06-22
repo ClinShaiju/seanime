@@ -79,7 +79,16 @@ func (a *App) SetStreamOwner(userID uint) {
 // per-user session.
 func (a *App) SessionFor(userID uint) *UserSession {
 	if userID == 0 {
-		return a.adminSession()
+		// No resolved user. The admin delegate applies for local (password-less)
+		// installs, and — until RequireUserLogin is enabled — for networked installs
+		// too (so pre-login clients keep working). With the hardening on, an
+		// unauthenticated request on a password-protected server gets an anonymous,
+		// data-less session: it must log in. This is what stops a client that only
+		// knows the shared server password from inheriting admin data.
+		if a.Config.Server.Password == "" || !a.Config.Server.RequireUserLogin {
+			return a.adminSession()
+		}
+		return a.anonymousSession()
 	}
 	if admin, err := a.Database.GetAdminUser(); err == nil && admin != nil && admin.ID == userID {
 		return a.adminSession()
@@ -98,6 +107,25 @@ func (a *App) SessionFor(userID uint) *UserSession {
 // accessors read them live, so a per-call struct is always current and cheap.
 func (a *App) adminSession() *UserSession {
 	return &UserSession{app: a, IsAdmin: true, UserID: a.adminUserID()}
+}
+
+// anonymousSession is the data-less session for an unauthenticated request on a
+// networked server: empty collections (clean slate) + an unauthenticated AniList
+// platform for public browse/search only. Built once and cached.
+func (a *App) anonymousSession() *UserSession {
+	a.anonSessionOnce.Do(func() {
+		clientRef := util.NewRef[anilist.AnilistClient](anilist.NewAnilistClient("", a.AnilistCacheDir))
+		plat := anilist_platform.NewAnilistPlatform(clientRef, a.ExtensionBankRef, a.Logger, a.Database, func() {})
+		a.anonSession = &UserSession{
+			app:              a,
+			UserID:           0,
+			user:             user.NewSimulatedUser(),
+			anilistClientRef: clientRef,
+			platformRef:      util.NewRef[platform.Platform](plat),
+			linked:           false,
+		}
+	})
+	return a.anonSession
 }
 
 func (a *App) adminUserID() uint {

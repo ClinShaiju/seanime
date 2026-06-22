@@ -95,15 +95,27 @@ func (h *Handler) CurrentUserRole(c echo.Context) string {
 	return ""
 }
 
-// dataUserID returns the user id to scope per-user data (theme, playlists, progress)
-// by. It falls back to the admin when no user is resolved, so single-user / local
-// installs keep one coherent owner and per-user rows are never orphaned.
+// dataUserID returns the user id to scope per-user data (theme, playlists, progress,
+// collection) by.
+//
+// It falls back to the admin ONLY when no server password is configured — i.e. a
+// local, trusted, single-operator install, where the operator legitimately is the
+// admin and per-user rows must not be orphaned. On a networked (password-protected)
+// server, an unauthenticated request (one that passed the shared-password gate but
+// did NOT present a user session) must NOT inherit the admin's identity or data:
+// knowing the server password is not the same as being the admin. Such requests
+// resolve to 0 → an anonymous, data-less session (the client must log in).
 func (h *Handler) dataUserID(c echo.Context) uint {
 	if id := h.CurrentUserID(c); id != 0 {
 		return id
 	}
-	if admin, err := h.App.Database.GetAdminUser(); err == nil && admin != nil {
-		return admin.ID
+	// Admin fallback applies for local (password-less) installs, and — until the
+	// RequireUserLogin hardening is enabled — for networked installs too, so that
+	// pre-login clients (e.g. an old bundled Denshi web build) keep working.
+	if h.App.Config.Server.Password == "" || !h.App.Config.Server.RequireUserLogin {
+		if admin, err := h.App.Database.GetAdminUser(); err == nil && admin != nil {
+			return admin.ID
+		}
 	}
 	return 0
 }

@@ -24,6 +24,12 @@ type Config struct {
 		Systray         bool
 		DoHUrl          string
 		Password        string
+		// RequireUserLogin hardens the multi-user boundary: when true (and a Password
+		// is set), a request that passed the server-password gate but presents no user
+		// session gets an anonymous, data-less session instead of falling back to the
+		// admin. Defaults false to keep pre-login clients (e.g. an old bundled Denshi
+		// web build) working; flip to true once every client can present a user login.
+		RequireUserLogin bool
 		SecureMode      string   // empty = current baseline defaults, "hardened" opts into a stricter passwordless boundary, "lax" disables baseline request-boundary restrictions, "strict" includes hardened plus extra restrictions
 		AccessAllowlist []string // Additional remote hosts/origins allowed through the passwordless API/events boundary
 		TrustedProxies  []string // Explicit reverse proxies allowed to supply forwarded client IP/host/proto headers

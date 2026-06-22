@@ -162,6 +162,8 @@ type (
 		// collection). The admin uses a thin delegate over the App globals and is
 		// not stored here. See session.go.
 		sessions             *result.Map[uint, *UserSession]
+		anonSession          *UserSession
+		anonSessionOnce      sync.Once
 		previousVersion      string
 		moduleMu             sync.Mutex
 		ServerReady          bool
