@@ -53,6 +53,24 @@ func (h *Handler) IdentityMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+// errStreamingRequiresUser is returned when an unauthenticated request (knows the
+// server password but presents no user session) tries to start playback/streaming.
+var errStreamingRequiresUser = errors.New("streaming requires logging in")
+
+// guardStreamingUser rejects anonymous requests from STARTING playback/streaming —
+// anon users (server-password only, no session) may browse but not stream. On a
+// local password-less install dataUserID resolves to the admin, so this only blocks
+// the networked-anon case. Apply at the top of each stream/playback start handler.
+// (Serve endpoints are NOT guarded by user — the media player presents a stream id +
+// HMAC, not a session; an anon can't obtain a valid stream id without first starting,
+// which this blocks.)
+func (h *Handler) guardStreamingUser(c echo.Context) error {
+	if h.dataUserID(c) == 0 {
+		return h.RespondWithStatusError(c, http.StatusForbidden, errStreamingRequiresUser)
+	}
+	return nil
+}
+
 // AdminOnly is per-route middleware that rejects non-admin requests with a 403. Apply
 // it to server-configuration endpoints so configuring the server always requires an
 // authenticated admin.

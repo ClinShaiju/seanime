@@ -127,6 +127,9 @@ func (h *Handler) HandleGetTorrentstreamTorrentFilePreviews(c echo.Context) erro
 //	@returns bool
 //	@route /api/v1/torrentstream/start [POST]
 func (h *Handler) HandleTorrentstreamStartStream(c echo.Context) error {
+	if err := h.guardStreamingUser(c); err != nil {
+		return err
+	}
 
 	type body struct {
 		MediaId           int                              `json:"mediaId"`

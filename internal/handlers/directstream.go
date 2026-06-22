@@ -22,6 +22,9 @@ func (h *Handler) HandleDirectstreamPlayLocalFile(c echo.Context) error {
 	if err := h.guardMediaConsumption(c); err != nil {
 		return err
 	}
+	if err := h.guardStreamingUser(c); err != nil {
+		return err
+	}
 
 	type body struct {
 		Path     string `json:"path"`     // The path of the file.
