@@ -165,6 +165,15 @@ function WebsocketManagement() {
      }, [isConnected]) */
 
     useEffectOnce(() => {
+        // Status-only screens (splash / crash) load the full SPA — including this provider —
+        // but must NOT open a /events connection. In Denshi the hidden crash window persists
+        // for the whole app lifetime, so without this guard it holds a second, redundant WS
+        // connection (the "two denshi connections" seen server-side).
+        if (typeof window !== "undefined" && window.location.pathname.startsWith("/splashscreen")) {
+            logger("WebsocketProvider").info("Splashscreen route — skipping websocket connection")
+            return
+        }
+
         function initClientIdentity() {
             const clientId = clientIdRef.current || getClientId()
             const clientIdProof = clientIdProofRef.current || getClientIdProof()
