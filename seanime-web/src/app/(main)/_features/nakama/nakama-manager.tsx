@@ -1,19 +1,14 @@
 import {
     Nakama_NakamaStatus,
-    Nakama_WatchPartySession,
-    Nakama_WatchPartySessionSettings,
     Nakama_WatchRoom,
     VideoCore_OnlinestreamParams,
     VideoCore_ServerEvent,
 } from "@/api/generated/types"
 import {
     useNakamaCreateAndJoinRoom,
-    useNakamaCreateWatchParty,
     useNakamaCreateWatchRoom,
     useNakamaDisconnectFromRoom,
-    useNakamaJoinWatchParty,
     useNakamaJoinWatchRoom,
-    useNakamaLeaveWatchParty,
     useNakamaLeaveWatchRoom,
     useNakamaReconnectToHost,
     useNakamaRemoveStaleConnections,
@@ -108,24 +103,13 @@ export function NakamaManager() {
     const ts = useThemeSettings()
     const serverStatus = useServerStatus()
 
-    const watchPartySession = React.useMemo(() => nakamaStatus?.currentWatchPartySession, [nakamaStatus])
-
     const roomInfo = nakamaStatus?.currentRoom
 
     const { mutate: reconnectToHost, isPending: isReconnecting } = useNakamaReconnectToHost()
     const { mutate: removeStaleConnections, isPending: isCleaningUp } = useNakamaRemoveStaleConnections()
-    const { mutate: createWatchParty, isPending: isCreatingWatchParty } = useNakamaCreateWatchParty()
-    const { mutate: joinWatchParty, isPending: isJoiningWatchParty } = useNakamaJoinWatchParty()
-    const { mutate: leaveWatchParty, isPending: isLeavingWatchParty } = useNakamaLeaveWatchParty()
     const { mutate: createAndJoinRoom, isPending: isCreatingRoom } = useNakamaCreateAndJoinRoom()
     const { mutate: disconnectFromRoom, isPending: isDisconnectingFromRoom } = useNakamaDisconnectFromRoom()
     const { data: roomsAvailable } = useNakamaRoomsAvailable()
-
-    // Watch party settings for creating a new session
-    const [watchPartySettings, setWatchPartySettings] = React.useState<Nakama_WatchPartySessionSettings>({
-        syncThreshold: 3.0,
-        maxBufferWaitTime: 10,
-    })
 
     const { electronPlaybackMethod } = useCurrentDevicePlaybackSettings()
 
@@ -189,38 +173,6 @@ export function NakamaManager() {
             },
         })
     }, [removeStaleConnections, refetchStatus])
-
-    const handleCreateWatchParty = React.useCallback(() => {
-        createWatchParty({ settings: watchPartySettings }, {
-            onSuccess: () => {
-                toast.success("Watch party created")
-                refetchStatus()
-            },
-            onError: (error) => {
-                toast.error(`Failed to create watch party: ${error.message}`)
-            },
-        })
-    }, [createWatchParty, watchPartySettings, refetchStatus])
-
-    const handleJoinWatchParty = React.useCallback(() => {
-        joinWatchParty({
-            clientId: clientId || "",
-        }, {
-            onSuccess: () => {
-                toast.info("Joining watch party")
-                refetchStatus()
-            },
-        })
-    }, [joinWatchParty, refetchStatus])
-
-    const handleLeaveWatchParty = React.useCallback(() => {
-        leaveWatchParty(undefined, {
-            onSuccess: () => {
-                toast.info("Leaving watch party")
-                refetchStatus()
-            },
-        })
-    }, [leaveWatchParty, refetchStatus])
 
     const handleCreateRoom = React.useCallback(() => {
         createAndJoinRoom(undefined, {
@@ -501,12 +453,11 @@ export function NakamaManager() {
                                 </div>
                             )}
 
-                            {nakamaStatus.connectionMode === "direct" && <>
-                                <h4>Direct connections ({nakamaStatus?.connectedPeers?.length ?? 0})</h4>
+                            {/* External (separate-instance) peers — only shown when some are connected. */}
+                            {nakamaStatus.connectionMode === "direct" && !!nakamaStatus?.connectedPeers?.length && <>
+                                <h4>External connections ({nakamaStatus.connectedPeers.length})</h4>
                                 <div className="p-4 border rounded-lg bg-gray-950">
-                                    {!nakamaStatus?.connectedPeers?.length &&
-                                        <p className="text-center text-sm text-[--muted]">No connected peers</p>}
-                                    {nakamaStatus?.connectedPeers?.map((peer, index) => (
+                                    {nakamaStatus.connectedPeers.map((peer, index) => (
                                         <div key={index} className="flex items-center justify-between py-1">
                                             <span className="font-medium">{peer}</span>
                                         </div>
@@ -539,46 +490,7 @@ export function NakamaManager() {
                         </>
                     )}
 
-                    {/* Watch Party Content */}
-                    {(() => {
-                        const isHost = nakamaStatus?.isHost || false
-                        const isConnectedToHost = nakamaStatus?.isConnectedToHost || false
-                        const currentPeerID = nakamaStatus?.hostConnectionStatus?.peerId
-
-                        // Check if user is in the participant list by comparing peer ID
-                        const isUserInSession = watchPartySession && (
-                            isHost ||
-                            (currentPeerID && watchPartySession.participants && currentPeerID in watchPartySession.participants)
-                        )
-
-                        // Show session view if there's a session AND user is in it
-                        if (watchPartySession && isUserInSession) {
-                            return (
-                                <WatchPartySessionView
-                                    session={watchPartySession}
-                                    isHost={isHost}
-                                    onLeave={handleLeaveWatchParty}
-                                    isLeaving={isLeavingWatchParty}
-                                    isRoom={nakamaStatus.connectionMode === "rooms"}
-                                />
-                            )
-                        }
-
-                        // Otherwise show creation/join options
-                        return (
-                            <WatchPartyCreation
-                                isHost={isHost}
-                                isConnectedToHost={isConnectedToHost}
-                                hasActiveSession={!!watchPartySession}
-                                settings={watchPartySettings}
-                                onSettingsChange={setWatchPartySettings}
-                                onCreateWatchParty={handleCreateWatchParty}
-                                onJoinWatchParty={handleJoinWatchParty}
-                                isCreating={isCreatingWatchParty}
-                                isJoining={isJoiningWatchParty}
-                            />
-                        )
-                    })()}
+                    {/* Watch Party (legacy peer/host) removed — Watch Rooms (top) replaces it. */}
                 </>
             )}
 
@@ -594,290 +506,6 @@ export function NakamaManager() {
 
         <ConfirmationDialog {...confirmRoom} />
     </>
-}
-
-interface WatchPartyCreationProps {
-    isHost: boolean
-    isConnectedToHost: boolean
-    hasActiveSession: boolean
-    settings: Nakama_WatchPartySessionSettings
-    onSettingsChange: (settings: Nakama_WatchPartySessionSettings) => void
-    onCreateWatchParty: () => void
-    onJoinWatchParty: () => void
-    isCreating: boolean
-    isJoining: boolean
-}
-
-function WatchPartyCreation({
-    isHost,
-    isConnectedToHost,
-    hasActiveSession,
-    settings,
-    onSettingsChange,
-    onCreateWatchParty,
-    onJoinWatchParty,
-    isCreating,
-    isJoining,
-}: WatchPartyCreationProps) {
-    return (
-        <div className="space-y-4">
-            <h4 className="flex items-center gap-2"><LuPopcorn className="size-6" /> Watch Party</h4>
-            {isHost && (
-                <div className="p-4 border rounded-lg bg-gray-950">
-                    <div className="space-y-4">
-                        {/* <div className="space-y-3">
-                         <div className="flex items-center justify-between">
-                         <label className="text-sm font-medium">Allow participant control</label>
-                         <Switch
-                         value={settings.allowParticipantControl}
-                         onValueChange={(checked: boolean) =>
-                         onSettingsChange({ ...settings, allowParticipantControl: checked })
-                         }
-                         />
-                         </div>
-
-                         <div className="space-y-2">
-                         <label className="text-sm font-medium">Sync threshold (seconds)</label>
-                         <NumberInput
-                         value={settings.syncThreshold}
-                         onValueChange={(value) =>
-                         onSettingsChange({ ...settings, syncThreshold: value || 3.0 })
-                         }
-                         min={1}
-                         max={10}
-                         step={0.5}
-                         />
-                         <p className="text-xs text-[--muted]">How far out of sync before forcing synchronization</p>
-                         </div>
-
-                         <div className="space-y-2">
-                         <label className="text-sm font-medium">Max buffer wait time (seconds)</label>
-                         <NumberInput
-                         value={settings.maxBufferWaitTime}
-                         onValueChange={(value) =>
-                         onSettingsChange({ ...settings, maxBufferWaitTime: value || 10 })
-                         }
-                         min={5}
-                         max={60}
-                         />
-                         <p className="text-xs text-[--muted]">Maximum time to wait for peers to buffer</p>
-                         </div>
-                         </div> */}
-
-                        <Button
-                            onClick={onCreateWatchParty}
-                            disabled={isCreating}
-                            className="w-full"
-                            intent="primary"
-                            leftIcon={<MdAdd />}
-                        >
-                            {isCreating ? "Creating..." : "Create Watch Party"}
-                        </Button>
-                    </div>
-                </div>
-            )}
-
-            {isConnectedToHost && !isHost && hasActiveSession && (
-                <div className="p-4 border rounded-lg bg-gray-950">
-                    <div className="space-y-4">
-                        <p className="text-sm text-[--muted]">
-                            There's an active watch party! Join to watch content together in sync.
-                        </p>
-                        <Button
-                            onClick={onJoinWatchParty}
-                            disabled={isJoining}
-                            className="w-full"
-                            intent="primary"
-                            leftIcon={<MdPlayArrow />}
-                        >
-                            {isJoining ? "Joining..." : "Join Watch Party"}
-                        </Button>
-                    </div>
-                </div>
-            )}
-
-            {!isHost && !isConnectedToHost && (
-                <div className="text-center py-8">
-                    <p className="text-[--muted]">Connect to a host to join a watch party</p>
-                </div>
-            )}
-
-            {!isHost && isConnectedToHost && !hasActiveSession && (
-                <div className="text-center py-8">
-                    <p className="text-[--muted]">No active watch party</p>
-                </div>
-            )}
-        </div>
-    )
-}
-
-interface WatchPartySessionViewProps {
-    session: Nakama_WatchPartySession
-    isHost: boolean
-    onLeave: () => void
-    isLeaving: boolean
-    isRoom: boolean
-}
-
-function WatchPartySessionView({ session, isHost, onLeave, isLeaving, isRoom }: WatchPartySessionViewProps) {
-    const { sendMessage } = useWebsocketSender()
-    const nakamaStatus = useNakamaStatus()
-    const participants = Object.values(session.participants || {})
-    const participantCount = participants.length
-    const serverStatus = useServerStatus()
-
-    const [enablingRelayMode, setEnablingRelayMode] = React.useState(false)
-
-    // Identify current user - either "host" if hosting, or the peer ID if connected as peer
-    const currentUserId = isHost ? "host" : nakamaStatus?.hostConnectionStatus?.peerId
-
-    function handleEnableRelayMode(peerId: string) {
-        sendMessage({
-            type: WSEvents.NAKAMA_WATCH_PARTY_ENABLE_RELAY_MODE,
-            payload: { peerId },
-        })
-    }
-
-    return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
-                <h4 className="flex items-center gap-2"><LuPopcorn className="size-6" /> Watch Party</h4>
-                <div className="flex items-center gap-2">
-                    {/*Enable relay mode*/}
-                    {isHost && !session.isRelayMode && !isRoom && (
-                        <Tooltip
-                            trigger={<IconButton
-                                size="sm"
-                                intent={!enablingRelayMode ? "primary-subtle" : "primary"}
-                                icon={<FaBroadcastTower />}
-                                onClick={() => setEnablingRelayMode(p => !p)}
-                                className={cn(enablingRelayMode && "animate-pulse")}
-                            />}
-                        >
-                            Enable relay mode
-                        </Tooltip>
-                    )}
-                    <Button
-                        onClick={onLeave}
-                        disabled={isLeaving}
-                        size="sm"
-                        intent="alert-basic"
-                        // leftIcon={isHost ? <MdStop /> : <MdExitToApp />}
-                    >
-                        {isLeaving ? "Leaving..." : isHost ? "Stop" : "Leave"}
-                    </Button>
-                </div>
-            </div>
-
-            {/* <SettingsCard title="Session Details">
-             <div className="space-y-3">
-             <div className="flex items-center justify-between">
-             <span className="text-sm text-[--muted]">Session ID:</span>
-             <span className="font-mono text-xs">{session.id}</span>
-             </div>
-
-             <div className="flex items-center justify-between">
-             <span className="text-sm text-[--muted]">Created:</span>
-             <span className="text-sm">{session.createdAt ? new Date(session.createdAt).toLocaleString() : "Unknown"}</span>
-             </div>
-
-             {session.currentMediaInfo && (
-             <>
-             <div className="flex items-center justify-between">
-             <span className="text-sm text-[--muted]">Current Media:</span>
-             <span className="text-sm">Episode {session.currentMediaInfo.episodeNumber}</span>
-             </div>
-             <div className="flex items-center justify-between">
-             <span className="text-sm text-[--muted]">Stream Type:</span>
-             <Badge className="">
-             {session.currentMediaInfo.streamType}
-             </Badge>
-             </div>
-             </>
-             )}
-             </div>
-             </SettingsCard> */}
-
-            <h5>Participants ({participantCount})</h5>
-            <div className="p-4 border rounded-lg bg-gray-950">
-                <div className="space-y-0">
-                    {participants.map((participant) => {
-                        const isCurrentUser = participant.id === currentUserId
-                        return (
-                            <div key={participant.id} className="flex items-center justify-between py-1">
-                                <div className="flex items-center gap-2">
-                                    <span className="font-medium text-sm tracking-wide">
-                                        {participant.username}
-                                        {isCurrentUser && <span className="text-[--muted] font-normal"> (me)</span>}
-                                    </span>
-                                    {session.isRelayMode && participant.isHost && (
-                                        <Badge intent="unstyled" className="text-xs" leftIcon={<FaBroadcastTower />}>Relay</Badge>
-                                    )}
-                                    {participant.isHost && (
-                                        <Badge className="text-xs">Host</Badge>
-                                    )}
-                                    {participant.isRelayOrigin && (
-                                        <Badge intent="warning" className="text-xs">Origin</Badge>
-                                    )}
-                                    {enablingRelayMode && !participant.isHost && !participant.isRelayOrigin && !session.isRelayMode && (
-                                        <Button
-                                            size="sm" intent="white" leftIcon={<HiOutlinePlay />}
-                                            onClick={() => handleEnableRelayMode(participant.id)}
-                                        >Promote to origin</Button>
-                                    )}
-                                </div>
-                                <div className="flex items-center gap-2 text-xs text-[--muted]">
-                                    {!participant.isHost && participant.bufferHealth !== undefined && (
-                                        <Tooltip
-                                            trigger={<div className="flex items-center gap-1">
-                                                <span className="text-xs">Buffer</span>
-                                                <div className="w-8 h-1 bg-gray-300 rounded-full overflow-hidden">
-                                                    <div
-                                                        className="h-full bg-green-500 transition-all duration-300"
-                                                        style={{ width: `${Math.max(0, Math.min(100, participant.bufferHealth * 100))}%` }}
-                                                    />
-                                                </div>
-                                                <span className="text-xs">{Math.round(participant.bufferHealth * 100)}%</span>
-                                            </div>}
-                                        >
-                                            Synchronization buffer health
-                                        </Tooltip>
-                                    )}
-                                    {participant.latency > 0 && (
-                                        <span>{participant.latency}ms</span>
-                                    )}
-                                    {participant.isBuffering ? (
-                                        <Badge intent="alert-solid" className="text-xs">
-                                            Buffering
-                                        </Badge>
-                                    ) : null}
-                                </div>
-                            </div>
-                        )
-                    })}
-                </div>
-            </div>
-
-            {/* <SettingsCard title="Settings">
-             <div className="space-y-2">
-             <div className="flex items-center justify-between">
-             <span className="text-sm text-[--muted]">Participant Control:</span>
-             <span className="text-sm">
-             {session.settings?.allowParticipantControl ? "Enabled" : "Disabled"}
-             </span>
-             </div>
-             <div className="flex items-center justify-between">
-             <span className="text-sm text-[--muted]">Sync Threshold:</span>
-             <span className="text-sm">{session.settings?.syncThreshold}s</span>
-             </div>
-             <div className="flex items-center justify-between">
-             <span className="text-sm text-[--muted]">Max Buffer Wait:</span>
-             <span className="text-sm">{session.settings?.maxBufferWaitTime}s</span>
-             </div>
-             </div>
-             </SettingsCard> */}
-        </div>
-    )
 }
 
 // WatchRoomsSection renders the same-instance watch rooms: discovery cards + create/join,
