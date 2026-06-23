@@ -63,7 +63,20 @@ func (a *App) initModulesOnce() {
 	if admin, err := a.Database.GetAdminUser(); err == nil && admin != nil {
 		adminID = admin.ID
 	}
-	a.adminEvents = events.NewScopedWSEventManager(a.WSEventManager, adminID)
+	// On a networked (password) server the admin has their OWN per-user session plane like
+	// every user (buildUserSession leaves IsAdmin=false, so SessionFor returns per-user
+	// modules scoped to the admin's id). If the global plane ALSO emitted to the admin's real
+	// id, the admin's client would receive duplicate/contending stream events from both planes
+	// and playback would never start — while regular users, whose id the global plane never
+	// claims, work fine. So scope the global event plane to the system sentinel that matches no
+	// real connection (same reasoning as the global VideoCore below). Local/password-less
+	// installs keep using the admin id: there the admin IS the global plane (IsAdmin sessions
+	// return the global modules) and there is no per-user duplicate.
+	adminEventsUserID := adminID
+	if a.Config.Server.Password != "" {
+		adminEventsUserID = systemUserID
+	}
+	a.adminEvents = events.NewScopedWSEventManager(a.WSEventManager, adminEventsUserID)
 
 	// Global VideoCore scope. On a local/password-less install the admin uses the global
 	// modules directly, so the global VideoCore claims the admin's id and also accepts
