@@ -14,6 +14,7 @@ import React from "react"
 import { toast } from "sonner"
 import { useWebsocketMessageListener, useWebsocketSender } from "../../_hooks/handle-websockets"
 import { useSkipData } from "../video-core/_lib/aniskip"
+import { useDebridReconnectResume } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-reconnect"
 import { nativePlayer_stateAtom } from "./native-player.atoms"
 
 const log = logger("NATIVE PLAYER")
@@ -25,6 +26,9 @@ export function NativePlayer() {
     const qc = useQueryClient()
     const clientId = useAtomValue(clientIdAtom)
     const { sendMessage } = useWebsocketSender()
+
+    // Resume the debrid stream automatically if the server restarts mid-playback.
+    useDebridReconnectResume()
 
     const videoElement = useAtomValue(vc_videoElement)
     const [state, setState] = useAtom(nativePlayer_stateAtom)

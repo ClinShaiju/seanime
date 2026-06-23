@@ -1,3 +1,4 @@
+import { DebridStartStream_Variables } from "@/api/generated/endpoint.types"
 import { HibikeTorrent_AnimeTorrent, HibikeTorrent_BatchEpisodeFiles } from "@/api/generated/types"
 import { useDebridStartStream } from "@/api/hooks/debrid.hooks"
 import {
@@ -6,6 +7,7 @@ import {
     useCurrentDevicePlaybackSettings,
     useExternalPlayerLink,
 } from "@/app/(main)/_atoms/playback.atoms"
+import { lastDebridStreamStartAtom } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-reconnect"
 import { __debridstream_stateAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-overlay"
 import { __debridStream_currentSessionAutoSelectAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-page"
 import { ForcePlaybackMethod, useForcePlaybackMethod } from "@/app/(main)/entry/_lib/handle-play-media"
@@ -45,6 +47,7 @@ export function useHandleStartDebridStream() {
     const clientId = useAtomValue(clientIdAtom)
 
     const setCurrentSessionAutoSelect = useSetAtom(__debridStream_currentSessionAutoSelectAtom)
+    const setLastDebridStreamStart = useSetAtom(lastDebridStreamStartAtom)
 
     const [state, setState] = useAtom(__debridstream_stateAtom)
 
@@ -76,7 +79,7 @@ export function useHandleStartDebridStream() {
         const forcePlaybackMethod = getForcePlaybackMethod()
         resetForcePlaybackMethod()
         logger("DEBRID STREAM SELECTION").info("Starting debrid stream", params, getPlaybackType(forcePlaybackMethod))
-        mutate({
+        const vars: DebridStartStream_Variables = {
             mediaId: params.mediaId,
             episodeNumber: params.episodeNumber,
             torrent: params.torrent,
@@ -87,7 +90,10 @@ export function useHandleStartDebridStream() {
             autoSelect: false,
             batchEpisodeFiles: params.batchEpisodeFiles,
             preload: params.preload,
-        }, {
+        }
+        // Remember the active stream so it can be re-issued if the server restarts mid-play.
+        if (!params.preload) setLastDebridStreamStart(vars)
+        mutate(vars, {
             onSuccess: () => {
             },
             onError: () => {
@@ -102,7 +108,7 @@ export function useHandleStartDebridStream() {
         const forcePlaybackMethod = getForcePlaybackMethod()
         resetForcePlaybackMethod()
         logger("DEBRID STREAM SELECTION").info("Starting debrid stream (auto select)", params, getPlaybackType(forcePlaybackMethod))
-        mutate({
+        const vars: DebridStartStream_Variables = {
             mediaId: params.mediaId,
             episodeNumber: params.episodeNumber,
             torrent: undefined,
@@ -112,7 +118,10 @@ export function useHandleStartDebridStream() {
             clientId: clientId || "",
             autoSelect: true,
             preload: params.preload,
-        }, {
+        }
+        // Remember the active stream so it can be re-issued if the server restarts mid-play.
+        if (!params.preload) setLastDebridStreamStart(vars)
+        mutate(vars, {
             onSuccess: () => {
             },
             onError: () => {
