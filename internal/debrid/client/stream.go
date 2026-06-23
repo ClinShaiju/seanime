@@ -46,7 +46,8 @@ type (
 		previousStreamOptions mo.Option[*StartStreamOptions]
 	}
 
-	// preloadedDebridStream holds a fully-resolved debrid stream URL for a future episode.
+	// preloadedDebridStream holds a resolved debrid SELECTION (torrent + added torrentItemId)
+	// plus its last-resolved stream URL for a future episode.
 	preloadedDebridStream struct {
 		opts          *StartStreamOptions
 		streamUrl     string
@@ -55,8 +56,10 @@ type (
 		media         *anilist.BaseAnime
 		torrent       *hibiketorrent.AnimeTorrent
 		torrentItemId string
-		resolvedAt    time.Time // for TTL eviction; debrid URLs expire
-		priority      bool      // protected from eviction over speculative hover prewarms
+		resolvedAt    time.Time     // when the SELECTION was resolved (governs re-search via ttl)
+		ttl           time.Duration // selection lifetime: 24h finished show, 1h currently releasing
+		urlResolvedAt time.Time     // when streamUrl was last (re)resolved — debrid URLs expire sooner
+		priority      bool          // protected from eviction (continue-watching set)
 	}
 
 	StreamPlaybackType string
@@ -122,14 +125,29 @@ func NewStreamManager(repository *Repository) *StreamManager {
 }
 
 const (
-	// preloadTTL bounds how long a resolved stream URL is trusted before we re-resolve.
-	preloadTTL = 15 * time.Minute
-	// maxSpeculativePreloads caps ONLY the speculative browse/search/discover hover prewarms.
-	// The continue-watching (priority) entries — the set the user actually clicks — are uncapped:
-	// they're bounded at the source (3 shows + next-ep) and self-expire via TTL, so the speculative
-	// hover firehose can never evict them.
+	// Selection lifetime — how long a preloaded SELECTION (torrent + added torrentItemId) is
+	// kept before re-searching/re-adding (which costs a TorBox createtorrent, limited to
+	// 60/hour). A torrent doesn't die in a day; a currently-releasing show is re-checked
+	// hourly in case a better release appears.
+	preloadSelectionTTL          = 24 * time.Hour
+	preloadSelectionTTLReleasing = 1 * time.Hour
+	// urlRefreshTTL bounds how long a resolved debrid stream URL is trusted. The URL (a CDN
+	// token) expires far sooner than the torrent, so on consume we re-resolve it from the
+	// already-added torrentItemId when stale — this is cheap and does NOT call createtorrent.
+	urlRefreshTTL = 15 * time.Minute
+	// maxSpeculativePreloads caps non-priority preloads. With the hover prewarm dropped these
+	// are rare; the continue-watching (priority) set is uncapped (bounded at the source).
 	maxSpeculativePreloads = 8
 )
+
+// selectionTTLForMedia returns the selection lifetime for a media: short (hourly re-check)
+// for a currently-releasing show so a better release can be picked up, long (a day) otherwise.
+func selectionTTLForMedia(media *anilist.BaseAnime) time.Duration {
+	if media != nil && media.GetStatus() != nil && *media.GetStatus() == anilist.MediaStatusReleasing {
+		return preloadSelectionTTLReleasing
+	}
+	return preloadSelectionTTL
+}
 
 // preloadKey identifies a preload slot by the episode it targets.
 func preloadKey(opts *StartStreamOptions) string {
@@ -196,7 +214,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			s.lastConsumedKey = ""
 		}
 		cached, ok := s.preloads[key]
-		fresh := ok && time.Since(cached.resolvedAt) <= preloadTTL
+		fresh := ok && time.Since(cached.resolvedAt) <= cached.ttl
 		hit := fresh && debridStreamOptionsMatch(opts, cached.opts)
 		if ok && !fresh {
 			delete(s.preloads, key) // stale (expired) → drop. A fresh-but-intent-mismatch entry
@@ -833,7 +851,7 @@ func (s *StreamManager) clearAllPreloadsLocked() {
 func (s *StreamManager) evictIfNeededLocked(priority bool) {
 	// Drop any TTL-expired entries first (either class) so the map can't grow unbounded over a binge.
 	for k, v := range s.preloads {
-		if time.Since(v.resolvedAt) > preloadTTL {
+		if time.Since(v.resolvedAt) > v.ttl {
 			delete(s.preloads, k)
 		}
 	}
@@ -879,7 +897,7 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 
 	s.preloadMu.Lock()
 	// Skip if already resolved-fresh, or a resolve is already in flight for this episode.
-	if existing, ok := s.preloads[key]; ok && time.Since(existing.resolvedAt) <= preloadTTL {
+	if existing, ok := s.preloads[key]; ok && time.Since(existing.resolvedAt) <= existing.ttl {
 		// Upgrade a speculative entry to priority if a continue-watching prewarm arrives for it,
 		// so an earlier hover/entry-mount preload of the same episode can't leave it evictable.
 		if opts.Priority && !existing.priority {
@@ -987,6 +1005,7 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 		// Only store if this preload wasn't superseded or cancelled in the meantime.
 		if preloadCtx.Err() == nil {
 			s.evictIfNeededLocked(opts.Priority)
+			now := time.Now()
 			s.preloads[key] = &preloadedDebridStream{
 				opts:          opts,
 				streamUrl:     streamUrl,
@@ -995,7 +1014,9 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 				media:         media.ToBaseAnime(),
 				torrent:       selectedTorrent,
 				torrentItemId: torrentItemId,
-				resolvedAt:    time.Now(),
+				resolvedAt:    now,
+				ttl:           selectionTTLForMedia(media.ToBaseAnime()),
+				urlResolvedAt: now,
 				priority:      opts.Priority,
 			}
 			s.repository.logger.Info().Str("torrent", selectedTorrent.Name).Msg("debridstream: Preloaded stream ready")
@@ -1056,8 +1077,37 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	streamCtx, cancelCtx := context.WithCancel(context.Background())
 	s.downloadCtxCancelFunc = cancelCtx
 
-	// Allow a hook to rewrite the stream URL / media (mirrors the normal resolve path).
 	streamUrl := cached.streamUrl
+	// Debrid stream URLs (CDN tokens) expire far sooner than the torrent. If this cached URL
+	// is stale, re-resolve it from the already-added torrentItemId — cheap, and crucially it
+	// does NOT call createtorrent (the 60/hour-limited endpoint), so the SELECTION stays cached
+	// for a day while the URL is kept valid.
+	if cached.torrentItemId != "" && time.Since(cached.urlResolvedAt) > urlRefreshTTL {
+		if provider, perr := s.repository.GetProvider(); perr == nil {
+			itemCh := make(chan debrid.TorrentItem, 1)
+			go func() {
+				for range itemCh { //nolint:revive
+				}
+			}()
+			freshUrl, rerr := provider.GetTorrentStreamUrl(streamCtx, debrid.StreamTorrentOptions{
+				ID:     cached.torrentItemId,
+				FileId: cached.fileId,
+			}, itemCh)
+			close(itemCh)
+			if rerr == nil && freshUrl != "" {
+				streamUrl = freshUrl
+				s.preloadMu.Lock()
+				cached.streamUrl = freshUrl
+				cached.urlResolvedAt = time.Now()
+				s.preloadMu.Unlock()
+				s.repository.logger.Debug().Msg("debridstream: Refreshed expired preloaded URL (no createtorrent)")
+			} else if rerr != nil {
+				s.repository.logger.Warn().Err(rerr).Msg("debridstream: Could not refresh preloaded URL; using cached")
+			}
+		}
+	}
+
+	// Allow a hook to rewrite the stream URL / media (mirrors the normal resolve path).
 	event := &DebridSendStreamToMediaPlayerEvent{
 		WindowTitle:  "",
 		StreamURL:    streamUrl,

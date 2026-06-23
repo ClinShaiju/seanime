@@ -105,13 +105,13 @@ export function DebridStreamPage(props: DebridStreamPageProps) {
         prewarmDebrid({ mediaId: entry.mediaId, episodeNumber: next.episodeNumber, aniDBEpisode: next.aniDBEpisode })
     }, [autoSelect, entry.mediaId, entry.nextEpisode?.episodeNumber, entry.nextEpisode?.aniDBEpisode])
 
-    // Intent-based prewarm: hovering an episode resolves its stream ahead of a click (debounced so
-    // only the episode you settle on is prewarmed; the hook de-dupes). Auto-select only — a manual
-    // torrent pick can't be preloaded.
-    const handleEpisodeHover = React.useCallback((episode: Anime_Episode) => {
-        if (!autoSelect || !episode?.aniDBEpisode) return
-        prewarmDebrid({ mediaId: entry.mediaId, episodeNumber: episode.episodeNumber, aniDBEpisode: episode.aniDBEpisode }, { debounceMs: 700 })
-    }, [autoSelect, entry.mediaId, prewarmDebrid])
+    // Hover prewarm DROPPED: every hovered card resolved a stream, which adds a NEW torrent to
+    // the debrid service — and TorBox's createtorrent endpoint is only 60/hour, so browsing blew
+    // the rate limit (429). The next-episode prewarm (above) + the server-side continue-watching
+    // prewarm remain. Kept as a no-op so the episode-list hover wiring stays intact.
+    const handleEpisodeHover = React.useCallback((_episode: Anime_Episode) => {
+        // intentionally no-op
+    }, [])
 
     const { forcePlaybackMethodFn } = useForcePlaybackMethod()
 
