@@ -200,10 +200,10 @@ func (a *App) buildPrewarmOptsForSession(s *UserSession) []*debrid_client.StartS
 			// Priority: this is the continue-watching next-up set the user actually clicks — it must
 			// survive the speculative browse/search/discover hover firehose (uncapped, not evicted).
 			Priority: true,
-			// Also pre-parse metadata for continue-watching targets so launching one is fully
-			// instant (URL + metadata + content-type), not just instant torrent selection. The
-			// metadata parse downloads fonts to the SERVER (VPS↔CDN, fast) — not the client.
-			PrewarmMetadata: true,
+			// URL-only prewarm — do NOT pre-parse MKV metadata. With per-user prewarm (admin +
+			// every active session × N shows) the metadata/font downloads bursting the debrid CDN
+			// caused HTTP 429 rate-limiting. Metadata is parsed at play time instead.
+			PrewarmMetadata: false,
 		})
 	}
 	return opts

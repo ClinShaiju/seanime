@@ -425,11 +425,13 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		PlaybackType:      b.PlaybackType,
 		AutoSelect:        b.AutoSelect,
 		BatchEpisodeFiles: b.BatchEpisodeFiles,
-		Preload:           b.Preload,
-		// Client-initiated preloads (next-episode / hover / entry) are user-intent, so also
-		// pre-parse MKV metadata. The server-side continue-watching prewarm goes through
-		// PrewarmStreams (not this handler) and stays URL-only — no speculative font downloads.
-		PrewarmMetadata: b.Preload,
+		Preload: b.Preload,
+		// Preloads resolve and cache the stream URL (instant torrent selection) but do NOT
+		// pre-parse MKV metadata: that downloads fonts/metadata from the debrid CDN, and the
+		// hover/entry/next-episode prewarm firing it on every card was bursting the CDN into
+		// HTTP 429 rate-limiting (which then breaks real playback). Metadata is parsed at play
+		// time instead (~2-3s once), which is the acceptable trade for not getting rate-limited.
+		PrewarmMetadata: false,
 	}
 
 	if b.Preload {

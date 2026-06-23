@@ -49,6 +49,9 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 		"/api/v1/torrent-client/list",
 		"/api/v1/proxy",
 		"/api/v1/directstream/stream",
+		// High-frequency readiness/health poll (clients poll it on a timer, including an
+		// unauthenticated background poll) — logging it just spams the access log.
+		"/api/v1/status",
 	}
 
 	// Logging middleware
