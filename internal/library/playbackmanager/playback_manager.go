@@ -18,6 +18,7 @@ import (
 	"seanime/internal/util/result"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -60,6 +61,9 @@ type (
 		mu                         sync.Mutex
 		eventMu                    sync.RWMutex
 		cancel                     context.CancelFunc
+		// lastLiveProgressSave throttles the periodic resume-position save during playback
+		// (see saveLiveProgressThrottled). Accessed only under eventMu.
+		lastLiveProgressSave time.Time
 
 		// historyMap stores a PlaybackState whose state is "completed"
 		// Since PlaybackState is sent to client continuously, once a PlaybackState is stored in historyMap, only IT will be sent to the client.

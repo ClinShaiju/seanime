@@ -10,6 +10,7 @@ import (
 	"seanime/internal/library/anime"
 	"seanime/internal/mediaplayers/mediaplayer"
 	"seanime/internal/util"
+	"time"
 
 	"github.com/samber/mo"
 )
@@ -114,6 +115,7 @@ func (pm *PlaybackManager) handleTrackingStarted(status *mediaplayer.PlaybackSta
 		MediaId:       pm.currentMediaListEntry.MustGet().GetMedia().GetID(),
 		Filepath:      pm.currentLocalFile.MustGet().GetPath(),
 	})
+	pm.lastLiveProgressSave = time.Now() // first periodic save lands ~liveProgressSaveInterval in
 
 	// append next episode to media player if no playlist is active
 	if !pm.isPlaylistActive.Load() && pm.settings.AutoPlayNextEpisode {
@@ -213,6 +215,26 @@ func (pm *PlaybackManager) handleTrackingStopped(reason string) {
 	}
 }
 
+// liveProgressSaveInterval throttles the periodic resume-position save during playback.
+const liveProgressSaveInterval = 10 * time.Second
+
+// saveLiveProgressThrottled persists the current resume position to continuity at most once
+// per liveProgressSaveInterval, so a crash / kill / improper close doesn't lose the spot.
+// The on-stop save (handle*TrackingStopped) remains the final truth. The throttle clock is
+// reset at tracking start, so the first live save lands ~liveProgressSaveInterval in — after
+// any resume-seek has settled — and never overwrites a resume point with 0. Caller must hold
+// pm.eventMu.
+func (pm *PlaybackManager) saveLiveProgressThrottled() {
+	if pm.currentMediaPlaybackStatus == nil {
+		return
+	}
+	if time.Since(pm.lastLiveProgressSave) < liveProgressSaveInterval {
+		return
+	}
+	pm.lastLiveProgressSave = time.Now()
+	pm.continuityManager.UpdateExternalPlayerEpisodeWatchHistoryItem(pm.currentMediaPlaybackStatus.CurrentTimeInSeconds, pm.currentMediaPlaybackStatus.DurationInSeconds)
+}
+
 func (pm *PlaybackManager) handlePlaybackStatus(status *mediaplayer.PlaybackStatus) {
 	pm.eventMu.Lock()
 	defer pm.eventMu.Unlock()
@@ -242,6 +264,9 @@ func (pm *PlaybackManager) handlePlaybackStatus(status *mediaplayer.PlaybackStat
 
 	// Send the playback state to the client
 	pm.wsEventManager.SendEvent(events.PlaybackManagerProgressPlaybackState, _ps)
+
+	// Persist the resume position periodically (crash-resilience).
+	pm.saveLiveProgressThrottled()
 
 	// ------- Discord ------- //
 	if pm.discordPresence != nil && !pm.isOfflineRef.Get() {
@@ -310,6 +335,7 @@ func (pm *PlaybackManager) handleStreamingTrackingStarted(status *mediaplayer.Pl
 		MediaId:       pm.currentStreamMedia.MustGet().GetID(),
 		Filepath:      "",
 	})
+	pm.lastLiveProgressSave = time.Now() // first periodic save lands ~liveProgressSaveInterval in
 
 	// ------- Discord ------- //
 	if pm.discordPresence != nil && !pm.isOfflineRef.Get() {
@@ -360,6 +386,9 @@ func (pm *PlaybackManager) handleStreamingPlaybackStatus(status *mediaplayer.Pla
 
 	// Send the playback state to the client
 	pm.wsEventManager.SendEvent(events.PlaybackManagerProgressPlaybackState, _ps)
+
+	// Persist the resume position periodically (crash-resilience).
+	pm.saveLiveProgressThrottled()
 
 	// ------- Discord ------- //
 	if pm.discordPresence != nil && !pm.isOfflineRef.Get() {
