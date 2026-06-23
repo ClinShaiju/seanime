@@ -178,68 +178,52 @@ func (s *AutoSelect) searchFromProvider(
 			continue
 		}
 
-		// Search loop with batch/single fallback
+		// Search for torrents. For a finished series the engine always runs BOTH
+		// a batch and a single-episode search: on a good batch it merges the two,
+		// otherwise it falls back to the single. Old code ran them sequentially
+		// (~2 round-trips); fire them concurrently instead. Same number of
+		// searches, just overlapped — no extra aggregator load.
 		var allTorrents []*hibiketorrent.AnimeTorrent
 
-		for {
-			s.logger.Debug().
-				Str("provider", provider).
-				Bool("batch", searchOptions.Batch).
-				Int("episode", episodeNumber).
-				Interface("type", searchOptions.Type).
-				Str("resolution", resolution).
-				Msg("autoselect: Executing search")
+		if searchOptions.Batch {
+			batchOpts := searchOptions
+			singleOpts := searchOptions
+			singleOpts.Batch = false
 
+			var batchData, singleData *itorrent.SearchData
+			var batchErr, singleErr error
+
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				batchData, batchErr = s.torrentRepository.SearchAnime(ctx, batchOpts)
+			}()
+			go func() {
+				defer wg.Done()
+				singleData, singleErr = s.torrentRepository.SearchAnime(ctx, singleOpts)
+			}()
+			wg.Wait()
+
+			// Keep batch results only if the batch is "good" (same gate as the old
+			// sequential path); otherwise the single results stand in for it.
+			if batchErr == nil && batchData != nil && s.validateBatchResults(batchData.Torrents) {
+				s.logger.Debug().Str("provider", provider).Int("count", len(batchData.Torrents)).Msg("autoselect: Found valid batch torrents")
+				allTorrents = append(allTorrents, batchData.Torrents...)
+			} else {
+				s.logger.Warn().Err(batchErr).Str("provider", provider).Msg("autoselect: Batch results insufficient, using single results")
+			}
+
+			if singleErr == nil && singleData != nil && len(singleData.Torrents) > 0 {
+				s.logger.Debug().Str("provider", provider).Int("count", len(singleData.Torrents)).Msg("autoselect: Found single episode torrents")
+				allTorrents = append(allTorrents, singleData.Torrents...)
+			}
+		} else {
+			// Movies / unfinished series: single search only.
 			data, err := s.torrentRepository.SearchAnime(ctx, searchOptions)
-
-			logFound := 0
-			if data != nil {
-				logFound = len(data.Torrents)
-			}
-			s.logger.Debug().Str("provider", provider).Int("found", logFound).Msg("autoselect: Search completed")
-
-			// error
-			if err != nil {
-				if searchOptions.Batch {
-					// Batch search failed, retry without batch
-					s.logger.Warn().Err(err).Str("provider", provider).Msg("autoselect: Batch search failed, retrying without batch")
-					searchOptions.Batch = false
-					continue
-				}
-				// Single search failed, break to try next resolution
-				break
-			}
-
-			// Handle batch results
-			if searchOptions.Batch {
-				if data == nil || !s.validateBatchResults(data.Torrents) {
-					s.logger.Warn().Str("provider", provider).Msg("autoselect: Batch results insufficient, retrying without batch")
-					searchOptions.Batch = false
-					continue
-				}
-
-				// Found valid batch, add to results
-				s.logger.Debug().Str("provider", provider).Int("count", len(data.Torrents)).Msg("autoselect: Found valid batch torrents")
-				allTorrents = append(allTorrents, data.Torrents...)
-
-				// Also search for single episodes to maximize results
-				s.logger.Debug().Str("provider", provider).Msg("autoselect: Searching for single episodes")
-				singleOpts := searchOptions
-				singleOpts.Batch = false
-
-				data2, err2 := s.torrentRepository.SearchAnime(ctx, singleOpts)
-				if err2 == nil && data2 != nil && len(data2.Torrents) > 0 {
-					s.logger.Debug().Str("provider", provider).Int("count", len(data2.Torrents)).Msg("autoselect: Found single episode torrents")
-					allTorrents = append(allTorrents, data2.Torrents...)
-				}
-				break
-			}
-
-			// Single episode search results
-			if data != nil && len(data.Torrents) > 0 {
+			if err == nil && data != nil && len(data.Torrents) > 0 {
 				allTorrents = append(allTorrents, data.Torrents...)
 			}
-			break
 		}
 
 		// If we found results, return them
