@@ -971,6 +971,10 @@ export type RemoveFileCacheBucket_Variables = {
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// identity
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // library_explorer
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1586,6 +1590,85 @@ export type NakamaSendChatMessage_Variables = {
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// nakama_rooms
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * - Filepath: internal/handlers/nakama_rooms.go
+ * - Filename: nakama_rooms.go
+ * - Endpoint: /api/v1/nakama/watch-room/create
+ * @description
+ * Route creates a same-instance watch room and joins it as host.
+ */
+export type NakamaWatchRoomCreate_Variables = {
+    name: string
+    password: string
+    clientId: string
+}
+
+/**
+ * - Filepath: internal/handlers/nakama_rooms.go
+ * - Filename: nakama_rooms.go
+ * - Endpoint: /api/v1/nakama/watch-room/join
+ * @description
+ * Route joins a same-instance watch room.
+ */
+export type NakamaWatchRoomJoin_Variables = {
+    roomId: string
+    password: string
+    clientId: string
+}
+
+/**
+ * - Filepath: internal/handlers/nakama_rooms.go
+ * - Filename: nakama_rooms.go
+ * - Endpoint: /api/v1/nakama/watch-room/leave
+ * @description
+ * Route leaves the current same-instance watch room.
+ */
+export type NakamaWatchRoomLeave_Variables = {
+    roomId: string
+}
+
+/**
+ * - Filepath: internal/handlers/nakama_rooms.go
+ * - Filename: nakama_rooms.go
+ * - Endpoint: /api/v1/nakama/watch-room/control
+ * @description
+ * Route (host only) grants or revokes playback control for a room member.
+ */
+export type NakamaWatchRoomSetControl_Variables = {
+    roomId: string
+    targetKey: string
+    canControl: boolean
+    all: boolean
+}
+
+/**
+ * - Filepath: internal/handlers/nakama_rooms.go
+ * - Filename: nakama_rooms.go
+ * - Endpoint: /api/v1/nakama/watch-room/force-tracks
+ * @description
+ * Route (host only) toggles forcing the host's audio/subtitle tracks on all members.
+ */
+export type NakamaWatchRoomForceTracks_Variables = {
+    roomId: string
+    forceHostTracks: boolean
+}
+
+/**
+ * - Filepath: internal/handlers/nakama_rooms.go
+ * - Filename: nakama_rooms.go
+ * - Endpoint: /api/v1/nakama/watch-room/autoskip
+ * @description
+ * Route sets the caller's OP/ED auto-skip vote ("on" | "off" | "auto") for a room.
+ */
+export type NakamaWatchRoomAutoSkip_Variables = {
+    roomId: string
+    pref: string
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // onlinestream
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -2157,6 +2240,61 @@ export type GetTorrentstreamBatchHistory_Variables = {
  */
 export type DeleteTorrentstreamBatchHistory_Variables = {
     mediaId: number
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// user_auth
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * - Filepath: internal/handlers/user_auth.go
+ * - Filename: user_auth.go
+ * - Endpoint: /api/v1/user/login
+ * @description
+ * Route logs in a Seanime user with username + password and returns a session token.
+ */
+export type UserLogin_Variables = {
+    username: string
+    password: string
+}
+
+/**
+ * - Filepath: internal/handlers/user_auth.go
+ * - Filename: user_auth.go
+ * - Endpoint: /api/v1/user/register
+ * @description
+ * Route creates a new Seanime user (admin only).
+ */
+export type UserRegister_Variables = {
+    username: string
+    password: string
+    role: string
+}
+
+/**
+ * - Filepath: internal/handlers/user_auth.go
+ * - Filename: user_auth.go
+ * - Endpoint: /api/v1/user/change-password
+ * @description
+ * Route changes the current user's password.
+ */
+export type UserChangePassword_Variables = {
+    oldPassword: string
+    newPassword: string
+}
+
+/**
+ * - Filepath: internal/handlers/user_auth.go
+ * - Filename: user_auth.go
+ * - Endpoint: /api/v1/user/debrid
+ * @description
+ * Route saves the current user's debrid choice (use the server debrid, or their own).
+ */
+export type SaveUserDebrid_Variables = {
+    useServerDebrid: boolean
+    provider: string
+    apiKey: string
+    useServerAutoSelect: boolean
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

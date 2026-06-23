@@ -28442,6 +28442,15 @@
         "required": false,
         "public": true,
         "comments": []
+      },
+      {
+        "name": "BucketName",
+        "jsonName": "BucketName",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": []
@@ -28619,6 +28628,17 @@
         "usedStructName": "events.WSEventManager",
         "required": false,
         "public": true,
+        "comments": []
+      },
+      {
+        "name": "adminEvents",
+        "jsonName": "adminEvents",
+        "goType": "events.ScopedWSEventManager",
+        "typescriptType": "Events_ScopedWSEventManager",
+        "usedTypescriptType": "Events_ScopedWSEventManager",
+        "usedStructName": "events.ScopedWSEventManager",
+        "required": false,
+        "public": false,
         "comments": []
       },
       {
@@ -28975,6 +28995,37 @@
         "typescriptType": "User",
         "usedTypescriptType": "User",
         "usedStructName": "user.User",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "sessions",
+        "jsonName": "sessions",
+        "goType": "",
+        "typescriptType": "any",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "anonSession",
+        "jsonName": "anonSession",
+        "goType": "UserSession",
+        "typescriptType": "INTERNAL_UserSession",
+        "usedTypescriptType": "INTERNAL_UserSession",
+        "usedStructName": "core.UserSession",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "anonSessionOnce",
+        "jsonName": "anonSessionOnce",
+        "goType": "sync.Once",
+        "typescriptType": "Once",
+        "usedTypescriptType": "Once",
+        "usedStructName": "sync.Once",
         "required": false,
         "public": false,
         "comments": []
@@ -29990,9 +30041,196 @@
         "required": true,
         "public": true,
         "comments": []
+      },
+      {
+        "name": "AdminUsername",
+        "jsonName": "AdminUsername",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AdminPassword",
+        "jsonName": "AdminPassword",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": []
+  },
+  {
+    "filepath": "../internal/core/session.go",
+    "filename": "session.go",
+    "name": "UserSession",
+    "formattedName": "INTERNAL_UserSession",
+    "package": "core",
+    "fields": [
+      {
+        "name": "app",
+        "jsonName": "app",
+        "goType": "App",
+        "typescriptType": "INTERNAL_App",
+        "usedTypescriptType": "INTERNAL_App",
+        "usedStructName": "core.App",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "UserID",
+        "jsonName": "UserID",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "IsAdmin",
+        "jsonName": "IsAdmin",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "user",
+        "jsonName": "user",
+        "goType": "user.User",
+        "typescriptType": "User",
+        "usedTypescriptType": "User",
+        "usedStructName": "user.User",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "anilistClientRef",
+        "jsonName": "anilistClientRef",
+        "goType": "",
+        "typescriptType": "any",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "platformRef",
+        "jsonName": "platformRef",
+        "goType": "",
+        "typescriptType": "any",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "linked",
+        "jsonName": "linked",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "modulesOnce",
+        "jsonName": "modulesOnce",
+        "goType": "sync.Once",
+        "typescriptType": "Once",
+        "usedTypescriptType": "Once",
+        "usedStructName": "sync.Once",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "continuityOnce",
+        "jsonName": "continuityOnce",
+        "goType": "sync.Once",
+        "typescriptType": "Once",
+        "usedTypescriptType": "Once",
+        "usedStructName": "sync.Once",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "videoCore",
+        "jsonName": "videoCore",
+        "goType": "videocore.VideoCore",
+        "typescriptType": "VideoCore_VideoCore",
+        "usedTypescriptType": "VideoCore_VideoCore",
+        "usedStructName": "videocore.VideoCore",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "nativePlayer",
+        "jsonName": "nativePlayer",
+        "goType": "nativeplayer.NativePlayer",
+        "typescriptType": "NativePlayer_NativePlayer",
+        "usedTypescriptType": "NativePlayer_NativePlayer",
+        "usedStructName": "nativeplayer.NativePlayer",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "directStream",
+        "jsonName": "directStream",
+        "goType": "directstream.Manager",
+        "typescriptType": "Directstream_Manager",
+        "usedTypescriptType": "Directstream_Manager",
+        "usedStructName": "directstream.Manager",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "playback",
+        "jsonName": "playback",
+        "goType": "playbackmanager.PlaybackManager",
+        "typescriptType": "PlaybackManager_PlaybackManager",
+        "usedTypescriptType": "PlaybackManager_PlaybackManager",
+        "usedStructName": "playbackmanager.PlaybackManager",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "continuity",
+        "jsonName": "continuity",
+        "goType": "continuity.Manager",
+        "typescriptType": "Continuity_Manager",
+        "usedTypescriptType": "Continuity_Manager",
+        "usedStructName": "continuity.Manager",
+        "required": false,
+        "public": false,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " UserSession bundles the per-user identity plane: a user's own AniList platform",
+      " (their token + client) and the collection it serves. Shared engines (extensions,",
+      " metadata, torrent/debrid/transcode) are reached through the App by reference, not",
+      " copied per user.",
+      "",
+      " The admin (server owner) session is a thin delegate over the App's existing",
+      " global platform and modules, so a single-user install behaves exactly as before —",
+      " no extra platform is built, nothing is duplicated. Only additional logged-in",
+      " users get their own platform instance.",
+      "",
+      " Per-session *stateful* modules (PlaybackManager/DirectStream/VideoCore/…) and the",
+      " streaming split land in the following slices; for now non-admin sessions own the",
+      " identity+collection read plane and delegate stateful playback to the shared",
+      " (admin) modules."
+    ]
   },
   {
     "filepath": "../internal/cron/cron.go",
@@ -30357,6 +30595,110 @@
       }
     ],
     "comments": [],
+    "embeddedStructNames": [
+      "models.BaseModel"
+    ]
+  },
+  {
+    "filepath": "../internal/database/models/models.go",
+    "filename": "models.go",
+    "name": "User",
+    "formattedName": "Models_User",
+    "package": "models",
+    "fields": [
+      {
+        "name": "Username",
+        "jsonName": "username",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "PasswordHash",
+        "jsonName": "",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Role",
+        "jsonName": "role",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " UserRoleAdmin | UserRoleUser"
+        ]
+      },
+      {
+        "name": "AnilistAccountID",
+        "jsonName": "anilistAccountId",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": false,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " User is a Seanime-local account: a credential (username + bcrypt password) and a",
+      " role. It is distinct from the AniList Account, which is linked separately via",
+      " AnilistAccountID. The first user created is the admin (server owner) who controls",
+      " the shared content/infrastructure plane.",
+      "",
+      " ponytail: admin identity is also satisfied by the server-password holder, so a",
+      " single-user install needs no User rows to behave as today; the admin row is a",
+      " bootstrap convenience and the anchor for per-user data."
+    ],
+    "embeddedStructNames": [
+      "models.BaseModel"
+    ]
+  },
+  {
+    "filepath": "../internal/database/models/models.go",
+    "filename": "models.go",
+    "name": "Session",
+    "formattedName": "Models_Session",
+    "package": "models",
+    "fields": [
+      {
+        "name": "Token",
+        "jsonName": "token",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UserID",
+        "jsonName": "userId",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "ExpiresAt",
+        "jsonName": "expiresAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
+        "required": false,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " Session is a server-side auth session token issued to a User on login. Server-side",
+      " (rather than JWT) so tokens can be revoked by deleting the row."
+    ],
     "embeddedStructNames": [
       "models.BaseModel"
     ]
@@ -31792,6 +32134,15 @@
     "package": "models",
     "fields": [
       {
+        "name": "UserID",
+        "jsonName": "userId",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
         "name": "Value",
         "jsonName": "value",
         "goType": "string",
@@ -32022,6 +32373,15 @@
     "formattedName": "Models_Theme",
     "package": "models",
     "fields": [
+      {
+        "name": "UserID",
+        "jsonName": "userId",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
       {
         "name": "EnableColorSettings",
         "jsonName": "enableColorSettings",
@@ -32407,6 +32767,33 @@
         "required": true,
         "public": true,
         "comments": []
+      },
+      {
+        "name": "GroupSeasons",
+        "jsonName": "groupSeasons",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "HideFranchiseSpinoffs",
+        "jsonName": "hideFranchiseSpinoffs",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "HideFranchiseRecaps",
+        "jsonName": "hideFranchiseRecaps",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": [],
@@ -32505,6 +32892,15 @@
     "formattedName": "Models_Playlist",
     "package": "models",
     "fields": [
+      {
+        "name": "UserID",
+        "jsonName": "userId",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
       {
         "name": "Name",
         "jsonName": "name",
@@ -33369,6 +33765,192 @@
       "declaredValues": null
     },
     "comments": null
+  },
+  {
+    "filepath": "../internal/database/models/user_settings.go",
+    "filename": "user_settings.go",
+    "name": "UserSettings",
+    "formattedName": "Models_UserSettings",
+    "package": "models",
+    "fields": [
+      {
+        "name": "UserID",
+        "jsonName": "userId",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Value",
+        "jsonName": "",
+        "goType": "string",
+        "typescriptType": "Array\u003cstring\u003e",
+        "required": false,
+        "public": true,
+        "comments": [
+          " JSON of UserOverrides"
+        ]
+      }
+    ],
+    "comments": [
+      " UserSettings stores a single user's overrides over the shared server Settings",
+      " (multi-user profiles). It's a JSON blob (UserOverrides) rather than a column-by-column",
+      " split, so the admin keeps owning the base Settings row and each user layers their own",
+      " user-editable fields on top. Locked/admin fields are never part of UserOverrides, so a",
+      " user can never override them."
+    ],
+    "embeddedStructNames": [
+      "models.BaseModel"
+    ]
+  },
+  {
+    "filepath": "../internal/database/models/user_settings.go",
+    "filename": "user_settings.go",
+    "name": "UserOverrides",
+    "formattedName": "Models_UserOverrides",
+    "package": "models",
+    "fields": [
+      {
+        "name": "Anilist",
+        "jsonName": "anilist",
+        "goType": "AnilistSettings",
+        "typescriptType": "Models_AnilistSettings",
+        "usedTypescriptType": "Models_AnilistSettings",
+        "usedStructName": "models.AnilistSettings",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Notifications",
+        "jsonName": "notifications",
+        "goType": "NotificationSettings",
+        "typescriptType": "Models_NotificationSettings",
+        "usedTypescriptType": "Models_NotificationSettings",
+        "usedStructName": "models.NotificationSettings",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Discord",
+        "jsonName": "discord",
+        "goType": "DiscordSettings",
+        "typescriptType": "Models_DiscordSettings",
+        "usedTypescriptType": "Models_DiscordSettings",
+        "usedStructName": "models.DiscordSettings",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "EnableManga",
+        "jsonName": "enableManga",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "MangaDefaultProvider",
+        "jsonName": "mangaDefaultProvider",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "MangaAutoUpdateProgress",
+        "jsonName": "mangaAutoUpdateProgress",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AutoUpdateProgress",
+        "jsonName": "autoUpdateProgress",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AutoPlayNextEpisode",
+        "jsonName": "autoPlayNextEpisode",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "EnableWatchContinuity",
+        "jsonName": "enableWatchContinuity",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "DisableAnimeCardTrailers",
+        "jsonName": "disableAnimeCardTrailers",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UseServerDebrid",
+        "jsonName": "useServerDebrid",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "DebridProvider",
+        "jsonName": "debridProvider",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "DebridApiKey",
+        "jsonName": "debridApiKey",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UseServerDebridAutoSelect",
+        "jsonName": "useServerDebridAutoSelect",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " UserOverrides is the set of settings a regular user may control for themselves. It is",
+      " overlaid onto the server Settings to produce the user's effective settings. Keep this",
+      " in sync with profile-settings-split-spec.md. (Per-device settings — video playback,",
+      " media player, external player — are client-side and intentionally NOT here.)"
+    ]
   },
   {
     "filepath": "../internal/debrid/alldebrid/alldebrid.go",
@@ -34438,6 +35020,15 @@
         "comments": []
       },
       {
+        "name": "queuedDownloadFailures",
+        "jsonName": "queuedDownloadFailures",
+        "goType": "",
+        "typescriptType": "any",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
         "name": "downloadLoopCancelFunc",
         "jsonName": "downloadLoopCancelFunc",
         "goType": "context.CancelFunc",
@@ -34471,6 +35062,24 @@
         "comments": []
       },
       {
+        "name": "sessionModulesFunc",
+        "jsonName": "sessionModulesFunc",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "sessionEventsFunc",
+        "jsonName": "sessionEventsFunc",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
         "name": "playbackManager",
         "jsonName": "playbackManager",
         "goType": "playbackmanager.PlaybackManager",
@@ -34482,12 +35091,10 @@
         "comments": []
       },
       {
-        "name": "streamManager",
-        "jsonName": "streamManager",
-        "goType": "StreamManager",
-        "typescriptType": "DebridClient_StreamManager",
-        "usedTypescriptType": "DebridClient_StreamManager",
-        "usedStructName": "debrid_client.StreamManager",
+        "name": "streamManagers",
+        "jsonName": "streamManagers",
+        "goType": "",
+        "typescriptType": "any",
         "required": false,
         "public": false,
         "comments": []
@@ -34634,6 +35241,24 @@
         "required": false,
         "public": true,
         "comments": []
+      },
+      {
+        "name": "SessionModulesFunc",
+        "jsonName": "SessionModulesFunc",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "SessionEventsFunc",
+        "jsonName": "SessionEventsFunc",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": []
@@ -34732,6 +35357,24 @@
         "comments": [
           " in-flight resolves, for dedupe/cancel"
         ]
+      },
+      {
+        "name": "lastConsumedKey",
+        "jsonName": "lastConsumedKey",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "previousStreamOptions",
+        "jsonName": "previousStreamOptions",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": false,
+        "comments": []
       }
     ],
     "comments": []
@@ -34906,6 +35549,15 @@
         "comments": []
       },
       {
+        "name": "UserID",
+        "jsonName": "UserID",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
         "name": "PlaybackType",
         "jsonName": "PlaybackType",
         "goType": "StreamPlaybackType",
@@ -34944,6 +35596,24 @@
         "required": true,
         "public": true,
         "comments": []
+      },
+      {
+        "name": "PrewarmMetadata",
+        "jsonName": "PrewarmMetadata",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Priority",
+        "jsonName": "Priority",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": []
@@ -34960,6 +35630,15 @@
         "jsonName": "removeTorrent",
         "goType": "bool",
         "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UserID",
+        "jsonName": "",
+        "goType": "uint",
+        "typescriptType": "number",
         "required": true,
         "public": true,
         "comments": []
@@ -36981,6 +37660,15 @@
       {
         "name": "parserCache",
         "jsonName": "parserCache",
+        "goType": "",
+        "typescriptType": "any",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "streamInfoCache",
+        "jsonName": "streamInfoCache",
         "goType": "",
         "typescriptType": "any",
         "required": false,
@@ -39259,6 +39947,43 @@
     "comments": []
   },
   {
+    "filepath": "../internal/events/scoped.go",
+    "filename": "scoped.go",
+    "name": "ScopedWSEventManager",
+    "formattedName": "Events_ScopedWSEventManager",
+    "package": "events",
+    "fields": [
+      {
+        "name": "inner",
+        "jsonName": "inner",
+        "goType": "WSEventManager",
+        "typescriptType": "Events_WSEventManager",
+        "usedTypescriptType": "Events_WSEventManager",
+        "usedStructName": "events.WSEventManager",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "userID",
+        "jsonName": "userID",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": false,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " ScopedWSEventManager binds a per-user module instance to a single user: every",
+      " SendEvent / SendEventTo it makes reaches only that user's clients (plus",
+      " unidentified UserID==0 local clients, so local/desktop installs keep working).",
+      " Each per-session streaming/playback module emits to its own fixed user, which is",
+      " what lets two users stream simultaneously without their events crossing.",
+      " (The App-global modules use one of these fixed to the admin user.)"
+    ]
+  },
+  {
     "filepath": "../internal/events/websocket.go",
     "filename": "websocket.go",
     "name": "GlobalWSEventManagerWrapper",
@@ -39459,6 +40184,15 @@
         "usedTypescriptType": "Conn",
         "usedStructName": "websocket.Conn",
         "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UserID",
+        "jsonName": "UserID",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
         "public": true,
         "comments": []
       }
@@ -45482,11 +46216,98 @@
         "required": true,
         "public": true,
         "comments": []
+      },
+      {
+        "name": "UserRole",
+        "jsonName": "userRole",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "ServerHasUsers",
+        "jsonName": "serverHasUsers",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "ServerAuthenticated",
+        "jsonName": "serverAuthenticated",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UserDebrid",
+        "jsonName": "userDebrid",
+        "goType": "UserDebridStatus",
+        "typescriptType": "UserDebridStatus",
+        "usedTypescriptType": "UserDebridStatus",
+        "usedStructName": "handlers.UserDebridStatus",
+        "required": false,
+        "public": true,
+        "comments": []
       }
     ],
     "comments": [
       " Status is a struct containing the user data, settings, and OS.",
       " It is used by the client in various places to access necessary information."
+    ]
+  },
+  {
+    "filepath": "../internal/handlers/status.go",
+    "filename": "status.go",
+    "name": "UserDebridStatus",
+    "formattedName": "UserDebridStatus",
+    "package": "handlers",
+    "fields": [
+      {
+        "name": "UseServerDebrid",
+        "jsonName": "useServerDebrid",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Provider",
+        "jsonName": "provider",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "HasApiKey",
+        "jsonName": "hasApiKey",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UseServerAutoSelect",
+        "jsonName": "useServerAutoSelect",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " UserDebridStatus is a non-admin user's debrid choice. When UseServerDebrid is true",
+      " (default) they stream via the shared server debrid; otherwise their own provider/key."
     ]
   },
   {
@@ -45839,6 +46660,38 @@
       }
     ],
     "comments": []
+  },
+  {
+    "filepath": "../internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "name": "UserLoginResponse",
+    "formattedName": "UserLoginResponse",
+    "package": "handlers",
+    "fields": [
+      {
+        "name": "Token",
+        "jsonName": "token",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "User",
+        "jsonName": "user",
+        "goType": "models.User",
+        "typescriptType": "Models_User",
+        "usedTypescriptType": "Models_User",
+        "usedStructName": "models.User",
+        "required": false,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " UserLoginResponse is returned on a successful user login."
+    ]
   },
   {
     "filepath": "../internal/hook/helper.go",
@@ -70568,6 +71421,19 @@
         "comments": []
       },
       {
+        "name": "watchRoomHub",
+        "jsonName": "watchRoomHub",
+        "goType": "WatchRoomHub",
+        "typescriptType": "Nakama_WatchRoomHub",
+        "usedTypescriptType": "Nakama_WatchRoomHub",
+        "usedStructName": "nakama.WatchRoomHub",
+        "required": false,
+        "public": false,
+        "comments": [
+          " same-instance rooms (parallel to the peer/host watch party)"
+        ]
+      },
+      {
         "name": "previousPath",
         "jsonName": "previousPath",
         "goType": "string",
@@ -73305,6 +74171,582 @@
     "comments": [],
     "embeddedStructNames": [
       "nakama.WatchPartyPlayerBaseEvent"
+    ]
+  },
+  {
+    "filepath": "../internal/nakama/watch_room.go",
+    "filename": "watch_room.go",
+    "name": "PoolUserSource",
+    "formattedName": "Nakama_PoolUserSource",
+    "package": "nakama",
+    "fields": [],
+    "aliasOf": {
+      "goType": "string",
+      "typescriptType": "string",
+      "declaredValues": [
+        "\"local\"",
+        "\"external\""
+      ]
+    },
+    "comments": []
+  },
+  {
+    "filepath": "../internal/nakama/watch_room.go",
+    "filename": "watch_room.go",
+    "name": "PoolUser",
+    "formattedName": "Nakama_PoolUser",
+    "package": "nakama",
+    "fields": [
+      {
+        "name": "UserID",
+        "jsonName": "userId",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": [
+          " Seanime user id (0 = local single-user/admin install)"
+        ]
+      },
+      {
+        "name": "Username",
+        "jsonName": "username",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " display name (bare, un-namespaced)"
+        ]
+      },
+      {
+        "name": "Source",
+        "jsonName": "source",
+        "goType": "PoolUserSource",
+        "typescriptType": "Nakama_PoolUserSource",
+        "usedTypescriptType": "Nakama_PoolUserSource",
+        "usedStructName": "nakama.PoolUserSource",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "ServerTag",
+        "jsonName": "serverTag",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": false,
+        "public": true,
+        "comments": [
+          " external origin; \"\" for local"
+        ]
+      }
+    ],
+    "comments": [
+      " PoolUser identifies a user in the hub's pool. The Key is the stable, collision-safe",
+      " identifier: local users key on their username; external users are namespaced by their",
+      " origin server tag so an external \"alice\" never collides with a local \"alice\"."
+    ]
+  },
+  {
+    "filepath": "../internal/nakama/watch_room.go",
+    "filename": "watch_room.go",
+    "name": "RoomParticipant",
+    "formattedName": "Nakama_RoomParticipant",
+    "package": "nakama",
+    "fields": [
+      {
+        "name": "User",
+        "jsonName": "user",
+        "goType": "PoolUser",
+        "typescriptType": "Nakama_PoolUser",
+        "usedTypescriptType": "Nakama_PoolUser",
+        "usedStructName": "nakama.PoolUser",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "ClientID",
+        "jsonName": "clientId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " the UI ws client id this participant drives from"
+        ]
+      },
+      {
+        "name": "IsHost",
+        "jsonName": "isHost",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": [
+          " the ORIGINAL host (room creator)"
+        ]
+      },
+      {
+        "name": "CanControl",
+        "jsonName": "canControl",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": [
+          " may drive play/pause/seek/episode"
+        ]
+      },
+      {
+        "name": "JoinedAt",
+        "jsonName": "joinedAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
+        "required": false,
+        "public": true,
+        "comments": [
+          " for promotion ordering"
+        ]
+      },
+      {
+        "name": "AutoSkipPref",
+        "jsonName": "autoSkipPref",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " RoomParticipant is a PoolUser inside a specific room."
+    ]
+  },
+  {
+    "filepath": "../internal/nakama/watch_room.go",
+    "filename": "watch_room.go",
+    "name": "WatchRoom",
+    "formattedName": "Nakama_WatchRoom",
+    "package": "nakama",
+    "fields": [
+      {
+        "name": "ID",
+        "jsonName": "id",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Name",
+        "jsonName": "name",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "HostKey",
+        "jsonName": "hostKey",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " original host's pool key (room owner)"
+        ]
+      },
+      {
+        "name": "ControllerKey",
+        "jsonName": "controllerKey",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " effective driver (host, or a promoted member)"
+        ]
+      },
+      {
+        "name": "HasPassword",
+        "jsonName": "hasPassword",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "ForceHostTracks",
+        "jsonName": "forceHostTracks",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Participants",
+        "jsonName": "participants",
+        "goType": "map[string]RoomParticipant",
+        "typescriptType": "Record\u003cstring, Nakama_RoomParticipant\u003e",
+        "usedTypescriptType": "Nakama_RoomParticipant",
+        "usedStructName": "nakama.RoomParticipant",
+        "required": false,
+        "public": true,
+        "comments": [
+          " keyed by PoolUser.Key()"
+        ]
+      },
+      {
+        "name": "CurrentMediaInfo",
+        "jsonName": "currentMediaInfo",
+        "goType": "WatchPartySessionMediaInfo",
+        "typescriptType": "Nakama_WatchPartySessionMediaInfo",
+        "usedTypescriptType": "Nakama_WatchPartySessionMediaInfo",
+        "usedStructName": "nakama.WatchPartySessionMediaInfo",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "LastPlayback",
+        "jsonName": "lastPlayback",
+        "goType": "RoomPlaybackStatusPayload",
+        "typescriptType": "Nakama_RoomPlaybackStatusPayload",
+        "usedTypescriptType": "Nakama_RoomPlaybackStatusPayload",
+        "usedStructName": "nakama.RoomPlaybackStatusPayload",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "EffectiveAutoSkip",
+        "jsonName": "effectiveAutoSkip",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AutoSkipVotesOn",
+        "jsonName": "autoSkipVotesOn",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AutoSkipVotesOff",
+        "jsonName": "autoSkipVotesOff",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "CreatedAt",
+        "jsonName": "createdAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "passwordHash",
+        "jsonName": "passwordHash",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": false,
+        "comments": [
+          " sha256 hex of the password; empty = open room"
+        ]
+      },
+      {
+        "name": "mu",
+        "jsonName": "",
+        "goType": "sync.RWMutex",
+        "typescriptType": "RWMutex",
+        "usedTypescriptType": "RWMutex",
+        "usedStructName": "sync.RWMutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " WatchRoom is one same-instance room. Playback sync state is layered on later",
+      " (task: per-room sync); this type is the membership + control spine."
+    ]
+  },
+  {
+    "filepath": "../internal/nakama/watch_room.go",
+    "filename": "watch_room.go",
+    "name": "RoomPlaybackStatusPayload",
+    "formattedName": "Nakama_RoomPlaybackStatusPayload",
+    "package": "nakama",
+    "fields": [
+      {
+        "name": "RoomId",
+        "jsonName": "roomId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Paused",
+        "jsonName": "paused",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "CurrentTime",
+        "jsonName": "currentTime",
+        "goType": "float64",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Duration",
+        "jsonName": "duration",
+        "goType": "float64",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "MediaId",
+        "jsonName": "mediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "EpisodeNumber",
+        "jsonName": "episodeNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AniDBEpisode",
+        "jsonName": "aniDbEpisode",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "StreamType",
+        "jsonName": "streamType",
+        "goType": "WatchPartyStreamType",
+        "typescriptType": "Nakama_WatchPartyStreamType",
+        "usedTypescriptType": "Nakama_WatchPartyStreamType",
+        "usedStructName": "nakama.WatchPartyStreamType",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AudioTrack",
+        "jsonName": "audioTrack",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "SubtitleTrack",
+        "jsonName": "subtitleTrack",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": false,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " RoomPlaybackStatusPayload is a control action relayed between members. It carries",
+      " ONLY position + media identity — deliberately NO audio/subtitle track fields, so each",
+      " member keeps their own track selection (per-user tracks). client-\u003eserver on a control",
+      " action (play/pause/seek/episode change), server-\u003efollowers to apply."
+    ]
+  },
+  {
+    "filepath": "../internal/nakama/watch_room.go",
+    "filename": "watch_room.go",
+    "name": "RoomCard",
+    "formattedName": "Nakama_RoomCard",
+    "package": "nakama",
+    "fields": [
+      {
+        "name": "ID",
+        "jsonName": "id",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Name",
+        "jsonName": "name",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "HostUsername",
+        "jsonName": "hostUsername",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "MemberCount",
+        "jsonName": "memberCount",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "HasPassword",
+        "jsonName": "hasPassword",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "MediaId",
+        "jsonName": "mediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "EpisodeNumber",
+        "jsonName": "episodeNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Title",
+        "jsonName": "title",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "CoverImage",
+        "jsonName": "coverImage",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": false,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " RoomCard is the public, listing-safe view of a room shown on the discovery cards.",
+      " It deliberately omits the participant list (no global userlist; members are only",
+      " visible inside a room) and the password hash. mediaId/episode let the frontend render",
+      " the cover from its own metadata — the hub does no metadata lookups."
+    ]
+  },
+  {
+    "filepath": "../internal/nakama/watch_room.go",
+    "filename": "watch_room.go",
+    "name": "WatchRoomHub",
+    "formattedName": "Nakama_WatchRoomHub",
+    "package": "nakama",
+    "fields": [
+      {
+        "name": "manager",
+        "jsonName": "manager",
+        "goType": "Manager",
+        "typescriptType": "Nakama_Manager",
+        "usedTypescriptType": "Nakama_Manager",
+        "usedStructName": "nakama.Manager",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "logger",
+        "jsonName": "logger",
+        "goType": "zerolog.Logger",
+        "typescriptType": "Logger",
+        "usedTypescriptType": "Logger",
+        "usedStructName": "zerolog.Logger",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "mu",
+        "jsonName": "mu",
+        "goType": "sync.RWMutex",
+        "typescriptType": "RWMutex",
+        "usedTypescriptType": "RWMutex",
+        "usedStructName": "sync.RWMutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "rooms",
+        "jsonName": "rooms",
+        "goType": "map[string]WatchRoom",
+        "typescriptType": "Record\u003cstring, Nakama_WatchRoom\u003e",
+        "usedTypescriptType": "Nakama_WatchRoom",
+        "usedStructName": "nakama.WatchRoom",
+        "required": false,
+        "public": false,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " WatchRoomHub holds all same-instance rooms."
     ]
   },
   {
@@ -98406,6 +99848,24 @@
         "comments": []
       },
       {
+        "name": "userID",
+        "jsonName": "userID",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "acceptUnscopedClients",
+        "jsonName": "acceptUnscopedClients",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
         "name": "translatorService",
         "jsonName": "translatorService",
         "goType": "TranslatorService",
@@ -98748,6 +100208,24 @@
         "goType": "",
         "typescriptType": "any",
         "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UserID",
+        "jsonName": "UserID",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AcceptUnscopedClients",
+        "jsonName": "AcceptUnscopedClients",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
         "public": true,
         "comments": []
       }

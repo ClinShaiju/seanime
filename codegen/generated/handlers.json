@@ -4708,6 +4708,326 @@
     }
   },
   {
+    "name": "IdentityMiddleware",
+    "trimmedName": "IdentityMiddleware",
+    "comments": [
+      "IdentityMiddleware resolves the acting user for a request and stashes the user id",
+      "and role in the echo context. It runs after OptionalAuthMiddleware, so it only",
+      "sees requests that already passed the server-password gate.",
+      "",
+      "Resolution:",
+      " 1. A valid `Authorization: Bearer \u003csession token\u003e` resolves to that user (any role).",
+      " 2. No session, and NO server password configured → the operator is local and",
+      "    trusted, so they act as admin. This keeps the desktop app and password-less",
+      "    setups working exactly as before.",
+      " 3. No session, but a server password IS configured (a networked/shared server) →",
+      "    no implicit identity. Knowing the shared server password is not enough to",
+      "    configure the server; admin actions require logging in as the admin. This is",
+      "    the hardened ceiling: the outer network gate is separated from identity.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "guardStreamingUser",
+    "trimmedName": "guardStreamingUser",
+    "comments": [
+      "guardStreamingUser rejects anonymous requests from STARTING playback/streaming —",
+      "anon users (server-password only, no session) may browse but not stream. On a",
+      "local password-less install dataUserID resolves to the admin, so this only blocks",
+      "the networked-anon case. Apply at the top of each stream/playback start handler.",
+      "(Serve endpoints are NOT guarded by user — the media player presents a stream id +",
+      "HMAC, not a session; an anon can't obtain a valid stream id without first starting,",
+      "which this blocks.)",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "UserOnly",
+    "trimmedName": "UserOnly",
+    "comments": [
+      "UserOnly is per-route middleware that rejects anonymous requests (server-password",
+      "only, no user session) with a 403 — the same gate as guardStreamingUser, applied at",
+      "the router. Use it on debrid/torrent *operation* endpoints (add torrent, file",
+      "previews, etc.) so an anon may browse but never drive debrid/torrent work. On a",
+      "local password-less install dataUserID resolves to the admin, so only networked-anon",
+      "is blocked.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "AdminOnly",
+    "trimmedName": "AdminOnly",
+    "comments": [
+      "AdminOnly is per-route middleware that rejects non-admin requests with a 403. Apply",
+      "it to server-configuration endpoints so configuring the server always requires an",
+      "authenticated admin.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "RequestUsername",
+    "trimmedName": "RequestUsername",
+    "comments": [
+      "RequestUsername returns the resolved username for a request, or \"anon\" when the",
+      "request carries no user session. Used to tag every access-log line with the user.",
+      "",
+      "It resolves directly from the Bearer token (and the password-less admin fallback)",
+      "rather than reading the request context, because the access-log enricher runs before",
+      "IdentityMiddleware has populated the context — reading the context there always",
+      "yielded \"anon\".",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "bearerToken",
+    "trimmedName": "bearerToken",
+    "comments": [
+      "bearerToken extracts the token from an `Authorization: Bearer \u003ctoken\u003e` header.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "CurrentUserID",
+    "trimmedName": "CurrentUserID",
+    "comments": [
+      "CurrentUserID returns the resolved user id for the request, or 0 if none.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "CurrentUserRole",
+    "trimmedName": "CurrentUserRole",
+    "comments": [
+      "CurrentUserRole returns the resolved role for the request, or \"\" if none.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "dataUserID",
+    "trimmedName": "dataUserID",
+    "comments": [
+      "dataUserID returns the user id to scope per-user data (theme, playlists, progress,",
+      "collection) by.",
+      "",
+      "It falls back to the admin ONLY when no server password is configured — i.e. a",
+      "local, trusted, single-operator install, where the operator legitimately is the",
+      "admin and per-user rows must not be orphaned. On a networked (password-protected)",
+      "server, an unauthenticated request (one that passed the shared-password gate but",
+      "did NOT present a user session) must NOT inherit the admin's identity or data:",
+      "knowing the server password is not the same as being the admin. Such requests",
+      "resolve to 0 → an anonymous, data-less session (the client must log in).",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "userSession",
+    "trimmedName": "userSession",
+    "comments": [
+      "userSession resolves the per-user identity session (their own AniList platform +",
+      "collection) for a request. Falls back to the admin/App-global delegate when no",
+      "user is resolved, so single-user installs are unchanged.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "CurrentUser",
+    "trimmedName": "CurrentUser",
+    "comments": [
+      "CurrentUser returns the resolved user for the request, or nil if none.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "IsAdmin",
+    "trimmedName": "IsAdmin",
+    "comments": [
+      "IsAdmin reports whether the request resolves to an admin user.",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "RequireAdmin",
+    "trimmedName": "RequireAdmin",
+    "comments": [
+      "RequireAdmin returns errAdminRequired when the request does not resolve to an",
+      "admin. Handlers call it at the top to gate admin-only actions:",
+      "",
+      "\tif err := h.RequireAdmin(c); err != nil {",
+      "\t\treturn h.RespondWithStatusError(c, http.StatusForbidden, err)",
+      "\t}",
+      ""
+    ],
+    "filepath": "internal/handlers/identity.go",
+    "filename": "identity.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
     "name": "HandleGetLibraryExplorerFileTree",
     "trimmedName": "GetLibraryExplorerFileTree",
     "comments": [
@@ -8697,6 +9017,382 @@
     }
   },
   {
+    "name": "nakamaPoolUser",
+    "trimmedName": "nakamaPoolUser",
+    "comments": [
+      "nakamaPoolUser builds the pool identity for the acting request from the profile/",
+      "identity layer. Local source; external users are constructed server-side when an",
+      "external instance contributes them (not wired yet).",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "requireRoomIdentity",
+    "trimmedName": "requireRoomIdentity",
+    "comments": [
+      "requireRoomIdentity rejects requests with no resolved user. On a local password-less",
+      "install dataUserID resolves to the admin, so only networked-anon (knows the server",
+      "password, not logged in) is blocked — you need an identity to be in the pool.",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleNakamaWatchRoomList",
+    "trimmedName": "NakamaWatchRoomList",
+    "comments": [
+      "HandleNakamaWatchRoomList",
+      "",
+      "\t@summary lists available same-instance watch rooms (discovery cards).",
+      "\t@route /api/v1/nakama/watch-room/list [GET]",
+      "\t@returns []nakama.RoomCard",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "lists available same-instance watch rooms (discovery cards).",
+      "descriptions": [],
+      "endpoint": "/api/v1/nakama/watch-room/list",
+      "methods": [
+        "GET"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "[]nakama.RoomCard",
+      "returnGoType": "nakama.RoomCard",
+      "returnTypescriptType": "Array\u003cNakama_RoomCard\u003e"
+    }
+  },
+  {
+    "name": "HandleNakamaWatchRoomCreate",
+    "trimmedName": "NakamaWatchRoomCreate",
+    "comments": [
+      "HandleNakamaWatchRoomCreate",
+      "",
+      "\t@summary creates a same-instance watch room and joins it as host.",
+      "\t@route /api/v1/nakama/watch-room/create [POST]",
+      "\t@returns nakama.WatchRoom",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "creates a same-instance watch room and joins it as host.",
+      "descriptions": [],
+      "endpoint": "/api/v1/nakama/watch-room/create",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "Name",
+          "jsonName": "name",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Password",
+          "jsonName": "password",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "ClientId",
+          "jsonName": "clientId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "nakama.WatchRoom",
+      "returnGoType": "nakama.WatchRoom",
+      "returnTypescriptType": "Nakama_WatchRoom"
+    }
+  },
+  {
+    "name": "HandleNakamaWatchRoomJoin",
+    "trimmedName": "NakamaWatchRoomJoin",
+    "comments": [
+      "HandleNakamaWatchRoomJoin",
+      "",
+      "\t@summary joins a same-instance watch room.",
+      "\t@route /api/v1/nakama/watch-room/join [POST]",
+      "\t@returns nakama.WatchRoom",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "joins a same-instance watch room.",
+      "descriptions": [],
+      "endpoint": "/api/v1/nakama/watch-room/join",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "RoomId",
+          "jsonName": "roomId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Password",
+          "jsonName": "password",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "ClientId",
+          "jsonName": "clientId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "nakama.WatchRoom",
+      "returnGoType": "nakama.WatchRoom",
+      "returnTypescriptType": "Nakama_WatchRoom"
+    }
+  },
+  {
+    "name": "HandleNakamaWatchRoomLeave",
+    "trimmedName": "NakamaWatchRoomLeave",
+    "comments": [
+      "HandleNakamaWatchRoomLeave",
+      "",
+      "\t@summary leaves the current same-instance watch room.",
+      "\t@route /api/v1/nakama/watch-room/leave [POST]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "leaves the current same-instance watch room.",
+      "descriptions": [],
+      "endpoint": "/api/v1/nakama/watch-room/leave",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "RoomId",
+          "jsonName": "roomId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleNakamaWatchRoomSetControl",
+    "trimmedName": "NakamaWatchRoomSetControl",
+    "comments": [
+      "HandleNakamaWatchRoomSetControl",
+      "",
+      "\t@summary (host only) grants or revokes playback control for a room member.",
+      "\t@route /api/v1/nakama/watch-room/control [POST]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "(host only) grants or revokes playback control for a room member.",
+      "descriptions": [],
+      "endpoint": "/api/v1/nakama/watch-room/control",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "RoomId",
+          "jsonName": "roomId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "TargetKey",
+          "jsonName": "targetKey",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "CanControl",
+          "jsonName": "canControl",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "All",
+          "jsonName": "all",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleNakamaWatchRoomForceTracks",
+    "trimmedName": "NakamaWatchRoomForceTracks",
+    "comments": [
+      "HandleNakamaWatchRoomForceTracks",
+      "",
+      "\t@summary (host only) toggles forcing the host's audio/subtitle tracks on all members.",
+      "\t@route /api/v1/nakama/watch-room/force-tracks [POST]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "(host only) toggles forcing the host's audio/subtitle tracks on all members.",
+      "descriptions": [],
+      "endpoint": "/api/v1/nakama/watch-room/force-tracks",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "RoomId",
+          "jsonName": "roomId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "ForceHostTracks",
+          "jsonName": "forceHostTracks",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleNakamaWatchRoomAutoSkip",
+    "trimmedName": "NakamaWatchRoomAutoSkip",
+    "comments": [
+      "HandleNakamaWatchRoomAutoSkip",
+      "",
+      "\t@summary sets the caller's OP/ED auto-skip vote (\"on\" | \"off\" | \"auto\") for a room.",
+      "\t@route /api/v1/nakama/watch-room/autoskip [POST]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "sets the caller's OP/ED auto-skip vote (\"on\" | \"off\" | \"auto\") for a room.",
+      "descriptions": [],
+      "endpoint": "/api/v1/nakama/watch-room/autoskip",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "RoomId",
+          "jsonName": "roomId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Pref",
+          "jsonName": "pref",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
     "name": "HandleGetOnlineStreamEpisodeList",
     "trimmedName": "GetOnlineStreamEpisodeList",
     "comments": [
@@ -12156,6 +12852,363 @@
       "descriptions": [],
       "endpoint": "",
       "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleUserLogin",
+    "trimmedName": "UserLogin",
+    "comments": [
+      "HandleUserLogin",
+      "",
+      "\t@summary logs in a Seanime user with username + password and returns a session token.",
+      "\t@desc This is the per-user identity layer that sits behind the server-password gate.",
+      "\t@desc The returned token must be sent as `Authorization: Bearer \u003ctoken\u003e` on subsequent requests.",
+      "\t@route /api/v1/user/login [POST]",
+      "\t@returns handlers.UserLoginResponse",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "logs in a Seanime user with username + password and returns a session token.",
+      "descriptions": [
+        "This is the per-user identity layer that sits behind the server-password gate.",
+        "The returned token must be sent as `Authorization: Bearer \u003ctoken\u003e` on subsequent requests."
+      ],
+      "endpoint": "/api/v1/user/login",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "Username",
+          "jsonName": "username",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Password",
+          "jsonName": "password",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "handlers.UserLoginResponse",
+      "returnGoType": "handlers.UserLoginResponse",
+      "returnTypescriptType": "UserLoginResponse"
+    }
+  },
+  {
+    "name": "HandleUserLogout",
+    "trimmedName": "UserLogout",
+    "comments": [
+      "HandleUserLogout",
+      "",
+      "\t@summary logs out the current Seanime user by revoking their session token.",
+      "\t@route /api/v1/user/logout [POST]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "logs out the current Seanime user by revoking their session token.",
+      "descriptions": [],
+      "endpoint": "/api/v1/user/logout",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleUserMe",
+    "trimmedName": "UserMe",
+    "comments": [
+      "HandleUserMe",
+      "",
+      "\t@summary returns the currently authenticated Seanime user.",
+      "\t@route /api/v1/user/me [GET]",
+      "\t@returns models.User",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "returns the currently authenticated Seanime user.",
+      "descriptions": [],
+      "endpoint": "/api/v1/user/me",
+      "methods": [
+        "GET"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "models.User",
+      "returnGoType": "models.User",
+      "returnTypescriptType": "Models_User"
+    }
+  },
+  {
+    "name": "HandleUserList",
+    "trimmedName": "UserList",
+    "comments": [
+      "HandleUserList",
+      "",
+      "\t@summary lists all Seanime users (admin only).",
+      "\t@route /api/v1/user/list [GET]",
+      "\t@returns []models.User",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "lists all Seanime users (admin only).",
+      "descriptions": [],
+      "endpoint": "/api/v1/user/list",
+      "methods": [
+        "GET"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "[]models.User",
+      "returnGoType": "models.User",
+      "returnTypescriptType": "Array\u003cModels_User\u003e"
+    }
+  },
+  {
+    "name": "HandleUserRegister",
+    "trimmedName": "UserRegister",
+    "comments": [
+      "HandleUserRegister",
+      "",
+      "\t@summary creates a new Seanime user (admin only).",
+      "\t@route /api/v1/user/register [POST]",
+      "\t@returns models.User",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "creates a new Seanime user (admin only).",
+      "descriptions": [],
+      "endpoint": "/api/v1/user/register",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "Username",
+          "jsonName": "username",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Password",
+          "jsonName": "password",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Role",
+          "jsonName": "role",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "models.User",
+      "returnGoType": "models.User",
+      "returnTypescriptType": "Models_User"
+    }
+  },
+  {
+    "name": "HandleUserChangePassword",
+    "trimmedName": "UserChangePassword",
+    "comments": [
+      "HandleUserChangePassword",
+      "",
+      "\t@summary changes the current user's password.",
+      "\t@desc Verifies the old password unless the user has none set yet (e.g. the bootstrapped admin).",
+      "\t@route /api/v1/user/change-password [POST]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "changes the current user's password.",
+      "descriptions": [
+        "Verifies the old password unless the user has none set yet (e.g. the bootstrapped admin)."
+      ],
+      "endpoint": "/api/v1/user/change-password",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "OldPassword",
+          "jsonName": "oldPassword",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "NewPassword",
+          "jsonName": "newPassword",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleSaveUserSettings",
+    "trimmedName": "SaveUserSettings",
+    "comments": [
+      "HandleSaveUserSettings",
+      "",
+      "\t@summary saves the current user's settings overrides (multi-user profiles).",
+      "\t@desc Any logged-in user may save their own overrides; admin-only fields are never part of the payload.",
+      "\t@route /api/v1/user/settings [PATCH]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "saves the current user's settings overrides (multi-user profiles).",
+      "descriptions": [
+        "Any logged-in user may save their own overrides; admin-only fields are never part of the payload."
+      ],
+      "endpoint": "/api/v1/user/settings",
+      "methods": [
+        "PATCH"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleSaveUserDebrid",
+    "trimmedName": "SaveUserDebrid",
+    "comments": [
+      "HandleSaveUserDebrid",
+      "",
+      "\t@summary saves the current user's debrid choice (use the server debrid, or their own).",
+      "\t@route /api/v1/user/debrid [PATCH]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "saves the current user's debrid choice (use the server debrid, or their own).",
+      "descriptions": [],
+      "endpoint": "/api/v1/user/debrid",
+      "methods": [
+        "PATCH"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "UseServerDebrid",
+          "jsonName": "useServerDebrid",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Provider",
+          "jsonName": "provider",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "ApiKey",
+          "jsonName": "apiKey",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "UseServerAutoSelect",
+          "jsonName": "useServerAutoSelect",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleUserDelete",
+    "trimmedName": "UserDelete",
+    "comments": [
+      "HandleUserDelete",
+      "",
+      "\t@summary deletes a Seanime user (admin only). Admin users cannot be deleted.",
+      "\t@route /api/v1/user/:id [DELETE]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/user_auth.go",
+    "filename": "user_auth.go",
+    "api": {
+      "summary": "deletes a Seanime user (admin only). Admin users cannot be deleted.",
+      "descriptions": [],
+      "endpoint": "/api/v1/user/:id",
+      "methods": [
+        "DELETE"
+      ],
       "params": [],
       "bodyFields": [],
       "returns": "bool",

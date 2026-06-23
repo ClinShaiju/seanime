@@ -2,18 +2,26 @@ import {
     Nakama_NakamaStatus,
     Nakama_WatchPartySession,
     Nakama_WatchPartySessionSettings,
+    Nakama_WatchRoom,
     VideoCore_OnlinestreamParams,
     VideoCore_ServerEvent,
 } from "@/api/generated/types"
 import {
     useNakamaCreateAndJoinRoom,
     useNakamaCreateWatchParty,
+    useNakamaCreateWatchRoom,
     useNakamaDisconnectFromRoom,
     useNakamaJoinWatchParty,
+    useNakamaJoinWatchRoom,
     useNakamaLeaveWatchParty,
+    useNakamaLeaveWatchRoom,
     useNakamaReconnectToHost,
     useNakamaRemoveStaleConnections,
     useNakamaRoomsAvailable,
+    useNakamaSetWatchRoomAutoSkip,
+    useNakamaSetWatchRoomControl,
+    useNakamaSetWatchRoomForceTracks,
+    useNakamaWatchRoomList,
 } from "@/api/hooks/nakama.hooks"
 import { useWebsocketMessageListener, useWebsocketSender } from "@/app/(main)/_hooks/handle-websockets"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
@@ -27,16 +35,18 @@ import { Button, IconButton } from "@/components/ui/button"
 import { cn } from "@/components/ui/core/styling"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import { Modal } from "@/components/ui/modal"
+import { Switch } from "@/components/ui/switch"
 import { TextInput } from "@/components/ui/text-input"
 import { Tooltip } from "@/components/ui/tooltip"
 import { copyToClipboard } from "@/lib/helpers/browser"
+import { useWatchRoomPlayerSync } from "./nakama-room-sync"
 import { WSEvents } from "@/lib/server/ws-events"
 import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { __isElectronDesktop__ } from "@/types/constants"
 import { atom, useAtom, useAtomValue } from "jotai"
 import React from "react"
 import { BiCog } from "react-icons/bi"
-import { FaBroadcastTower } from "react-icons/fa"
+import { FaBroadcastTower, FaLock } from "react-icons/fa"
 import { HiOutlinePlay } from "react-icons/hi2"
 import { LuClipboard, LuPopcorn } from "react-icons/lu"
 import { MdAdd, MdCleaningServices, MdOutlineConnectWithoutContact, MdPlayArrow, MdRefresh } from "react-icons/md"
@@ -46,6 +56,11 @@ import { ElectronPlaybackMethod, useCurrentDevicePlaybackSettings } from "../../
 
 export const nakamaModalOpenAtom = atom(false)
 export const nakamaStatusAtom = atom<Nakama_NakamaStatus | null | undefined>(undefined)
+
+// The same-instance watch room this client is currently in (null = not in a room).
+// Lifted to an atom so the player can read it to emit control actions + apply incoming
+// sync (the player-sync hook is the remaining wiring — see nakama-room.md).
+export const currentWatchRoomAtom = atom<Nakama_WatchRoom | null>(null)
 
 export function useNakamaStatus() {
     return useAtomValue(nakamaStatusAtom)
@@ -83,6 +98,9 @@ export function useNakamaWatchParty() {
 }
 
 export function NakamaManager() {
+    // Bridge the local player to the same-instance watch-room relay (emit/apply sync).
+    useWatchRoomPlayerSync()
+
     const { sendMessage } = useWebsocketSender()
     const [isModalOpen, setIsModalOpen] = useAtom(nakamaModalOpenAtom)
     const [nakamaStatus, setNakamaStatus] = useAtom(nakamaStatusAtom)
@@ -345,6 +363,10 @@ export function NakamaManager() {
             </div>
 
             {nakamaStatus === undefined && <LoadingSpinner />}
+
+            {/* Same-instance watch rooms — available to every user, independent of the
+                host/peer federation below. */}
+            {nakamaStatus !== undefined && <WatchRoomsSection open={isModalOpen} />}
 
             {!nakamaStatus?.isHost && (
                 <div className="flex items-center justify-between">
@@ -854,6 +876,288 @@ function WatchPartySessionView({ session, isHost, onLeave, isLeaving, isRoom }: 
              </div>
              </div>
              </SettingsCard> */}
+        </div>
+    )
+}
+
+// WatchRoomsSection renders the same-instance watch rooms: discovery cards + create/join,
+// and the in-room member list + host control panel. Independent of the host/peer party.
+// Identity is resolved server-side; "me" is matched by this client's id in the room.
+function WatchRoomsSection({ open }: { open: boolean }) {
+    const clientId = useAtomValue(clientIdAtom)
+
+    const { data: rooms, refetch: refetchRooms } = useNakamaWatchRoomList()
+    const { mutate: createRoom, isPending: isCreating } = useNakamaCreateWatchRoom()
+    const { mutate: joinRoom, isPending: isJoining } = useNakamaJoinWatchRoom()
+    const { mutate: leaveRoom, isPending: isLeaving } = useNakamaLeaveWatchRoom()
+    const { mutate: setControl } = useNakamaSetWatchRoomControl()
+    const { mutate: setForceTracks } = useNakamaSetWatchRoomForceTracks()
+    const { mutate: setAutoSkip } = useNakamaSetWatchRoomAutoSkip()
+
+    const [currentRoom, setCurrentRoom] = useAtom(currentWatchRoomAtom)
+    const [showCreate, setShowCreate] = React.useState(false)
+    const [newName, setNewName] = React.useState("")
+    const [newPassword, setNewPassword] = React.useState("")
+    const [joinTarget, setJoinTarget] = React.useState<string | null>(null)
+    const [joinPassword, setJoinPassword] = React.useState("")
+
+    // Refresh the discovery list whenever rooms change.
+    useWebsocketMessageListener({
+        type: WSEvents.NAKAMA_ROOMS_UPDATED,
+        onMessage: () => refetchRooms(),
+    })
+
+    // Track the room we're in (server pushes state to its members only).
+    useWebsocketMessageListener({
+        type: WSEvents.NAKAMA_WATCH_ROOM_STATE,
+        onMessage: (room: Nakama_WatchRoom | null) => {
+            setCurrentRoom(prev => (room && prev && prev.id === room.id) ? room : prev)
+        },
+    })
+
+    React.useEffect(() => {
+        if (open) refetchRooms()
+    }, [open])
+
+    // "Me" = the participant whose driving client is this client.
+    const me = React.useMemo(() => {
+        if (!currentRoom?.participants) return null
+        const entry = Object.entries(currentRoom.participants).find(([, p]) => p.clientId === clientId)
+        return entry ? { key: entry[0], participant: entry[1] } : null
+    }, [currentRoom, clientId])
+
+    const amHost = !!me?.participant?.isHost
+
+    function handleCreate() {
+        if (!newName.trim()) return
+        createRoom({ name: newName.trim(), password: newPassword, clientId: clientId || "" }, {
+            onSuccess: (room) => {
+                setCurrentRoom(room ?? null)
+                setShowCreate(false)
+                setNewName("")
+                setNewPassword("")
+                refetchRooms()
+            },
+            onError: (e) => toast.error(e.message),
+        })
+    }
+
+    function handleJoin(roomId: string, password: string) {
+        joinRoom({ roomId, password, clientId: clientId || "" }, {
+            onSuccess: (room) => {
+                setCurrentRoom(room ?? null)
+                setJoinTarget(null)
+                setJoinPassword("")
+                refetchRooms()
+            },
+            onError: (e) => toast.error(e.message),
+        })
+    }
+
+    function handleLeave() {
+        if (!currentRoom) return
+        leaveRoom({ roomId: currentRoom.id }, {
+            onSuccess: () => {
+                setCurrentRoom(null)
+                refetchRooms()
+            },
+        })
+    }
+
+    function handleSetControl(targetKey: string, canControl: boolean, all: boolean) {
+        if (!currentRoom) return
+        setControl({ roomId: currentRoom.id, targetKey, canControl, all }, {
+            onError: (e) => toast.error(e.message),
+        })
+    }
+
+    // ---- In a room ----
+    if (currentRoom) {
+        const participants = Object.entries(currentRoom.participants || {})
+        return (
+            <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                    <h4 className="flex items-center gap-2"><LuPopcorn className="size-6" /> {currentRoom.name}</h4>
+                    <Button onClick={handleLeave} disabled={isLeaving} size="sm" intent="alert-basic">
+                        {isLeaving ? "Leaving..." : amHost ? "Close room" : "Leave"}
+                    </Button>
+                </div>
+
+                <h5>Members ({participants.length})</h5>
+                <div className="p-4 border rounded-lg bg-gray-950 space-y-1">
+                    {participants.map(([key, p]) => {
+                        const isMe = p.clientId === clientId
+                        const isController = key === currentRoom.controllerKey
+                        return (
+                            <div key={key} className="flex items-center justify-between py-1">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-medium text-sm tracking-wide">
+                                        {p.user?.username}
+                                        {isMe && <span className="text-[--muted] font-normal"> (me)</span>}
+                                    </span>
+                                    {p.isHost && <Badge className="text-xs">Host</Badge>}
+                                    {isController && !p.isHost && <Badge intent="warning" className="text-xs">Controlling</Badge>}
+                                    {!p.isHost && p.canControl && <Badge intent="success" className="text-xs">Can control</Badge>}
+                                </div>
+                                {amHost && !p.isHost && (
+                                    <Tooltip trigger={<Switch
+                                        value={!!p.canControl}
+                                        onValueChange={(v) => handleSetControl(key, v, false)}
+                                    />}>
+                                        Allow this member to control playback
+                                    </Tooltip>
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+
+                {amHost && participants.length > 1 && (
+                    <div className="flex items-center justify-between p-3 border rounded-lg bg-gray-950">
+                        <span className="text-sm">Let everyone control playback</span>
+                        <div className="flex items-center gap-2">
+                            <Button size="sm" intent="primary-subtle" onClick={() => handleSetControl("", true, true)}>Everyone</Button>
+                            <Button size="sm" intent="gray-basic" onClick={() => handleSetControl("", false, true)}>Host only</Button>
+                        </div>
+                    </div>
+                )}
+
+                {amHost && (
+                    <div className="flex items-center justify-between p-3 border rounded-lg bg-gray-950">
+                        <div>
+                            <p className="text-sm">Force my subtitle &amp; audio tracks</p>
+                            <p className="text-xs text-[--muted]">Off: everyone picks their own.</p>
+                        </div>
+                        <Switch
+                            value={!!currentRoom.forceHostTracks}
+                            onValueChange={(v) => setForceTracks({ roomId: currentRoom.id, forceHostTracks: v }, {
+                                onError: (e) => toast.error(e.message),
+                            })}
+                        />
+                    </div>
+                )}
+
+                {/* Auto-skip OP/ED vote */}
+                <div className="p-3 border rounded-lg bg-gray-950 space-y-2">
+                    <div className="flex items-center justify-between">
+                        <span className="text-sm">Auto-skip OP/ED</span>
+                        <span className="text-xs">
+                            <span className={currentRoom.effectiveAutoSkip ? "text-green-400" : "text-[--muted]"}>
+                                {currentRoom.effectiveAutoSkip ? "On" : "Off"}
+                            </span>
+                            <span className="text-[--muted]"> · {currentRoom.autoSkipVotesOn} on / {currentRoom.autoSkipVotesOff} off</span>
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                        {(["on", "off", "auto"] as const).map(opt => {
+                            const active = me?.participant?.autoSkipPref === opt
+                            return (
+                                <Button
+                                    key={opt}
+                                    size="sm"
+                                    intent={active ? "primary" : "gray-basic"}
+                                    className="capitalize flex-1"
+                                    onClick={() => setAutoSkip({ roomId: currentRoom.id, pref: opt }, {
+                                        onError: (e) => toast.error(e.message),
+                                    })}
+                                >
+                                    {opt}
+                                </Button>
+                            )
+                        })}
+                    </div>
+                    <p className="text-xs text-[--muted]">
+                        Your vote. &quot;Auto&quot; follows the majority. Only the controller skips; everyone else follows the synced seek.
+                    </p>
+                </div>
+
+                <p className="text-xs text-[--muted]">
+                    {currentRoom.forceHostTracks
+                        ? "The host's subtitle and audio track are applied to everyone."
+                        : "Everyone keeps their own subtitles and audio track."} Start the same episode to sync.
+                </p>
+            </div>
+        )
+    }
+
+    // ---- Discovery ----
+    return (
+        <div className="space-y-3">
+            <div className="flex items-center justify-between">
+                <h4 className="flex items-center gap-2"><LuPopcorn className="size-6" /> Watch Rooms</h4>
+                <Button size="sm" intent="primary-subtle" leftIcon={<MdAdd />} onClick={() => setShowCreate(s => !s)}>
+                    Create room
+                </Button>
+            </div>
+
+            {showCreate && (
+                <div className="p-4 border rounded-lg bg-gray-950 space-y-2">
+                    <TextInput placeholder="Room name" value={newName} onValueChange={setNewName} />
+                    <TextInput type="password" placeholder="Password (optional)" value={newPassword} onValueChange={setNewPassword} />
+                    <Button className="w-full" intent="primary" disabled={isCreating || !newName.trim()} onClick={handleCreate}>
+                        {isCreating ? "Creating..." : "Create & join"}
+                    </Button>
+                </div>
+            )}
+
+            {!rooms?.length && !showCreate && (
+                <div className="text-center py-6 text-[--muted] text-sm">
+                    No active rooms. Create one to start watching together.
+                </div>
+            )}
+
+            <div className="space-y-2">
+                {rooms?.map((room) => (
+                    <div key={room.id} className="relative p-3 border rounded-lg bg-gray-950 flex gap-3">
+                        {room.coverImage && (
+                            <img src={room.coverImage} alt="" className="w-12 h-16 object-cover rounded-md shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                                <p className="font-semibold truncate">{room.name}</p>
+                                {room.hasPassword && (
+                                    <Tooltip trigger={<FaLock className="text-yellow-400 shrink-0 mt-1" />}>
+                                        Password required
+                                    </Tooltip>
+                                )}
+                            </div>
+                            <p className="text-sm text-[--muted]">Host: {room.hostUsername || "Unknown"}</p>
+                            {room.title && (
+                                <p className="text-xs text-[--muted] truncate">
+                                    {room.title}{room.episodeNumber ? ` · E${room.episodeNumber}` : ""}
+                                </p>
+                            )}
+                            <div className="flex items-center justify-between mt-2">
+                                <span className="text-xs text-[--muted]">
+                                    {room.memberCount} {room.memberCount === 1 ? "member" : "members"}
+                                </span>
+                                {joinTarget === room.id ? (
+                                    <div className="flex items-center gap-1">
+                                        <TextInput
+                                            type="password"
+                                            placeholder="Password"
+                                            value={joinPassword}
+                                            onValueChange={setJoinPassword}
+                                        />
+                                        <Button size="sm" intent="primary" disabled={isJoining} onClick={() => handleJoin(room.id, joinPassword)}>
+                                            Join
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <Button
+                                        size="sm"
+                                        intent="primary-subtle"
+                                        disabled={isJoining}
+                                        onClick={() => room.hasPassword ? setJoinTarget(room.id) : handleJoin(room.id, "")}
+                                    >
+                                        Join
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     )
 }

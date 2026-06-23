@@ -71,6 +71,11 @@ export const enum WSEvents {
     NAKAMA_WATCH_PARTY_ENABLE_RELAY_MODE = "nakama-watch-party-enable-relay-mode",
     NAKAMA_WATCH_PARTY_RELAY_MODE_TOGGLE_SHARE_LIBRARY_WITH_ORIGIN = "nakama-watch-party-relay-mode-toggle-share-library-with-origin",
     NAKAMA_WATCH_PARTY_CHAT_MESSAGE = "nakama-watch-party-chat-message",
+    // Same-instance watch rooms
+    NAKAMA_ROOMS_UPDATED = "nakama-rooms-updated", // server->client: discovery list changed
+    NAKAMA_WATCH_ROOM_STATE = "nakama-watch-room-state", // server->client: a room's state to its members
+    NAKAMA_ROOM_PLAYBACK_STATUS = "nakama-room-playback-status", // client->server: report a control action
+    NAKAMA_ROOM_PLAYBACK_SYNC = "nakama-room-playback-sync", // server->client: apply a controller's action
     SHOW_INDEFINITE_LOADER = "show-indefinite-loader",
     HIDE_INDEFINITE_LOADER = "hide-indefinite-loader",
     NAKAMA_ONLINE_STREAM_EVENT = "nakama-online-stream-event",

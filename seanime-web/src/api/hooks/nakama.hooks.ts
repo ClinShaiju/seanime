@@ -4,10 +4,16 @@ import {
     NakamaJoinWatchParty_Variables,
     NakamaPlayVideo_Variables,
     NakamaSendChatMessage_Variables,
+    NakamaWatchRoomAutoSkip_Variables,
+    NakamaWatchRoomCreate_Variables,
+    NakamaWatchRoomForceTracks_Variables,
+    NakamaWatchRoomJoin_Variables,
+    NakamaWatchRoomLeave_Variables,
+    NakamaWatchRoomSetControl_Variables,
     SendNakamaMessage_Variables,
 } from "../generated/endpoint.types"
 import { API_ENDPOINTS } from "../generated/endpoints"
-import { Nakama_MessageResponse } from "../generated/types"
+import { Nakama_MessageResponse, Nakama_RoomCard, Nakama_WatchRoom } from "../generated/types"
 
 export function useNakamaWebSocket() {
     return useServerQuery<boolean>({
@@ -134,5 +140,65 @@ export function useNakamaRoomsAvailable() {
         endpoint: API_ENDPOINTS.NAKAMA.NakamaRoomsAvailable.endpoint,
         method: API_ENDPOINTS.NAKAMA.NakamaRoomsAvailable.methods[0],
         queryKey: [API_ENDPOINTS.NAKAMA.NakamaRoomsAvailable.key],
+    })
+}
+
+//
+// Same-instance watch rooms (pool + multi-room model).
+//
+
+export function useNakamaWatchRoomList() {
+    return useServerQuery<Array<Nakama_RoomCard>>({
+        endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomList.endpoint,
+        method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomList.methods[0],
+        queryKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomList.key],
+    })
+}
+
+export function useNakamaCreateWatchRoom() {
+    return useServerMutation<Nakama_WatchRoom, NakamaWatchRoomCreate_Variables>({
+        endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomCreate.endpoint,
+        method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomCreate.methods[0],
+        mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomCreate.key],
+    })
+}
+
+export function useNakamaJoinWatchRoom() {
+    return useServerMutation<Nakama_WatchRoom, NakamaWatchRoomJoin_Variables>({
+        endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoin.endpoint,
+        method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoin.methods[0],
+        mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoin.key],
+    })
+}
+
+export function useNakamaLeaveWatchRoom() {
+    return useServerMutation<boolean, NakamaWatchRoomLeave_Variables>({
+        endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomLeave.endpoint,
+        method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomLeave.methods[0],
+        mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomLeave.key],
+    })
+}
+
+export function useNakamaSetWatchRoomControl() {
+    return useServerMutation<boolean, NakamaWatchRoomSetControl_Variables>({
+        endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomSetControl.endpoint,
+        method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomSetControl.methods[0],
+        mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomSetControl.key],
+    })
+}
+
+export function useNakamaSetWatchRoomForceTracks() {
+    return useServerMutation<boolean, NakamaWatchRoomForceTracks_Variables>({
+        endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomForceTracks.endpoint,
+        method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomForceTracks.methods[0],
+        mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomForceTracks.key],
+    })
+}
+
+export function useNakamaSetWatchRoomAutoSkip() {
+    return useServerMutation<boolean, NakamaWatchRoomAutoSkip_Variables>({
+        endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.endpoint,
+        method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.methods[0],
+        mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.key],
     })
 }

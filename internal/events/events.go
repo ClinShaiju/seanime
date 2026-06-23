@@ -100,6 +100,12 @@ const (
 	NakamaRoomClosed           = "nakama-room-closed"
 	NakamaRoomReconnected      = "nakama-room-reconnected"
 
+	// Same-instance watch rooms (pool + multi-room model). See internal/nakama/watch_room.go.
+	NakamaRoomsUpdated        = "nakama-rooms-updated"         // server->client: discovery card list changed
+	NakamaWatchRoomState      = "nakama-watch-room-state"      // server->client: a room's full state to its members
+	NakamaRoomPlaybackStatus  = "nakama-room-playback-status"  // client->server: a member reports a control action for relay
+	NakamaRoomPlaybackSync    = "nakama-room-playback-sync"    // server->client: apply a controller's action to follower players
+
 	NakamaOnlineStreamEvent = "nakama-online-stream-event"
 
 	// Nakama Watch Party events

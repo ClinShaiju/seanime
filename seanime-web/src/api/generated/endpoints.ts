@@ -1713,6 +1713,43 @@ export const API_ENDPOINTS = {
             endpoint: "/api/v1/nakama/watch-party/chat",
         },
     },
+    NAKAMA_ROOMS: {
+        NakamaWatchRoomList: {
+            key: "NAKAMA-ROOMS-nakama-watch-room-list",
+            methods: ["GET"],
+            endpoint: "/api/v1/nakama/watch-room/list",
+        },
+        NakamaWatchRoomCreate: {
+            key: "NAKAMA-ROOMS-nakama-watch-room-create",
+            methods: ["POST"],
+            endpoint: "/api/v1/nakama/watch-room/create",
+        },
+        NakamaWatchRoomJoin: {
+            key: "NAKAMA-ROOMS-nakama-watch-room-join",
+            methods: ["POST"],
+            endpoint: "/api/v1/nakama/watch-room/join",
+        },
+        NakamaWatchRoomLeave: {
+            key: "NAKAMA-ROOMS-nakama-watch-room-leave",
+            methods: ["POST"],
+            endpoint: "/api/v1/nakama/watch-room/leave",
+        },
+        NakamaWatchRoomSetControl: {
+            key: "NAKAMA-ROOMS-nakama-watch-room-set-control",
+            methods: ["POST"],
+            endpoint: "/api/v1/nakama/watch-room/control",
+        },
+        NakamaWatchRoomForceTracks: {
+            key: "NAKAMA-ROOMS-nakama-watch-room-force-tracks",
+            methods: ["POST"],
+            endpoint: "/api/v1/nakama/watch-room/force-tracks",
+        },
+        NakamaWatchRoomAutoSkip: {
+            key: "NAKAMA-ROOMS-nakama-watch-room-auto-skip",
+            methods: ["POST"],
+            endpoint: "/api/v1/nakama/watch-room/autoskip",
+        },
+    },
     ONLINESTREAM: {
         /**
          *  @description
@@ -2378,6 +2415,69 @@ export const API_ENDPOINTS = {
             key: "TORRENTSTREAM-delete-torrentstream-batch-history",
             methods: ["POST"],
             endpoint: "/api/v1/torrentstream/batch-history/delete",
+        },
+    },
+    USER_AUTH: {
+        /**
+         *  @description
+         *  Route logs in a Seanime user with username + password and returns a session token.
+         *  This is the per-user identity layer that sits behind the server-password gate.
+         *  The returned token must be sent as `Authorization: Bearer <token>` on subsequent requests.
+         */
+        UserLogin: {
+            key: "USER-AUTH-user-login",
+            methods: ["POST"],
+            endpoint: "/api/v1/user/login",
+        },
+        UserLogout: {
+            key: "USER-AUTH-user-logout",
+            methods: ["POST"],
+            endpoint: "/api/v1/user/logout",
+        },
+        UserMe: {
+            key: "USER-AUTH-user-me",
+            methods: ["GET"],
+            endpoint: "/api/v1/user/me",
+        },
+        UserList: {
+            key: "USER-AUTH-user-list",
+            methods: ["GET"],
+            endpoint: "/api/v1/user/list",
+        },
+        UserRegister: {
+            key: "USER-AUTH-user-register",
+            methods: ["POST"],
+            endpoint: "/api/v1/user/register",
+        },
+        /**
+         *  @description
+         *  Route changes the current user's password.
+         *  Verifies the old password unless the user has none set yet (e.g. the bootstrapped admin).
+         */
+        UserChangePassword: {
+            key: "USER-AUTH-user-change-password",
+            methods: ["POST"],
+            endpoint: "/api/v1/user/change-password",
+        },
+        /**
+         *  @description
+         *  Route saves the current user's settings overrides (multi-user profiles).
+         *  Any logged-in user may save their own overrides; admin-only fields are never part of the payload.
+         */
+        SaveUserSettings: {
+            key: "USER-AUTH-save-user-settings",
+            methods: ["PATCH"],
+            endpoint: "/api/v1/user/settings",
+        },
+        SaveUserDebrid: {
+            key: "USER-AUTH-save-user-debrid",
+            methods: ["PATCH"],
+            endpoint: "/api/v1/user/debrid",
+        },
+        UserDelete: {
+            key: "USER-AUTH-user-delete",
+            methods: ["DELETE"],
+            endpoint: "/api/v1/user/:id",
         },
     },
     VIDEOCORE: {

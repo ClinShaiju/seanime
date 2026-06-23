@@ -1,4 +1,5 @@
-import { useNakamaWatchParty } from "@/app/(main)/_features/nakama/nakama-manager"
+import { currentWatchRoomAtom, useNakamaWatchParty } from "@/app/(main)/_features/nakama/nakama-manager"
+import { clientIdAtom } from "@/app/websocket-provider"
 import { vc_previewManager } from "@/app/(main)/_features/video-core/video-core"
 import { VIDEOCORE_DEBUG_ELEMENTS, VideoCoreChapterCue } from "@/app/(main)/_features/video-core/video-core"
 import { vc_isMobile } from "@/app/(main)/_features/video-core/video-core-atoms"
@@ -65,6 +66,17 @@ export function VideoCoreTimeRange(props: VideoCoreTimeRangeProps) {
     const action = useSetAtom(vc_dispatchAction)
     const showChapterMarkers = useAtomValue(vc_showChapterMarkersAtom)
     const autoSkipIntroOutro = useAtomValue(vc_autoSkipOPEDAtom)
+
+    // Watch-room auto-skip: in a room, only the controller auto-skips (others follow the
+    // synced seek — no "some skipped, some didn't" desync), and on/off is the vote result.
+    const watchRoom = useAtomValue(currentWatchRoomAtom)
+    const myClientId = useAtomValue(clientIdAtom)
+    const roomAutoSkip = React.useMemo(() => {
+        if (!watchRoom?.participants) return null
+        const entry = Object.entries(watchRoom.participants).find(([, p]) => p.clientId === myClientId)
+        const amController = !!entry && entry[0] === watchRoom.controllerKey
+        return { amController, effective: !!watchRoom.effectiveAutoSkip }
+    }, [watchRoom, myClientId])
     const showOverlayFeedback = useSetAtom(vc_showOverlayFeedback)
     const [skipOpeningTime, setSkipOpeningTime] = useAtom(vc_skipOpeningTime)
     const [skipEndingTime, setSkipEndingTime] = useAtom(vc_skipEndingTime)
@@ -126,11 +138,16 @@ export function VideoCoreTimeRange(props: VideoCoreTimeRangeProps) {
     React.useEffect(() => {
         if (!opEdChapters.opening?.end && !opEdChapters.ending?.end) return
         if (isNaN(duration) || duration <= 1) return
-        if (isWatchPartyPeer) {
+        // Suppress auto-skip + the manual skip buttons for followers: watch-party peers, and
+        // non-controller room members (they follow the controller's synced seek).
+        if (isWatchPartyPeer || (roomAutoSkip && !roomAutoSkip.amController)) {
             setSkipOpeningTime(0)
             setSkipEndingTime(0)
             return
         }
+
+        // In a room the auto-skip on/off is the vote result; otherwise the local setting.
+        const effectiveAutoSkip = roomAutoSkip ? roomAutoSkip.effective : autoSkipIntroOutro
 
         // e.currentTarget.currentTime >= aniSkipData.op.interval.startTime &&
         //             e.currentTarget.currentTime < aniSkipData.op.interval.endTime
@@ -140,7 +157,7 @@ export function VideoCoreTimeRange(props: VideoCoreTimeRangeProps) {
             currentTime >= opEdChapters.opening.start &&
             currentTime < opEdChapters.opening.end
         ) {
-            if (autoSkipIntroOutro && !restoreProgressTo) {
+            if (effectiveAutoSkip && !restoreProgressTo) {
                 console.log("auto skip", opEdChapters.opening.end)
                 action({ type: "seekTo", payload: { time: opEdChapters.opening.end } })
                 showOverlayFeedback({ message: "Skipped OP", duration: 1000 })
@@ -158,7 +175,7 @@ export function VideoCoreTimeRange(props: VideoCoreTimeRangeProps) {
             currentTime < opEdChapters.ending.end &&
             currentTime < duration
         ) {
-            if (autoSkipIntroOutro && !restoreProgressTo) {
+            if (effectiveAutoSkip && !restoreProgressTo) {
                 console.log("auto skip", opEdChapters.ending.end)
                 action({ type: "seekTo", payload: { time: opEdChapters.ending.end } })
                 showOverlayFeedback({ message: "Skipped ED", duration: 1000 })
@@ -169,7 +186,7 @@ export function VideoCoreTimeRange(props: VideoCoreTimeRangeProps) {
             setSkipEndingTime(0)
         }
 
-    }, [currentTime, autoSkipIntroOutro, opEdChapters, duration, restoreProgressTo, isWatchPartyPeer])
+    }, [currentTime, autoSkipIntroOutro, opEdChapters, duration, restoreProgressTo, isWatchPartyPeer, roomAutoSkip])
 
     // start seeking
     function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {

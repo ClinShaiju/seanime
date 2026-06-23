@@ -3010,23 +3010,37 @@ export type Status = {
     serverReady: boolean
     serverHasPassword: boolean
     showChangelogTour: string
-    /**
-     * Role of the resolved acting user ("admin" | "user" | ""). Used to gate admin-only UI.
-     */
-    userRole?: string
-    /**
-     * True once at least one regular (non-admin) user exists (multi-user active).
-     */
-    serverHasUsers?: boolean
-    /**
-     * True when the request passed the server-password gate. The login UI uses this to
-     * reject a wrong password instead of advancing to the user-login screen.
-     */
-    serverAuthenticated?: boolean
-    /**
-     * The acting non-admin user's debrid override (use server debrid, or their own).
-     */
-    userDebrid?: { useServerDebrid: boolean, provider: string, hasApiKey: boolean, useServerAutoSelect: boolean }
+    userRole: string
+    serverHasUsers: boolean
+    serverAuthenticated: boolean
+    userDebrid?: UserDebridStatus
+}
+
+/**
+ * - Filepath: internal/handlers/status.go
+ * - Filename: status.go
+ * - Package: handlers
+ * @description
+ *  UserDebridStatus is a non-admin user's debrid choice. When UseServerDebrid is true
+ *  (default) they stream via the shared server debrid; otherwise their own provider/key.
+ */
+export type UserDebridStatus = {
+    useServerDebrid: boolean
+    provider: string
+    hasApiKey: boolean
+    useServerAutoSelect: boolean
+}
+
+/**
+ * - Filepath: internal/handlers/user_auth.go
+ * - Filename: user_auth.go
+ * - Package: handlers
+ * @description
+ *  UserLoginResponse is returned on a successful user login.
+ */
+export type UserLoginResponse = {
+    token: string
+    user?: Models_User
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -4152,6 +4166,7 @@ export type Models_StringSlice = Array<string>
  * - Package: models
  */
 export type Models_Theme = {
+    userId: number
     enableColorSettings: boolean
     backgroundColor: string
     accentColor: string
@@ -4203,9 +4218,9 @@ export type Models_Theme = {
     hideAnimeSpoilerTitles: boolean
     hideAnimeSpoilerDescriptions: boolean
     hideAnimeSpoilerSkipNextEpisode: boolean
-    groupSeasons?: boolean
-    hideFranchiseSpinoffs?: boolean
-    hideFranchiseRecaps?: boolean
+    groupSeasons: boolean
+    hideFranchiseSpinoffs: boolean
+    hideFranchiseRecaps: boolean
     id: number
     createdAt?: string
     updatedAt?: string
@@ -4259,6 +4274,32 @@ export type Models_TorrentstreamSettings = {
     streamUrlAddress: string
     slowSeeding: boolean
     preloadNextStream: boolean
+    id: number
+    createdAt?: string
+    updatedAt?: string
+}
+
+/**
+ * - Filepath: internal/database/models/models.go
+ * - Filename: models.go
+ * - Package: models
+ * @description
+ *  User is a Seanime-local account: a credential (username + bcrypt password) and a
+ *  role. It is distinct from the AniList Account, which is linked separately via
+ *  AnilistAccountID. The first user created is the admin (server owner) who controls
+ *  the shared content/infrastructure plane.
+ *  
+ *  ponytail: admin identity is also satisfied by the server-password holder, so a
+ *  single-user install needs no User rows to behave as today; the admin row is a
+ *  bootstrap convenience and the anchor for per-user data.
+ */
+export type Models_User = {
+    username: string
+    /**
+     * UserRoleAdmin | UserRoleUser
+     */
+    role: string
+    anilistAccountId?: number
     id: number
     createdAt?: string
     updatedAt?: string
@@ -4352,6 +4393,38 @@ export type Nakama_NakamaStatus = {
 }
 
 /**
+ * - Filepath: internal/nakama/watch_room.go
+ * - Filename: watch_room.go
+ * - Package: nakama
+ * @description
+ *  PoolUser identifies a user in the hub's pool. The Key is the stable, collision-safe
+ *  identifier: local users key on their username; external users are namespaced by their
+ *  origin server tag so an external "alice" never collides with a local "alice".
+ */
+export type Nakama_PoolUser = {
+    /**
+     * Seanime user id (0 = local single-user/admin install)
+     */
+    userId: number
+    /**
+     * display name (bare, un-namespaced)
+     */
+    username: string
+    source: Nakama_PoolUserSource
+    /**
+     * external origin; "" for local
+     */
+    serverTag?: string
+}
+
+/**
+ * - Filepath: internal/nakama/watch_room.go
+ * - Filename: watch_room.go
+ * - Package: nakama
+ */
+export type Nakama_PoolUserSource = "local" | "external"
+
+/**
  * - Filepath: internal/nakama/room.go
  * - Filename: room.go
  * - Package: nakama
@@ -4364,6 +4437,79 @@ export type Nakama_Room = {
     peerJoinUrl: string
     createdAt?: string
     expiresAt?: string
+}
+
+/**
+ * - Filepath: internal/nakama/watch_room.go
+ * - Filename: watch_room.go
+ * - Package: nakama
+ * @description
+ *  RoomCard is the public, listing-safe view of a room shown on the discovery cards.
+ *  It deliberately omits the participant list (no global userlist; members are only
+ *  visible inside a room) and the password hash. mediaId/episode let the frontend render
+ *  the cover from its own metadata — the hub does no metadata lookups.
+ */
+export type Nakama_RoomCard = {
+    id: string
+    name: string
+    hostUsername: string
+    memberCount: number
+    hasPassword: boolean
+    mediaId?: number
+    episodeNumber?: number
+    title?: string
+    coverImage?: string
+}
+
+/**
+ * - Filepath: internal/nakama/watch_room.go
+ * - Filename: watch_room.go
+ * - Package: nakama
+ * @description
+ *  RoomParticipant is a PoolUser inside a specific room.
+ */
+export type Nakama_RoomParticipant = {
+    user: Nakama_PoolUser
+    /**
+     * the UI ws client id this participant drives from
+     */
+    clientId: string
+    /**
+     * the ORIGINAL host (room creator)
+     */
+    isHost: boolean
+    /**
+     * may drive play/pause/seek/episode
+     */
+    canControl: boolean
+    /**
+     * for promotion ordering
+     */
+    joinedAt?: string
+    autoSkipPref: string
+}
+
+/**
+ * - Filepath: internal/nakama/watch_room.go
+ * - Filename: watch_room.go
+ * - Package: nakama
+ * @description
+ *  RoomPlaybackStatusPayload is a control action relayed between members. It carries
+ *  ONLY position + media identity — deliberately NO audio/subtitle track fields, so each
+ *  member keeps their own track selection (per-user tracks). client->server on a control
+ *  action (play/pause/seek/episode change), server->followers to apply.
+ */
+export type Nakama_RoomPlaybackStatusPayload = {
+    roomId: string
+    paused: boolean
+    currentTime: number
+    duration: number
+    mediaId: number
+    episodeNumber: number
+    aniDbEpisode: string
+    streamType: Nakama_WatchPartyStreamType
+    audioTrack?: number
+    subtitleTrack?: number
 }
 
 /**
@@ -4484,6 +4630,43 @@ export type Nakama_WatchPartySessionSettings = {
  * - Package: nakama
  */
 export type Nakama_WatchPartyStreamType = "file" | "torrent" | "debrid" | "onlinestream"
+
+/**
+ * - Filepath: internal/nakama/watch_room.go
+ * - Filename: watch_room.go
+ * - Package: nakama
+ * @description
+ *  WatchRoom is one same-instance room. Playback sync state is layered on later
+ *  (task: per-room sync); this type is the membership + control spine.
+ */
+export type Nakama_WatchRoom = {
+    id: string
+    name: string
+    /**
+     * original host's pool key (room owner)
+     */
+    hostKey: string
+    /**
+     * effective driver (host, or a promoted member)
+     */
+    controllerKey: string
+    hasPassword: boolean
+    forceHostTracks: boolean
+    /**
+     * keyed by PoolUser.Key()
+     */
+    participants?: Record<string, Nakama_RoomParticipant>
+    currentMediaInfo?: Nakama_WatchPartySessionMediaInfo
+    lastPlayback?: Nakama_RoomPlaybackStatusPayload
+    effectiveAutoSkip: boolean
+    autoSkipVotesOn: number
+    autoSkipVotesOff: number
+    createdAt?: string
+    /**
+     * sha256 hex of the password; empty = open room
+     */
+    passwordHash: string
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Nativeplayer

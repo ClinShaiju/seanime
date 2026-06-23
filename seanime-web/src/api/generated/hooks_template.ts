@@ -2104,6 +2104,85 @@
 // }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// nakama_rooms
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// export function useNakamaWatchRoomList() {
+//     return useServerQuery<Array<Nakama_RoomCard>>({
+//         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomList.endpoint,
+//         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomList.methods[0],
+//         queryKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomList.key],
+//         enabled: true,
+//     })
+// }
+
+// export function useNakamaWatchRoomCreate() {
+//     return useServerMutation<Nakama_WatchRoom, NakamaWatchRoomCreate_Variables>({
+//         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomCreate.endpoint,
+//         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomCreate.methods[0],
+//         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomCreate.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useNakamaWatchRoomJoin() {
+//     return useServerMutation<Nakama_WatchRoom, NakamaWatchRoomJoin_Variables>({
+//         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoin.endpoint,
+//         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoin.methods[0],
+//         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoin.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useNakamaWatchRoomLeave() {
+//     return useServerMutation<boolean, NakamaWatchRoomLeave_Variables>({
+//         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomLeave.endpoint,
+//         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomLeave.methods[0],
+//         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomLeave.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useNakamaWatchRoomSetControl() {
+//     return useServerMutation<boolean, NakamaWatchRoomSetControl_Variables>({
+//         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomSetControl.endpoint,
+//         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomSetControl.methods[0],
+//         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomSetControl.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useNakamaWatchRoomForceTracks() {
+//     return useServerMutation<boolean, NakamaWatchRoomForceTracks_Variables>({
+//         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomForceTracks.endpoint,
+//         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomForceTracks.methods[0],
+//         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomForceTracks.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useNakamaWatchRoomAutoSkip() {
+//     return useServerMutation<boolean, NakamaWatchRoomAutoSkip_Variables>({
+//         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.endpoint,
+//         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.methods[0],
+//         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // onlinestream
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -2877,6 +2956,105 @@
 //         endpoint: API_ENDPOINTS.TORRENTSTREAM.DeleteTorrentstreamBatchHistory.endpoint,
 //         method: API_ENDPOINTS.TORRENTSTREAM.DeleteTorrentstreamBatchHistory.methods[0],
 //         mutationKey: [API_ENDPOINTS.TORRENTSTREAM.DeleteTorrentstreamBatchHistory.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// user_auth
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// export function useUserLogin() {
+//     return useServerMutation<UserLoginResponse, UserLogin_Variables>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.UserLogin.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.UserLogin.methods[0],
+//         mutationKey: [API_ENDPOINTS.USER_AUTH.UserLogin.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useUserLogout() {
+//     return useServerMutation<boolean>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.UserLogout.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.UserLogout.methods[0],
+//         mutationKey: [API_ENDPOINTS.USER_AUTH.UserLogout.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useUserMe() {
+//     return useServerQuery<Models_User>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.UserMe.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.UserMe.methods[0],
+//         queryKey: [API_ENDPOINTS.USER_AUTH.UserMe.key],
+//         enabled: true,
+//     })
+// }
+
+// export function useUserList() {
+//     return useServerQuery<Array<Models_User>>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.UserList.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.UserList.methods[0],
+//         queryKey: [API_ENDPOINTS.USER_AUTH.UserList.key],
+//         enabled: true,
+//     })
+// }
+
+// export function useUserRegister() {
+//     return useServerMutation<Models_User, UserRegister_Variables>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.UserRegister.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.UserRegister.methods[0],
+//         mutationKey: [API_ENDPOINTS.USER_AUTH.UserRegister.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useUserChangePassword() {
+//     return useServerMutation<boolean, UserChangePassword_Variables>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.UserChangePassword.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.UserChangePassword.methods[0],
+//         mutationKey: [API_ENDPOINTS.USER_AUTH.UserChangePassword.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useSaveUserSettings() {
+//     return useServerMutation<boolean>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.SaveUserSettings.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.SaveUserSettings.methods[0],
+//         mutationKey: [API_ENDPOINTS.USER_AUTH.SaveUserSettings.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useSaveUserDebrid() {
+//     return useServerMutation<boolean, SaveUserDebrid_Variables>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.SaveUserDebrid.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.SaveUserDebrid.methods[0],
+//         mutationKey: [API_ENDPOINTS.USER_AUTH.SaveUserDebrid.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useUserDelete() {
+//     return useServerMutation<boolean>({
+//         endpoint: API_ENDPOINTS.USER_AUTH.UserDelete.endpoint,
+//         method: API_ENDPOINTS.USER_AUTH.UserDelete.methods[0],
+//         mutationKey: [API_ENDPOINTS.USER_AUTH.UserDelete.key],
 //         onSuccess: async () => {
 // 
 //         },

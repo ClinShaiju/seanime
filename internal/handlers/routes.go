@@ -618,6 +618,14 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1Nakama.POST("/watch-party/join", h.HandleNakamaJoinWatchParty)
 	v1Nakama.POST("/watch-party/leave", h.HandleNakamaLeaveWatchParty)
 	v1Nakama.POST("/watch-party/chat", h.HandleNakamaSendChatMessage)
+	// Same-instance watch rooms (pool + multi-room model; distinct from /room/* relay).
+	v1Nakama.GET("/watch-room/list", h.HandleNakamaWatchRoomList)
+	v1Nakama.POST("/watch-room/create", h.HandleNakamaWatchRoomCreate)
+	v1Nakama.POST("/watch-room/join", h.HandleNakamaWatchRoomJoin)
+	v1Nakama.POST("/watch-room/leave", h.HandleNakamaWatchRoomLeave)
+	v1Nakama.POST("/watch-room/control", h.HandleNakamaWatchRoomSetControl)
+	v1Nakama.POST("/watch-room/force-tracks", h.HandleNakamaWatchRoomForceTracks)
+	v1Nakama.POST("/watch-room/autoskip", h.HandleNakamaWatchRoomAutoSkip)
 
 	//
 	// Custom Source

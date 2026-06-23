@@ -84,6 +84,7 @@ export const ThemeMediaPageInfoBoxSizeOptions = [
 
 export type ThemeSettings = Omit<Models_Theme, "id">
 export const THEME_DEFAULT_VALUES: ThemeSettings = {
+    userId: 0, // server-assigned (per-user themes); 0 is a placeholder like id
     enableColorSettings: false,
     animeEntryScreenLayout: "stacked",
     smallerEpisodeCarouselSize: false,
@@ -141,6 +142,7 @@ export type ThemeSettingsHook = {
 export function useThemeSettings(): ThemeSettingsHook {
     const serverStatus = useServerStatus()
     return {
+        userId: serverStatus?.themeSettings?.userId ?? 0,
         enableColorSettings: getThemeValue("enableColorSettings", serverStatus?.themeSettings),
         animeEntryScreenLayout: getThemeValue("animeEntryScreenLayout", serverStatus?.themeSettings),
         smallerEpisodeCarouselSize: getThemeValue("smallerEpisodeCarouselSize", serverStatus?.themeSettings),

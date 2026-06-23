@@ -78,6 +78,7 @@ type Manager struct {
 
 	reqClient         *req.Client
 	watchPartyManager *WatchPartyManager
+	watchRoomHub      *WatchRoomHub // same-instance rooms (parallel to the peer/host watch party)
 
 	previousPath string // latest file streamed by the peer - real path on the host
 
@@ -252,6 +253,7 @@ func NewManager(opts *NewManagerOptions) *Manager {
 
 	m.genericPlayer = NewWatchPartyGenericPlayer(m)
 	m.watchPartyManager = NewWatchPartyManager(m)
+	m.watchRoomHub = NewWatchRoomHub(m, opts.Logger)
 
 	// Register default message handlers
 	m.registerDefaultHandlers()
@@ -316,6 +318,22 @@ func NewManager(opts *NewManagerOptions) *Manager {
 					continue
 				}
 				m.GetWatchPartyManager().EnableRelayMode(payload.PeerId)
+			}
+
+			if event.Type == events.NakamaRoomPlaybackStatus {
+				// A same-instance room member reported a control action — relay it to the
+				// other members (the hub enforces who is allowed to drive).
+				var payload RoomPlaybackStatusPayload
+				marshaledPayload, err := json.Marshal(event.Payload)
+				if err != nil {
+					m.logger.Error().Err(err).Msg("nakama: Failed to marshal room playback status payload")
+					continue
+				}
+				if err := json.Unmarshal(marshaledPayload, &payload); err != nil {
+					m.logger.Error().Err(err).Msg("nakama: Failed to unmarshal room playback status payload")
+					continue
+				}
+				m.watchRoomHub.RelayPlaybackStatus(event.ClientID, &payload)
 			}
 		}
 	}()
@@ -421,6 +439,11 @@ func (m *Manager) GetHostConnection() (*HostConnection, bool) {
 // GetWatchPartyManager returns the watch party manager
 func (m *Manager) GetWatchPartyManager() *WatchPartyManager {
 	return m.watchPartyManager
+}
+
+// GetWatchRoomHub returns the same-instance watch room hub.
+func (m *Manager) GetWatchRoomHub() *WatchRoomHub {
+	return m.watchRoomHub
 }
 
 // Cleanup stops all connections and services

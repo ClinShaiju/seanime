@@ -89,6 +89,11 @@ func (h *Handler) webSocketEventHandler(c echo.Context) error {
 				h.App.Logger.Debug().Str("id", id).Msg("ws: Client disconnection")
 			}
 			h.App.WSEventManager.RemoveConn(id)
+			// Hand off watch-room control if this client was driving a room (the
+			// participant stays — they may be reconnecting).
+			if h.App.NakamaManager != nil {
+				h.App.NakamaManager.GetWatchRoomHub().HandleClientDisconnect(id)
+			}
 			break
 		}
 
