@@ -70,6 +70,11 @@ func TestWatchRoom_Password(t *testing.T) {
 	if _, err := h.JoinRoom(room.ID, localUser("bob"), "c2", "hunter2"); err != nil {
 		t.Fatalf("correct password should join: %v", err)
 	}
+	// Reconnect (already a member) must succeed even without re-supplying the password —
+	// the new ws connection carries a fresh clientId and no password.
+	if _, err := h.JoinRoom(room.ID, localUser("bob"), "c2-reconnect", ""); err != nil {
+		t.Fatalf("existing member reconnect should not require the password: %v", err)
+	}
 }
 
 func TestWatchRoom_PromotionByJoinOrder(t *testing.T) {
@@ -87,13 +92,13 @@ func TestWatchRoom_PromotionByJoinOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Host's client disconnects → control hands off, but to the EARLIEST joiner, which
-	// is still alice (she's a participant until she leaves). Simulate her leaving so the
-	// promotion picks the next.
-	if err := h.LeaveRoom(room.ID, host.Key()); err != nil {
-		t.Fatal(err)
-	}
+	// Host's controller client drops → control hands off to the next by join order, which
+	// is bob (joined before carol). Promotion picks the earliest OTHER participant.
+	h.HandleClientDisconnect("client-alice")
 	room, _ = h.GetRoom(room.ID)
+	if room == nil {
+		t.Fatal("room should survive a host client drop")
+	}
 	if room.ControllerKey != localUser("bob").Key() {
 		t.Fatalf("expected bob promoted (earliest remaining joiner), got %s", room.ControllerKey)
 	}
@@ -123,6 +128,32 @@ func TestWatchRoom_HostDisconnectKeepsRoomAndReclaim(t *testing.T) {
 	room, _ = h.GetRoom(room.ID)
 	if room.ControllerKey != host.Key() {
 		t.Fatalf("host should reclaim control on reconnect, got %s", room.ControllerKey)
+	}
+}
+
+func TestWatchRoom_HostLeaveClosesRoom(t *testing.T) {
+	h := newTestHub()
+	host := localUser("alice")
+	room, _ := h.CreateRoom(host, "client-alice", "Room", "")
+	time.Sleep(2 * time.Millisecond)
+	h.JoinRoom(room.ID, localUser("bob"), "client-bob", "")
+
+	// Host leaves intentionally → the whole room is torn down (not promoted to bob).
+	if err := h.LeaveRoom(room.ID, host.Key()); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := h.GetRoom(room.ID); r != nil {
+		t.Fatal("host leaving should close the room for everyone")
+	}
+
+	// A non-host leaving only removes that member; the room stays for the rest.
+	room2, _ := h.CreateRoom(host, "client-alice", "Room2", "")
+	h.JoinRoom(room2.ID, localUser("bob"), "client-bob", "")
+	if err := h.LeaveRoom(room2.ID, localUser("bob").Key()); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := h.GetRoom(room2.ID); r == nil {
+		t.Fatal("a non-host leaving must not close the room")
 	}
 }
 

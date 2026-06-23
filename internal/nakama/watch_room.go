@@ -103,6 +103,9 @@ type RoomPlaybackStatusPayload struct {
 	EpisodeNumber int                  `json:"episodeNumber"`
 	AniDBEpisode  string               `json:"aniDbEpisode"`
 	StreamType    WatchPartyStreamType `json:"streamType"`
+	// Stopped marks the controller ending the episode (closing the player). Followers stop
+	// theirs too — the mirror of auto-start. When true the media fields are meaningless.
+	Stopped bool `json:"stopped,omitempty"`
 	// AudioTrack/SubtitleTrack are only set by the host when ForceHostTracks is on, so
 	// members can mirror the host's selection. nil otherwise (per-user tracks).
 	AudioTrack    *int `json:"audioTrack,omitempty"`
@@ -207,14 +210,10 @@ func (h *WatchRoomHub) JoinRoom(roomID string, user PoolUser, clientID, password
 	}
 
 	room.mu.Lock()
-	if room.passwordHash != "" && hashRoomPassword(password) != room.passwordHash {
-		room.mu.Unlock()
-		return nil, ErrRoomWrongPassword
-	}
-
 	key := user.Key()
 	if p, exists := room.Participants[key]; exists {
 		// Reconnect / new tab: refresh the driving client, keep host/control/joinedAt.
+		// No password re-check — they're already a member (and a reconnect carries none).
 		p.ClientID = clientID
 		// If this is the original host returning, control reverts to them (§2.6).
 		if p.IsHost {
@@ -223,6 +222,12 @@ func (h *WatchRoomHub) JoinRoom(roomID string, user PoolUser, clientID, password
 		room.mu.Unlock()
 		h.broadcastRoomState(room)
 		return room, nil
+	}
+
+	// New join: enforce the room password.
+	if room.passwordHash != "" && hashRoomPassword(password) != room.passwordHash {
+		room.mu.Unlock()
+		return nil, ErrRoomWrongPassword
 	}
 
 	room.Participants[key] = &RoomParticipant{
@@ -254,6 +259,29 @@ func (h *WatchRoomHub) LeaveRoom(roomID string, userKey string) error {
 	if _, exists := room.Participants[userKey]; !exists {
 		room.mu.Unlock()
 		return ErrParticipantUnknown
+	}
+	// The host leaving = closing the room intentionally: tear it down and tell every other
+	// member to stop playback. (A host whose CLIENT merely drops keeps the room alive — that
+	// path is HandleClientDisconnect, which never removes the participant.)
+	if userKey == room.HostKey {
+		others := make([]string, 0, len(room.Participants))
+		for k, p := range room.Participants {
+			if k != userKey && p.ClientID != "" {
+				others = append(others, p.ClientID)
+			}
+		}
+		room.mu.Unlock()
+		h.mu.Lock()
+		delete(h.rooms, roomID)
+		h.mu.Unlock()
+		h.logf("host left room %s, closed", roomID)
+		if h.manager != nil && h.manager.wsEventManager != nil {
+			for _, cid := range others {
+				h.manager.wsEventManager.SendEventTo(cid, events.NakamaWatchRoomClosed, roomID, true)
+			}
+		}
+		h.broadcastRoomsUpdated()
+		return nil
 	}
 	delete(room.Participants, userKey)
 	empty := len(room.Participants) == 0

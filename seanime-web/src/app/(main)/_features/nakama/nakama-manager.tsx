@@ -34,17 +34,18 @@ import { Switch } from "@/components/ui/switch"
 import { TextInput } from "@/components/ui/text-input"
 import { Tooltip } from "@/components/ui/tooltip"
 import { copyToClipboard } from "@/lib/helpers/browser"
+import { nativePlayer_terminateRequestedAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
 import { useWatchRoomPlayerSync } from "./nakama-room-sync"
 import { WSEvents } from "@/lib/server/ws-events"
 import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { __isElectronDesktop__ } from "@/types/constants"
-import { atom, useAtom, useAtomValue } from "jotai"
+import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
 import React from "react"
 import { BiCog } from "react-icons/bi"
 import { FaBroadcastTower, FaLock } from "react-icons/fa"
 import { HiOutlinePlay } from "react-icons/hi2"
 import { LuClipboard, LuPopcorn } from "react-icons/lu"
-import { MdAdd, MdCleaningServices, MdOutlineConnectWithoutContact, MdPlayArrow, MdRefresh } from "react-icons/md"
+import { MdAdd, MdArrowBack, MdCleaningServices, MdOutlineConnectWithoutContact, MdPlayArrow, MdRefresh } from "react-icons/md"
 import { TbCloudPlus } from "react-icons/tb"
 import { toast } from "sonner"
 import { ElectronPlaybackMethod, useCurrentDevicePlaybackSettings } from "../../_atoms/playback.atoms"
@@ -56,6 +57,11 @@ export const nakamaStatusAtom = atom<Nakama_NakamaStatus | null | undefined>(und
 // Lifted to an atom so the player can read it to emit control actions + apply incoming
 // sync (the player-sync hook is the remaining wiring — see nakama-room.md).
 export const currentWatchRoomAtom = atom<Nakama_WatchRoom | null>(null)
+
+// Which "page" of the Nakama modal is showing. Persists across open/close (module-level
+// atom) so reopening returns to where you left off. "room" = the in-room panel; "main" =
+// discovery + legacy host/peer sections. Defaults to "room" (the common case once joined).
+export const nakamaModalViewAtom = atom<"main" | "room">("room")
 
 export function useNakamaStatus() {
     return useAtomValue(nakamaStatusAtom)
@@ -104,6 +110,13 @@ export function NakamaManager() {
     const serverStatus = useServerStatus()
 
     const roomInfo = nakamaStatus?.currentRoom
+
+    // Watch-room view state: when in a room on the "room" page, hide the legacy host/peer
+    // sections so only room content shows (#1). "main" reveals them via the back button.
+    const currentWatchRoom = useAtomValue(currentWatchRoomAtom)
+    const [modalView, setModalView] = useAtom(nakamaModalViewAtom)
+    // Hide legacy host/peer sections only when actually in a room on the room page.
+    const showLegacy = !currentWatchRoom || modalView === "main"
 
     const { mutate: reconnectToHost, isPending: isReconnecting } = useNakamaReconnectToHost()
     const { mutate: removeStaleConnections, isPending: isCleaningUp } = useNakamaRemoveStaleConnections()
@@ -316,11 +329,24 @@ export function NakamaManager() {
 
             {nakamaStatus === undefined && <LoadingSpinner />}
 
+            {/* In a room but viewing the main page: a banner back to the room (#2). */}
+            {currentWatchRoom && modalView === "main" && (
+                <div className="flex items-center justify-between p-3 mb-2 border rounded-lg bg-gray-950">
+                    <span className="text-sm flex items-center gap-2">
+                        <LuPopcorn className="size-5 text-indigo-300" />
+                        Current room: <span className="font-semibold">{currentWatchRoom.name}</span>
+                    </span>
+                    <Button size="sm" intent="primary-subtle" onClick={() => setModalView("room")}>
+                        Open room
+                    </Button>
+                </div>
+            )}
+
             {/* Same-instance watch rooms — available to every user, independent of the
                 host/peer federation below. */}
             {nakamaStatus !== undefined && <WatchRoomsSection open={isModalOpen} />}
 
-            {!nakamaStatus?.isHost && (
+            {showLegacy && !nakamaStatus?.isHost && (
                 <div className="flex items-center justify-between">
                     <div></div>
                     <Button
@@ -335,7 +361,7 @@ export function NakamaManager() {
                 </div>
             )}
 
-            {nakamaStatus !== undefined && (nakamaStatus?.isHost || nakamaStatus?.isConnectedToHost) && (
+            {showLegacy && nakamaStatus !== undefined && (nakamaStatus?.isHost || nakamaStatus?.isConnectedToHost) && (
                 <>
 
                     {nakamaStatus?.isHost && (
@@ -494,7 +520,7 @@ export function NakamaManager() {
                 </>
             )}
 
-            {!nakamaStatus?.isHost && !nakamaStatus?.isConnectedToHost && nakamaStatus !== undefined && (
+            {showLegacy && !nakamaStatus?.isHost && !nakamaStatus?.isConnectedToHost && nakamaStatus !== undefined && (
                 <div className="text-center py-8">
                     <p className="text-[--muted]">Nakama is not active</p>
                     <p className="text-sm text-[--muted] mt-2">
@@ -523,6 +549,8 @@ function WatchRoomsSection({ open }: { open: boolean }) {
     const { mutate: setAutoSkip } = useNakamaSetWatchRoomAutoSkip()
 
     const [currentRoom, setCurrentRoom] = useAtom(currentWatchRoomAtom)
+    const [modalView, setModalView] = useAtom(nakamaModalViewAtom)
+    const requestTerminate = useSetAtom(nativePlayer_terminateRequestedAtom)
     const [showCreate, setShowCreate] = React.useState(false)
     const [newName, setNewName] = React.useState("")
     const [newPassword, setNewPassword] = React.useState("")
@@ -543,9 +571,41 @@ function WatchRoomsSection({ open }: { open: boolean }) {
         },
     })
 
+    // Host closed the room: drop out and stop playback (the room is gone for everyone).
+    useWebsocketMessageListener({
+        type: WSEvents.NAKAMA_WATCH_ROOM_CLOSED,
+        onMessage: (roomId: string | null) => {
+            setCurrentRoom(prev => {
+                if (prev && (!roomId || prev.id === roomId)) {
+                    requestTerminate(c => c + 1)
+                    setModalView("main")
+                    toast.info("The host closed the room")
+                    return null
+                }
+                return prev
+            })
+            refetchRooms()
+        },
+    })
+
     React.useEffect(() => {
         if (open) refetchRooms()
     }, [open])
+
+    // On reconnect the websocket hands us a fresh clientId. Re-join the current room so the
+    // server remaps our driving client (broadcasts/sync reach us again) and the host reclaims
+    // control. Empty password is fine — we're already a member, so it's not re-checked.
+    const prevClientIdRef = React.useRef(clientId)
+    React.useEffect(() => {
+        const prev = prevClientIdRef.current
+        prevClientIdRef.current = clientId
+        if (prev && clientId && prev !== clientId && currentRoom) {
+            joinRoom({ roomId: currentRoom.id, password: "", clientId }, {
+                onSuccess: (room) => { if (room) setCurrentRoom(room) },
+            })
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clientId])
 
     // "Me" = the participant whose driving client is this client.
     const me = React.useMemo(() => {
@@ -561,6 +621,7 @@ function WatchRoomsSection({ open }: { open: boolean }) {
         createRoom({ name: newName.trim(), password: newPassword, clientId: clientId || "" }, {
             onSuccess: (room) => {
                 setCurrentRoom(room ?? null)
+                setModalView("room")
                 setShowCreate(false)
                 setNewName("")
                 setNewPassword("")
@@ -574,6 +635,7 @@ function WatchRoomsSection({ open }: { open: boolean }) {
         joinRoom({ roomId, password, clientId: clientId || "" }, {
             onSuccess: (room) => {
                 setCurrentRoom(room ?? null)
+                setModalView("room")
                 setJoinTarget(null)
                 setJoinPassword("")
                 refetchRooms()
@@ -587,6 +649,7 @@ function WatchRoomsSection({ open }: { open: boolean }) {
         leaveRoom({ roomId: currentRoom.id }, {
             onSuccess: () => {
                 setCurrentRoom(null)
+                setModalView("main")
                 refetchRooms()
             },
         })
@@ -599,13 +662,24 @@ function WatchRoomsSection({ open }: { open: boolean }) {
         })
     }
 
-    // ---- In a room ----
-    if (currentRoom) {
+    // ---- In a room (and viewing the room page) ----
+    if (currentRoom && modalView === "room") {
         const participants = Object.entries(currentRoom.participants || {})
+        const nonHost = participants.filter(([, p]) => !p.isHost)
+        const everyoneControls = nonHost.length > 0 && nonHost.every(([, p]) => p.canControl)
         return (
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                    <h4 className="flex items-center gap-2"><LuPopcorn className="size-6" /> {currentRoom.name}</h4>
+                    <h4 className="flex items-center gap-2 min-w-0">
+                        <IconButton
+                            size="sm"
+                            intent="gray-basic"
+                            icon={<MdArrowBack />}
+                            onClick={() => setModalView("main")}
+                        />
+                        <LuPopcorn className="size-6 shrink-0" />
+                        <span className="truncate">{currentRoom.name}</span>
+                    </h4>
                     <Button onClick={handleLeave} disabled={isLeaving} size="sm" intent="alert-basic">
                         {isLeaving ? "Leaving..." : amHost ? "Close room" : "Leave"}
                     </Button>
@@ -644,8 +718,8 @@ function WatchRoomsSection({ open }: { open: boolean }) {
                     <div className="flex items-center justify-between p-3 border rounded-lg bg-gray-950">
                         <span className="text-sm">Let everyone control playback</span>
                         <div className="flex items-center gap-2">
-                            <Button size="sm" intent="primary-subtle" onClick={() => handleSetControl("", true, true)}>Everyone</Button>
-                            <Button size="sm" intent="gray-basic" onClick={() => handleSetControl("", false, true)}>Host only</Button>
+                            <Button size="sm" intent={everyoneControls ? "primary" : "gray-basic"} onClick={() => handleSetControl("", true, true)}>Everyone</Button>
+                            <Button size="sm" intent={!everyoneControls ? "primary" : "gray-basic"} onClick={() => handleSetControl("", false, true)}>Host only</Button>
                         </div>
                     </div>
                 )}

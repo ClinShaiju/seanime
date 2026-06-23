@@ -74,6 +74,7 @@ export const enum WSEvents {
     // Same-instance watch rooms
     NAKAMA_ROOMS_UPDATED = "nakama-rooms-updated", // server->client: discovery list changed
     NAKAMA_WATCH_ROOM_STATE = "nakama-watch-room-state", // server->client: a room's state to its members
+    NAKAMA_WATCH_ROOM_CLOSED = "nakama-watch-room-closed", // server->client: host closed the room; members stop playback
     NAKAMA_ROOM_PLAYBACK_STATUS = "nakama-room-playback-status", // client->server: report a control action
     NAKAMA_ROOM_PLAYBACK_SYNC = "nakama-room-playback-sync", // server->client: apply a controller's action
     SHOW_INDEFINITE_LOADER = "show-indefinite-loader",

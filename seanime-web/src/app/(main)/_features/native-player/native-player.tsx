@@ -15,7 +15,7 @@ import { toast } from "sonner"
 import { useWebsocketMessageListener, useWebsocketSender } from "../../_hooks/handle-websockets"
 import { useSkipData } from "../video-core/_lib/aniskip"
 import { useDebridReconnectResume } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-reconnect"
-import { nativePlayer_stateAtom } from "./native-player.atoms"
+import { nativePlayer_stateAtom, nativePlayer_terminateRequestedAtom } from "./native-player.atoms"
 
 const log = logger("NATIVE PLAYER")
 
@@ -237,6 +237,16 @@ export function NativePlayer() {
             },
         })
     }
+
+    // External terminate request (e.g. a watch-room follower told the controller stopped the
+    // episode). Run the normal terminate path when the counter changes.
+    const terminateRequested = useAtomValue(nativePlayer_terminateRequestedAtom)
+    const prevTerminateRequested = React.useRef(terminateRequested)
+    React.useEffect(() => {
+        if (terminateRequested === prevTerminateRequested.current) return
+        prevTerminateRequested.current = terminateRequested
+        if (state.active) handleTerminateStream()
+    }, [terminateRequested])
 
     const ps = React.useMemo<VideoCoreLifecycleState>(() => {
         return {

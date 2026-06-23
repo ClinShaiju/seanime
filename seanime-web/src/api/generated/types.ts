@@ -4508,6 +4508,7 @@ export type Nakama_RoomPlaybackStatusPayload = {
     episodeNumber: number
     aniDbEpisode: string
     streamType: Nakama_WatchPartyStreamType
+    stopped?: boolean
     audioTrack?: number
     subtitleTrack?: number
 }
