@@ -340,7 +340,11 @@ func (r *Repository) CancelDownload(itemID string) error {
 // stream state is isolated so concurrent streams never clobber each other.
 func (r *Repository) smFor(userID uint) *StreamManager {
 	sm, _ := r.streamManagers.GetOrSet(userID, func() (*StreamManager, error) {
-		return NewStreamManager(r), nil
+		m := NewStreamManager(r)
+		// Restore the user's last active stream (if still fresh) so a re-issue after a
+		// server restart reuses the cached link instantly instead of re-resolving.
+		m.loadPersistedActiveStream(userID)
+		return m, nil
 	})
 	return sm
 }

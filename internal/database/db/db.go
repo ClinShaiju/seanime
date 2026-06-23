@@ -112,6 +112,7 @@ func migrateTables(db *gorm.DB) error {
 		&models.OnlinestreamMapping{},
 		&models.DebridSettings{},
 		&models.DebridTorrentItem{},
+		&models.DebridActiveStream{},
 		&models.PluginData{},
 		&models.CustomSourceCollection{},
 		&models.CustomSourceIdentifier{},

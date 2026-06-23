@@ -634,6 +634,16 @@ type DebridTorrentItem struct {
 	MediaId       int    `gorm:"column:media_id" json:"mediaId"`
 }
 
+// DebridActiveStream persists a user's last active debrid stream (resolved CDN link +
+// selection) so that after a server restart mid-playback, the stream can be re-established
+// instantly from the cached link — no auto-select search — for seamless reconnection.
+// Data is a JSON blob of the resolution; one row per user.
+type DebridActiveStream struct {
+	BaseModel
+	UserID uint   `gorm:"column:user_id;uniqueIndex" json:"userId"`
+	Data   string `gorm:"column:data" json:"data"`
+}
+
 // +---------------------+
 // |       Plugin        |
 // +---------------------+

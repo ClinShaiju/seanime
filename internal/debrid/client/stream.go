@@ -2,10 +2,12 @@ package debrid_client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"seanime/internal/api/anilist"
 	"seanime/internal/database/db_bridge"
+	"seanime/internal/database/models"
 	"seanime/internal/debrid/debrid"
 	"seanime/internal/directstream"
 	"seanime/internal/events"
@@ -131,10 +133,11 @@ const (
 	// hourly in case a better release appears.
 	preloadSelectionTTL          = 24 * time.Hour
 	preloadSelectionTTLReleasing = 1 * time.Hour
-	// urlRefreshTTL bounds how long a resolved debrid stream URL is trusted. The URL (a CDN
-	// token) expires far sooner than the torrent, so on consume we re-resolve it from the
-	// already-added torrentItemId when stale — this is cheap and does NOT call createtorrent.
-	urlRefreshTTL = 15 * time.Minute
+	// urlRefreshTTL bounds how long a resolved debrid stream URL is trusted before we
+	// re-resolve it (cheaply, from the already-added torrentItemId — no createtorrent) on
+	// consume. An untouched TorBox CDN link stays valid ~3h, so 2h leaves a comfortable 1h
+	// safety margin while avoiding a refresh on every play of a recently-prewarmed episode.
+	urlRefreshTTL = 2 * time.Hour
 	// maxSpeculativePreloads caps non-priority preloads. With the hover prewarm dropped these
 	// are rare; the continue-watching (priority) set is uncapped (bounded at the source).
 	maxSpeculativePreloads = 8
@@ -592,6 +595,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		}
 
 		s.currentStreamUrl = streamUrl
+		// Snapshot the freshly-resolved stream so a server restart can replay it instantly.
+		s.persistActiveStream(opts, streamUrl, s.currentTorrentItemId, fileId, filepath, media, selectedTorrent, time.Now())
 
 		switch playbackType {
 		case PlaybackTypeNone:
@@ -1044,6 +1049,81 @@ func canReusePreloadedStream(pt StreamPlaybackType) bool {
 // playPreloadedStream hands an already-resolved debrid stream to the right player without
 // re-running the ~20s resolve. Supports the native player and external player link
 // (the latter is what the mobile/mpv client uses).
+// persistedActiveStream is the JSON-serializable snapshot of an active debrid stream's
+// resolution, saved to the DB so it survives a server restart and can be replayed instantly.
+type persistedActiveStream struct {
+	Opts          *StartStreamOptions         `json:"opts"`
+	StreamUrl     string                      `json:"streamUrl"`
+	FileId        string                      `json:"fileId"`
+	Filepath      string                      `json:"filepath"`
+	Media         *anilist.BaseAnime          `json:"media"`
+	Torrent       *hibiketorrent.AnimeTorrent `json:"torrent"`
+	TorrentItemId string                      `json:"torrentItemId"`
+	ResolvedAt    time.Time                   `json:"resolvedAt"`
+	UrlResolvedAt time.Time                   `json:"urlResolvedAt"`
+	TtlNanos      int64                       `json:"ttlNanos"`
+}
+
+// persistActiveStream snapshots the just-started stream to the DB so it can be replayed
+// instantly after a server restart (no auto-select search — seamless reconnect). The
+// resolved CDN link is reused directly while fresh, or cheaply re-resolved from the
+// already-added torrentItemId (no createtorrent) if it has aged out. Best-effort.
+func (s *StreamManager) persistActiveStream(opts *StartStreamOptions, streamUrl, torrentItemId, fileId, filepath string, media *anilist.BaseAnime, torrent *hibiketorrent.AnimeTorrent, urlResolvedAt time.Time) {
+	defer util.HandlePanicInModuleThen("debrid/client/persistActiveStream", func() {})
+	if s.repository.db == nil || opts == nil || streamUrl == "" {
+		return
+	}
+	ttl := preloadSelectionTTL
+	if media != nil {
+		ttl = selectionTTLForMedia(media)
+	}
+	rec := persistedActiveStream{
+		Opts: opts, StreamUrl: streamUrl, FileId: fileId, Filepath: filepath,
+		Media: media, Torrent: torrent, TorrentItemId: torrentItemId,
+		ResolvedAt: time.Now(), UrlResolvedAt: urlResolvedAt, TtlNanos: int64(ttl),
+	}
+	data, err := json.Marshal(&rec)
+	if err != nil {
+		return
+	}
+	_ = s.repository.db.UpsertDebridActiveStream(&models.DebridActiveStream{UserID: opts.UserID, Data: string(data)})
+}
+
+// loadPersistedActiveStream restores a user's last active stream (if still within its
+// selection TTL) into the preload cache, so the next start of that episode — e.g. the client
+// re-issuing after a server restart — reuses the cached link instantly instead of re-running
+// auto-select. Called once when the user's StreamManager is created.
+func (s *StreamManager) loadPersistedActiveStream(userID uint) {
+	defer util.HandlePanicInModuleThen("debrid/client/loadPersistedActiveStream", func() {})
+	if s.repository.db == nil {
+		return
+	}
+	rec, ok := s.repository.db.GetDebridActiveStream(userID)
+	if !ok || rec.Data == "" {
+		return
+	}
+	var p persistedActiveStream
+	if err := json.Unmarshal([]byte(rec.Data), &p); err != nil || p.Opts == nil {
+		return
+	}
+	ttl := time.Duration(p.TtlNanos)
+	if ttl <= 0 || time.Since(p.ResolvedAt) > ttl {
+		s.repository.db.DeleteDebridActiveStream(userID) // selection expired — drop it
+		return
+	}
+	entry := &preloadedDebridStream{
+		opts: p.Opts, streamUrl: p.StreamUrl, fileId: p.FileId, filepath: p.Filepath,
+		media: p.Media, torrent: p.Torrent, torrentItemId: p.TorrentItemId,
+		resolvedAt: p.ResolvedAt, urlResolvedAt: p.UrlResolvedAt, ttl: ttl, priority: true,
+	}
+	key := preloadKey(p.Opts)
+	s.preloadMu.Lock()
+	s.preloads[key] = entry
+	s.lastConsumedKey = key
+	s.preloadMu.Unlock()
+	s.repository.logger.Debug().Int("mediaId", p.Opts.MediaId).Msg("debridstream: Restored persisted active stream for instant reconnect")
+}
+
 func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStreamOptions, cached *preloadedDebridStream) (err error) {
 	defer util.HandlePanicInModuleWithError("debrid/client/playPreloadedStream", &err)
 
@@ -1129,6 +1209,8 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	}
 
 	s.currentStreamUrl = streamUrl
+	// Re-snapshot (URL may have been refreshed above) so a restart can replay it instantly.
+	s.persistActiveStream(opts, streamUrl, cached.torrentItemId, cached.fileId, cached.filepath, media, cached.torrent, cached.urlResolvedAt)
 
 	switch opts.PlaybackType {
 	case PlaybackTypeNativePlayer:
