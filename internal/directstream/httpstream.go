@@ -9,6 +9,8 @@ import (
 	"seanime/internal/mkvparser"
 	"seanime/internal/nativeplayer"
 	httputil "seanime/internal/util/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,10 +34,57 @@ var videoProxyClient = &http.Client{
 	Transport: &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
+		// Bound concurrent connections to a single CDN host so a burst of range requests
+		// (stream start + metadata + a seek) can't hammer the debrid CDN into 429ing the
+		// token. Excess requests queue rather than fail. Generous enough for several
+		// concurrent streams at this deployment's scale; tune if it ever blocks legit reads.
+		MaxConnsPerHost:     8,
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
 		ForceAttemptHTTP2:   false, // Fixes issues on Linux
 	},
+}
+
+const maxCDNRetries = 4
+
+// isCDNTransientStatus reports whether a CDN status is worth retrying — rate-limiting
+// (429) or transient gateway errors. Permanent 4xx (403/404/416) are not retried.
+func isCDNTransientStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// cdnBackoffDuration is the wait before retrying a throttled CDN request: a numeric
+// Retry-After (seconds, capped at 5s) when the CDN sends one, else exponential backoff
+// (300ms, 600ms, 1.2s… capped at 3s). Pure, so it's unit-testable.
+func cdnBackoffDuration(attempt int, retryAfter string) time.Duration {
+	wait := time.Duration(300*(1<<uint(attempt))) * time.Millisecond
+	if wait > 3*time.Second {
+		wait = 3 * time.Second
+	}
+	if retryAfter != "" {
+		if secs, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && secs > 0 {
+			wait = time.Duration(secs) * time.Second
+			if wait > 5*time.Second {
+				wait = 5 * time.Second
+			}
+		}
+	}
+	return wait
+}
+
+// cdnRetryWait sleeps for the backoff, aborting early if the client disconnects.
+// Returns false if the context was cancelled while waiting.
+func cdnRetryWait(ctx context.Context, attempt int, retryAfter string) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(cdnBackoffDuration(attempt, retryAfter)):
+		return true
+	}
 }
 
 // Headers that should not be forwarded to the CDN
@@ -280,36 +329,67 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 			}
 		}
 
-		// Use the client's request context so the CDN request is cancelled when the client disconnects
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.streamUrl, nil)
-		if err != nil {
-			http.Error(w, "Failed to create request", http.StatusInternalServerError)
-			return
-		}
-
-		req.Header.Set("Accept", "*/*")
-		req.Header.Set("Range", rangeHeader)
-
-		// Only forward safe headers to avoid conflicts with the CDN
-		for key, values := range r.Header {
-			if proxyHopHeaders[http.CanonicalHeaderKey(key)] {
-				continue
+		// Fetch the CDN range, retrying transient throttling (429) / gateway errors with
+		// capped backoff. The server re-pulls ranges as the user watches, so without this a
+		// single momentary CDN rate-limit would fail the whole stream mid-episode.
+		var resp *http.Response
+		for attempt := 0; ; attempt++ {
+			// Use the client's request context so the CDN request is cancelled when the client disconnects
+			req, reqErr := http.NewRequestWithContext(r.Context(), http.MethodGet, s.streamUrl, nil)
+			if reqErr != nil {
+				http.Error(w, "Failed to create request", http.StatusInternalServerError)
+				return
 			}
-			for _, value := range values {
-				req.Header.Add(key, value)
-			}
-		}
-		s.applyReqHeaders(req.Header)
 
-		resp, err := videoProxyClient.Do(req)
-		if err != nil {
-			s.logger.Error().Err(err).Str("range", rangeHeader).Msg("directstream(http): CDN proxy request failed")
-			http.Error(w, "Failed to proxy request", http.StatusInternalServerError)
-			return
+			req.Header.Set("Accept", "*/*")
+			req.Header.Set("Range", rangeHeader)
+
+			// Only forward safe headers to avoid conflicts with the CDN
+			for key, values := range r.Header {
+				if proxyHopHeaders[http.CanonicalHeaderKey(key)] {
+					continue
+				}
+				for _, value := range values {
+					req.Header.Add(key, value)
+				}
+			}
+			s.applyReqHeaders(req.Header)
+
+			var doErr error
+			resp, doErr = videoProxyClient.Do(req)
+
+			// Success or a permanent non-2xx (handled just below) → stop retrying.
+			if doErr == nil && !isCDNTransientStatus(resp.StatusCode) {
+				break
+			}
+
+			status, retryAfter := 0, ""
+			if doErr == nil {
+				status = resp.StatusCode
+				retryAfter = resp.Header.Get("Retry-After")
+				resp.Body.Close()
+			}
+
+			// Give up if retries are exhausted or the client has disconnected.
+			if attempt >= maxCDNRetries-1 || r.Context().Err() != nil {
+				if doErr != nil {
+					s.logger.Error().Err(doErr).Str("range", rangeHeader).Msg("directstream(http): CDN proxy request failed")
+					http.Error(w, "Failed to proxy request", http.StatusBadGateway)
+				} else {
+					s.logger.Error().Int("status", status).Int("attempts", attempt+1).Str("range", rangeHeader).Msg("directstream(http): CDN throttled, retries exhausted")
+					http.Error(w, fmt.Sprintf("CDN error: %d", status), status)
+				}
+				return
+			}
+
+			s.logger.Warn().Int("status", status).Int("attempt", attempt+1).Str("range", rangeHeader).Msg("directstream(http): CDN throttled, backing off")
+			if !cdnRetryWait(r.Context(), attempt, retryAfter) {
+				return // client disconnected during backoff
+			}
 		}
 		defer resp.Body.Close()
 
-		// Reject non-2xx CDN responses to avoid corrupting the file cache
+		// Reject permanent non-2xx CDN responses to avoid corrupting the file cache
 		if resp.StatusCode >= 300 {
 			s.logger.Error().Int("status", resp.StatusCode).Str("range", rangeHeader).Msg("directstream(http): CDN returned non-2xx status")
 			http.Error(w, fmt.Sprintf("CDN error: %d", resp.StatusCode), resp.StatusCode)
