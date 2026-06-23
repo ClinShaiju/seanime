@@ -331,6 +331,7 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 				// Normalize aggregator names (emoji, embedded newlines, "833 MB" size tokens)
 				// so habari doesn't read the size as the episode or drop the real episode.
 				m := habari.Parse(util.CleanReleaseName(t.Name))
+				m.Language = util.MergeLanguages(m.Language, util.DisplayLanguagesFromFlags(t.Name))
 				var distance *comparison.LevenshteinResult
 				distance, ok := comparison.FindBestMatchWithLevenshtein(&m.Title, opts.Media.GetAllTitles())
 				if !ok {
@@ -552,6 +553,10 @@ func (r *Repository) createAnimeTorrentPreview(opts createAnimeTorrentPreviewOpt
 	tMetadata, found := metadataCache.Get(opts.torrent.Name)
 	if !found { // Should always be found
 		parsedData = habari.Parse(util.CleanReleaseName(opts.torrent.Name))
+		// CleanReleaseName strips emoji before habari, so releases that express language only as
+		// flag emoji (🇬🇧/🇯🇵 — common from AIOStreams) end up with no Language. Fold the
+		// flag-decoded languages back in so the UI shows them (and the "Original + Dub" badge).
+		parsedData.Language = util.MergeLanguages(parsedData.Language, util.DisplayLanguagesFromFlags(opts.torrent.Name))
 		newM := &TorrentMetadata{
 			Distance: 1000,
 			Metadata: parsedData,

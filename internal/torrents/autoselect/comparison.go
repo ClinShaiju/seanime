@@ -5,6 +5,7 @@ import (
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
 	"seanime/internal/library/anime"
 	"seanime/internal/util"
+	"seanime/internal/util/comparison"
 	"slices"
 	"strings"
 
@@ -33,12 +34,36 @@ const (
 	scoreBatch             = 20
 	scoreBestRelease       = 20
 	scoreSeasonMatch       = 60
+	// A release that declares a season other than the requested one (e.g. an S1 batch labelled
+	// "III" for an S4 request). Priority-level so it sinks to the bottom band even when cached —
+	// the debrid path (Rank) doesn't run the season gate, so scoring is the only thing that buries it.
+	scoreSeasonMismatch = 100000
+	// A sequel (S2+) request matched a full-season pack that declares NO season anywhere — almost
+	// always the S1 batch leaking in via a base-title synonym. Demote below correctly-matched
+	// single episodes (one band), but softer than a declared mismatch since it's only suspected.
+	scoreSeasonAmbiguousBatch = 3000
 	// Ranking is layered by magnitude so the order is: correct episode → audio tier → (cache,
 	// applied separately) → format. Episode mismatch dominates the audio tiers; the audio tiers
 	// dominate format (max ~350). Goal: the top result is the highest-quality cached English dub.
 	scoreEpisodeMismatch = 100000 // wrong episode → always last, even cached
 	scoreEnglishDub      = 2000    // English (top-preferred) audio / dub present
 	scoreForeignAudio    = 2000    // a release only in a non-preferred foreign language
+
+	// Quality-signal tiebreakers, borrowed from AIOStreams' visualTag/audioTag/seadex sort
+	// keys. Deliberately SMALL (sum well under 1000) so they only separate otherwise-equivalent
+	// releases WITHIN a band — they can never lift a non-English release above an English dub
+	// (audioLanguageScore is ±2000, applied in `priority`) nor cross the episode/season gates.
+	scoreBitDepth10    = 12 // 10-bit encode (better gradients, standard for modern anime)
+	scoreHDR           = 8  // HDR10 / Dolby Vision
+	scoreLosslessAudio = 10 // FLAC only — lossless AND decodable by the native (Chromium) player
+	scoreSeadexBest    = 30 // SeaDex-curated "best" release
+	// REMUX is the top within-English preference (untouched disc — often the uncensored/extended
+	// cut with restored content). Sized to dominate the other quality bonuses *combined* (~75) so
+	// an English REMUX beats any non-REMUX English release, yet far below the 2000 dub band so it
+	// can never lift a non-English REMUX above an English release. Playability caveat: REMUXes
+	// often carry DTS-HD/TrueHD/PCM the native Chromium player can't decode — see
+	// remux-audio-support.md / task #32 (use mpv / Tenji meanwhile).
+	scoreRemux = 100
 )
 
 type candidate struct {
@@ -138,6 +163,33 @@ func episodeCovered(parsedEpisodes []string, requested int) bool {
 		return true
 	}
 	return requested >= lo && requested <= hi
+}
+
+// declaredSeasons returns the season numbers a release name declares. It prefers habari's parse
+// (which holds ranges like "S1-S2" as multiple values) and falls back to the richer
+// comparison.ExtractSeasonNumber when habari finds nothing — habari misses roman numerals
+// ("Classroom of the Elite IV"), Japanese "期", and bare/word ordinals that ExtractSeasonNumber
+// catches. Empty result = no season declared at all.
+func declaredSeasons(c *candidate) []int {
+	var out []int
+	for _, sn := range c.parsed.SeasonNumber {
+		if n, ok := util.StringToInt(sn); ok {
+			out = append(out, n)
+		}
+	}
+	if len(out) == 0 {
+		if n := comparison.ExtractSeasonNumber(c.torrent.Name); n >= 1 {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// isUnlabeledSeasonPack reports whether a candidate is a multi-episode / full-season pack rather
+// than a single episode. Used (for sequels with no declared season) to demote the leaking S1 batch
+// while leaving season-less single episodes — which match the requested relative episode — alone.
+func isUnlabeledSeasonPack(c *candidate) bool {
+	return c.torrent.IsBatch || len(c.parsed.EpisodeNumber) != 1
 }
 
 // Rank orders torrents using the same scoring (profile + season match) and cache
@@ -386,15 +438,8 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 		// Season gate (sequels only): drop torrents that explicitly declare seasons,
 		// none of which is the requested season. Season-less releases and combined
 		// batches that include the requested season pass through.
-		if c.expectedSeason >= 2 && len(parsed.SeasonNumber) > 0 {
-			matched := false
-			for _, sn := range parsed.SeasonNumber {
-				if n, ok := util.StringToInt(sn); ok && n == c.expectedSeason {
-					matched = true
-					break
-				}
-			}
-			if !matched {
+		if c.expectedSeason >= 2 {
+			if seasons := declaredSeasons(c); len(seasons) > 0 && !slices.Contains(seasons, c.expectedSeason) {
 				continue
 			}
 		}
@@ -641,10 +686,14 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 		return 0, 0
 	}
 
-	// Resolution
+	// Resolution. Fall back to a bounded name match when habari can't parse the resolution
+	// (it misses some aggregator/formatter name layouts, e.g. "SeaDex 1080p (Best)" → ""),
+	// mirroring how codec/source below already name-match. Without this, a release whose
+	// resolution doesn't parse silently loses the full resolution weight and sinks below an
+	// equivalent release that did parse — even though both are the same resolution.
 	if len(profile.Resolutions) > 0 {
 		for i, res := range profile.Resolutions {
-			if strings.EqualFold(parsed.VideoResolution, res) {
+			if strings.EqualFold(parsed.VideoResolution, res) || containsBoundedTerm(c.lowerName, strings.ToLower(res)) {
 				priority += scoreResolutionBase - (i * scoreResolutionDecay)
 				break
 			}
@@ -753,20 +802,24 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 		bonus -= scoreBatch
 	}
 
-	// Season match (sequels only): reward releases that declare the requested season,
-	// penalize ones that declare a different season (the hard gate already drops most).
-	if c.expectedSeason >= 2 && len(parsed.SeasonNumber) > 0 {
-		matched := false
-		for _, sn := range parsed.SeasonNumber {
-			if n, ok := util.StringToInt(sn); ok && n == c.expectedSeason {
-				matched = true
-				break
+	// Season relevance (sequels only). Three cases:
+	//   - declares the requested season  -> reward.
+	//   - declares a different season     -> sink to the bottom band (the gate drops these in the
+	//     auto-download path, but the debrid Rank path doesn't gate, so scoring must bury them).
+	//   - declares no season at all       -> a full-season pack here is almost always the S1 batch
+	//     leaking in via a base-title synonym; demote it below correctly-matched singles. Season-less
+	//     single episodes are left alone (they match the requested relative episode).
+	if c.expectedSeason >= 2 {
+		seasons := declaredSeasons(c)
+		switch {
+		case len(seasons) == 0:
+			if isUnlabeledSeasonPack(c) {
+				priority -= scoreSeasonAmbiguousBatch
 			}
-		}
-		if matched {
+		case slices.Contains(seasons, c.expectedSeason):
 			bonus += scoreSeasonMatch
-		} else {
-			bonus -= scoreSeasonMatch
+		default:
+			priority -= scoreSeasonMismatch
 		}
 	}
 
@@ -784,6 +837,30 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	}
 	if profile.BestReleasePreference == anime.AutoSelectPreferenceAvoid && isBestRelease {
 		bonus -= scoreBestRelease
+	}
+
+	// Quality-signal tiebreakers (AIOStreams-inspired). BONUS only, so they rank quality WITHIN
+	// a band without ever overriding the English-dub priority — an English/dual-audio source is
+	// still guaranteed to be picked over a Japanese-only one when it exists. FLAC is the only
+	// lossless audio rewarded: it signals quality AND decodes in the native (Chromium) player,
+	// unlike DTS-HD/TrueHD/PCM which would play silently there.
+	name := c.lowerName
+	if containsBoundedTerm(name, "10bit") || containsBoundedTerm(name, "10-bit") ||
+		containsBoundedTerm(name, "hi10") || containsBoundedTerm(name, "hi10p") {
+		bonus += scoreBitDepth10
+	}
+	if containsBoundedTerm(name, "hdr") || containsBoundedTerm(name, "hdr10") ||
+		containsBoundedTerm(name, "dovi") || strings.Contains(name, "dolby vision") {
+		bonus += scoreHDR
+	}
+	if containsBoundedTerm(name, "flac") {
+		bonus += scoreLosslessAudio
+	}
+	if isBestRelease && profile.BestReleasePreference != anime.AutoSelectPreferenceAvoid {
+		bonus += scoreSeadexBest
+	}
+	if containsBoundedTerm(name, "remux") {
+		bonus += scoreRemux
 	}
 
 	return priority, bonus

@@ -740,3 +740,42 @@ func TestAutoSelect_SeasonGate(t *testing.T) {
 	// Despite far fewer seeders, the declared-S2 release should outrank the season-less one.
 	assert.Equal(t, s2.Name, names[0], "declared-correct season should score highest")
 }
+
+// Roman-numeral / word season labels that habari doesn't parse must still be recognized (via
+// comparison.ExtractSeasonNumber), so the correct sequel episode wins and a leaking S1 batch /
+// wrong-season roman release is buried — in the debrid Rank path too, where there is no gate and
+// the S1 batch is cached. This is the Classroom-of-the-Elite-IV / DanMachi-IV report.
+func TestAutoSelect_SeasonMismatch_RomanAndUnlabeledBatch(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}, BatchPreference: anime.AutoSelectPreferencePrefer}
+
+	correct := &hibiketorrent.AnimeTorrent{Name: "[Grp] DanMachi IV - 10 [1080p].mkv", InfoHash: "ok", Seeders: 20}
+	s1batch := &hibiketorrent.AnimeTorrent{Name: "[Grp] DanMachi [Batch] [1080p].mkv", InfoHash: "s1b", Seeders: 9000, IsBatch: true}
+	wrongRoman := &hibiketorrent.AnimeTorrent{Name: "[Grp] DanMachi III - 10 [1080p].mkv", InfoHash: "s3", Seeders: 9000}
+
+	// expectedSeason = 4, requesting episode 10. The S1 batch is cached with huge seeders — under
+	// the old logic (cache-first, no season recognition) it would float to the top.
+	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+		for _, tr := range torrents {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: tr.InfoHash == "s1b"})
+		}
+		return out
+	}
+
+	// Rank = the debrid path (no season gate; only scoring + cache prioritization).
+	ranked := s.Rank([]*hibiketorrent.AnimeTorrent{s1batch, wrongRoman, correct}, profile, 4, 10, postSearchSort)
+	assert.Equal(t, correct.Name, ranked[0].Name, "correct-season episode must win over a cached S1 batch and a wrong-season roman release")
+	// A declared-wrong season (roman "III") is a hard mismatch (bottom band); the unlabeled S1 batch
+	// is only suspected, so it sinks below the correct episode but stays above the hard mismatch.
+	assert.Equal(t, wrongRoman.Name, ranked[len(ranked)-1].Name, "the declared-wrong-season release must sink to the very bottom")
+
+	// filterAndSort = the auto-download path: the wrong-season roman release is now gated out entirely.
+	filtered := s.filterAndSort([]*hibiketorrent.AnimeTorrent{s1batch, wrongRoman, correct}, profile, 4, 10, nil)
+	names := make([]string, len(filtered))
+	for i, r := range filtered {
+		names[i] = r.Name
+	}
+	assert.Equal(t, correct.Name, names[0], "correct-season episode ranks first")
+	assert.NotContains(t, names, wrongRoman.Name, "wrong-season roman release should be gated out")
+}

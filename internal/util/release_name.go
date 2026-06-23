@@ -85,3 +85,56 @@ func LanguagesFromFlags(name string) []string {
 	}
 	return out
 }
+
+// flagDisplayName maps a country code (from a flag emoji) to a single human-readable language
+// name, for surfacing in the UI. Mirrors flagCountryToLangTokens but collapses each to one label.
+var flagDisplayName = map[string]string{
+	"GB": "English", "US": "English", "AU": "English", "CA": "English", "NZ": "English", "IE": "English",
+	"JP": "Japanese", "FR": "French", "ES": "Spanish", "MX": "Spanish", "AR": "Spanish",
+	"RU": "Russian", "DE": "German", "AT": "German", "IT": "Italian",
+	"BR": "Portuguese", "PT": "Portuguese", "CN": "Chinese", "TW": "Chinese", "HK": "Chinese", "KR": "Korean",
+}
+
+// DisplayLanguagesFromFlags decodes flag emoji in a release name into canonical display language
+// names (e.g. "English", "Japanese"), one per flag, deduplicated and order-preserving. Aggregators
+// (AIOStreams) often express a release's languages ONLY as flag emoji, which name parsers and
+// CleanReleaseName (which strips emoji) drop — so without this the UI shows no language at all.
+func DisplayLanguagesFromFlags(name string) []string {
+	runes := []rune(name)
+	seen := make(map[string]bool)
+	var out []string
+	for i := 0; i+1 < len(runes); i++ {
+		a, b := runes[i], runes[i+1]
+		if a >= 0x1F1E6 && a <= 0x1F1FF && b >= 0x1F1E6 && b <= 0x1F1FF {
+			cc := string(rune('A'+(a-0x1F1E6))) + string(rune('A'+(b-0x1F1E6)))
+			label, ok := flagDisplayName[cc]
+			if !ok {
+				label = cc
+			}
+			if !seen[label] {
+				seen[label] = true
+				out = append(out, label)
+			}
+			i++
+		}
+	}
+	return out
+}
+
+// MergeLanguages appends extra language labels to base, deduplicating case-insensitively and
+// preserving order. Used to fold flag-decoded languages into a parser's language list.
+func MergeLanguages(base, extra []string) []string {
+	seen := make(map[string]bool, len(base))
+	for _, x := range base {
+		seen[strings.ToLower(strings.TrimSpace(x))] = true
+	}
+	out := append([]string{}, base...)
+	for _, x := range extra {
+		k := strings.ToLower(strings.TrimSpace(x))
+		if k != "" && !seen[k] {
+			seen[k] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}

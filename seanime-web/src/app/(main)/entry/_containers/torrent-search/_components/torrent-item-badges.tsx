@@ -84,6 +84,17 @@ export function TorrentParsedMetadata({ metadata }: { metadata: Habari_Metadata 
 
     const languages = !!metadata?.language?.length ? [...new Set(metadata?.language)] : []
 
+    // Infer dual audio (original JP + a dub) from the languages when the parser didn't tag it as
+    // "dual"/"multi" in audio_term — e.g. aggregator releases that express languages only as flag
+    // emoji (🇬🇧/🇯🇵), now folded into metadata.language server-side. Without this, a genuinely
+    // dual-audio release shows no "Original + Dub" badge and is easy to skip in manual selection.
+    const isJp = (l: string) => { const x = l.toLowerCase().trim(); return x === "jp" || x === "jpn" || x === "ja" || x.includes("japan") }
+    const hasTextualDual = !!metadata?.audio_term?.some(t => t.toLowerCase().includes("dual"))
+    const showFlagDual = !hasTextualDual && languages.some(isJp) && languages.some(l => !!l && !isJp(l))
+    // Dub-only: a non-Japanese audio language with no Japanese original (for anime the original is
+    // always JP, so an English-only release is a dub). Flag-derived, mirrors showFlagDual.
+    const showFlagDubbed = !hasTextualDual && !hasDubs && !languages.some(isJp) && languages.some(l => !!l && !isJp(l))
+
     const filterHEVC = (n: string) => {
         return !(n.toLocaleLowerCase().includes("265") && metadata?.video_term?.map(n => n.toLocaleLowerCase()).includes("hevc"))
     }
@@ -137,7 +148,14 @@ export function TorrentParsedMetadata({ metadata }: { metadata: Habari_Metadata 
                     : startCase(term)}
                 </Badge>
             ))}
-            {hasDubs && (
+            {showFlagDual && (
+                <Badge
+                    className="rounded-md border-transparent bg-[--subtle] text-[.8rem] px-1"
+                >
+                    <LiaMicrophoneSolid className="text-lg text-[--rose]" /> Original + Dub
+                </Badge>
+            )}
+            {(hasDubs || showFlagDubbed) && (
                 <Badge
                     className="rounded-md border-transparent bg-indigo-300 px-1"
                 >

@@ -295,6 +295,17 @@ func (t *TorBox) AddTorrent(opts debrid.AddTorrentOptions) (string, error) {
 
 	t.logger.Debug().Str("torrentId", strconv.Itoa(d.ID)).Str("torrentName", d.Name).Str("torrentHash", d.Hash).Msg("torbox: Torrent added")
 
+	// Keep the dedup cache consistent with what we just added so the long TTL doesn't re-POST
+	// createtorrent for a torrent we know exists. ponytail: append-only; a full refresh still
+	// happens when the TTL lapses.
+	if d.Hash != "" {
+		t.mylistMu.Lock()
+		if t.mylist != nil {
+			t.mylist = append(t.mylist, &Torrent{ID: d.ID, Hash: d.Hash})
+		}
+		t.mylistMu.Unlock()
+	}
+
 	return strconv.Itoa(d.ID), nil
 }
 
@@ -497,7 +508,7 @@ func (t *TorBox) GetTorrentInfo(opts debrid.GetTorrentInfoOptions) (ret *debrid.
 
 func (t *TorBox) GetTorrents() (ret []*debrid.TorrentItem, err error) {
 
-	torrents, err := t.getTorrents()
+	torrents, err := t.getTorrents(true)
 	if err != nil {
 		return nil, fmt.Errorf("torbox: Failed to get torrents: %w", err)
 	}
@@ -518,12 +529,20 @@ func (t *TorBox) GetTorrents() (ret []*debrid.TorrentItem, err error) {
 	return ret, nil
 }
 
-// getTorrentsCached is getTorrents with a 6s TTL, used only by AddTorrent's dedup check.
+// mylistCacheTTL bounds how long the dedup cache is reused. The mylist (often multiple MB) is
+// fetched only to answer "is this infohash already added?", and AddTorrent appends what it adds,
+// so a long TTL is safe: the only staleness is a torrent added out-of-band (TorBox web, another
+// process), which at worst causes one redundant createtorrent that returns the same id.
+// Short TTLs made back-to-back / concurrent plays each re-fetch the whole list — the dominant
+// "Adding torrent…" stall under multi-user load.
+const mylistCacheTTL = 120 * time.Second
+
+// getTorrentsCached is getTorrents with a TTL, used only by AddTorrent's dedup check.
 // Staleness is harmless: TorBox dedups server-side, so a missed cache hit at worst re-POSTs
 // a magnet that already exists (and gets the same id back).
 func (t *TorBox) getTorrentsCached() ([]*Torrent, error) {
 	t.mylistMu.Lock()
-	if t.mylist != nil && time.Since(t.mylistAt) < 6*time.Second {
+	if t.mylist != nil && time.Since(t.mylistAt) < mylistCacheTTL {
 		cached := t.mylist
 		t.mylistMu.Unlock()
 		return cached, nil
@@ -531,12 +550,12 @@ func (t *TorBox) getTorrentsCached() ([]*Torrent, error) {
 	t.mylistMu.Unlock()
 
 	// Fetch the mylist WITHOUT holding the lock. Previously the slow
-	// /torrents/mylist?bypass_cache=true fetch ran under mylistMu, so two users starting a
-	// debrid stream at once serialized here (AddTorrent's dedup) — the 2nd waited for the
-	// 1st's full fetch. Releasing the lock lets concurrent resolves run in parallel; the
-	// worst case is a couple of redundant fetches, which is harmless (TorBox dedups
-	// server-side and staleness here only affects the dedup optimization).
-	torrents, err := t.getTorrents()
+	// /torrents/mylist fetch ran under mylistMu, so two users starting a debrid stream at once
+	// serialized here (AddTorrent's dedup) — the 2nd waited for the 1st's full fetch. Releasing
+	// the lock lets concurrent resolves run in parallel; the worst case is a couple of redundant
+	// fetches, which is harmless. bypass_cache=false: the dedup check doesn't need a server-side
+	// rebuild of the list (slow + spiky), TorBox's own cached mylist is fine and ~5x faster.
+	torrents, err := t.getTorrents(false)
 	if err != nil {
 		return nil, err
 	}
@@ -548,9 +567,9 @@ func (t *TorBox) getTorrentsCached() ([]*Torrent, error) {
 	return torrents, nil
 }
 
-func (t *TorBox) getTorrents() (ret []*Torrent, err error) {
+func (t *TorBox) getTorrents(bypassCache bool) (ret []*Torrent, err error) {
 
-	resp, err := t.doQuery("GET", t.baseUrl+"/torrents/mylist?bypass_cache=true", nil, "application/json")
+	resp, err := t.doQuery("GET", t.baseUrl+fmt.Sprintf("/torrents/mylist?bypass_cache=%t", bypassCache), nil, "application/json")
 	if err != nil {
 		return nil, fmt.Errorf("torbox: Failed to get torrents: %w", err)
 	}
