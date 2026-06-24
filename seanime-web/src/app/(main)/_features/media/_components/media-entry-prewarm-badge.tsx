@@ -42,11 +42,12 @@ export function PrewarmBadge({ mediaId, episodeNumber, className }: PrewarmBadge
             title={hot ? "Prewarmed — ready (metadata loaded)" : "Prewarmed — ready"}
             className={cn(
                 "size-6 rounded-full grid place-items-center ring-1 ring-black/20 shadow-sm",
-                hot ? "bg-[#dc2626]" : "bg-[#b45309]",
+                hot ? "bg-[#dc2626]" : "bg-[#eab308]", // red = metadata-hot, yellow = ready (clear heat gradient)
                 className,
             )}
         >
-            <LuFlame className="size-3.5 text-white/90" />
+            {/* white flame on red, dark flame on yellow — legible on both + extra tier separation */}
+            <LuFlame className={cn("size-3.5", hot ? "text-white/90" : "text-[#422006]")} />
         </div>
     )
 }
