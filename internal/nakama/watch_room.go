@@ -108,6 +108,11 @@ type WatchRoom struct {
 	// control). Same-client rapid actions are kept (a real user mashing play/pause).
 	lastDiscreteAt time.Time
 	lastDiscreteBy string
+	// lastPauseFlipAt is when the paused state last flipped (play<->pause) at the same position.
+	// Used to debounce buffering chatter: when a player stalls at a seek target it fires play/pause
+	// faster than a human, and the controller broadcasts each — followers then visibly flip until
+	// the buffer fills. Flips closer together than minPauseFlipInterval are dropped.
+	lastPauseFlipAt time.Time
 	// lastLiveAt is the last time the room had at least one connected client. The reaper closes
 	// a room that has had no live client for longer than roomIdleTTL, so a room whose members all
 	// vanish (tab close / network loss, no explicit leave) doesn't linger as a joinable ghost.
@@ -212,6 +217,10 @@ const broadcastTickMs = 500
 // (the follower's player re-firing play/pause/seek, possibly inverted on MPV) — both are dropped.
 const echoPosTol = 0.75
 const echoDebounce = 600 * time.Millisecond
+
+// minPauseFlipInterval: a same-position play<->pause flip faster than this is buffering chatter
+// (a human can't toggle that fast), so it's dropped — see lastPauseFlipAt.
+const minPauseFlipInterval = 500 * time.Millisecond
 
 // roomIdleTTL is how long a room may have zero connected clients before the reaper closes it.
 // Generous enough to survive reconnects (tab reload, brief network loss) without dropping a room
@@ -617,9 +626,17 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 		sameMedia := room.CurrentMediaInfo != nil && room.CurrentMediaInfo.MediaId == p.MediaId && room.CurrentMediaInfo.EpisodeNumber == p.EpisodeNumber
 		noop := room.PlaybackActive && sameMedia && p.Paused == room.paused && posDelta <= echoPosTol
 		crossEcho := room.lastDiscreteBy != "" && senderClientID != room.lastDiscreteBy && time.Since(room.lastDiscreteAt) < echoDebounce
-		if noop || crossEcho {
+		// Buffering chatter: a same-position play<->pause flip faster than a human (the controller's
+		// player stalling at a seek target). Drop it; the controller's heartbeat carries the settled
+		// state once the buffer fills.
+		pausedFlip := room.PlaybackActive && sameMedia && p.Paused != room.paused && posDelta <= echoPosTol
+		flipChatter := pausedFlip && !room.lastPauseFlipAt.IsZero() && time.Since(room.lastPauseFlipAt) < minPauseFlipInterval
+		if noop || crossEcho || flipChatter {
 			room.mu.Unlock()
 			return
+		}
+		if pausedFlip {
+			room.lastPauseFlipAt = time.Now()
 		}
 		room.lastDiscreteAt = time.Now()
 		room.lastDiscreteBy = senderClientID
