@@ -568,8 +568,38 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	// controller's client — is now the source of truth: it holds {paused, position} and the
 	// broadcast loop fans the computed live position out to everyone.
 	room.mu.Lock()
-	// Record the driver's client so the ticker doesn't echo the position back to them (the
-	// driver may be a granted member, not ControllerKey).
+	// Resolve the sender's pool key and the current driver (the controllerKey's client).
+	var senderKey string
+	for k, rp := range room.Participants {
+		if rp.ClientID == senderClientID {
+			senderKey = k
+			break
+		}
+	}
+	driverClientID := ""
+	if ctrl, ok := room.Participants[room.ControllerKey]; ok {
+		driverClientID = ctrl.ClientID
+	}
+	// Heartbeat arbitration: only the CURRENT driver's heartbeat may move the authoritative
+	// state. With shared control ("everyone can control") a non-driving controller is following;
+	// its heartbeat reports its own (followed/echoed) position and must not yank the room away
+	// from the driver — that fight is why a second controller's actions "didn't stick". (When the
+	// controller has momentarily no client, driverClientID is empty and we don't block, so a
+	// reconnect/handoff window doesn't freeze sync.)
+	if p.Heartbeat && driverClientID != "" && senderClientID != driverClientID {
+		room.mu.Unlock()
+		return
+	}
+	// Control handoff (shared-remote model): a DISCRETE action from a controlling member who is
+	// not the current controller hands control to them — everyone else, including the previous
+	// controller, then follows (their clients recompute amController from the new ControllerKey,
+	// stop heartbeating, and start applying). resolveRelay already verified the sender may control.
+	controlHandedOff := false
+	if !p.Heartbeat && !p.Stopped && senderKey != "" && senderKey != room.ControllerKey {
+		room.ControllerKey = senderKey
+		controlHandedOff = true
+	}
+	// Record the driver's client so the ticker doesn't echo the position back to them.
 	room.lastControllerClientID = senderClientID
 	room.LastPlayback = p
 	prevActive := room.PlaybackActive
@@ -631,7 +661,7 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	// PlaybackActive/CurrentMediaInfo from this NakamaWatchRoomState push — without it a member who
 	// was present when the stream started never learns PlaybackActive flipped true, so the button
 	// only appears after a manual rejoin (which is the only other thing that broadcasts room state).
-	if cardMediaChanged || playbackToggled {
+	if cardMediaChanged || playbackToggled || controlHandedOff {
 		h.broadcastRoomState(room)
 	}
 

@@ -54,7 +54,18 @@ const SEEK_THRESHOLD = 0.75 // only seek when off by more than this (avoids jitt
 const APPLY_ECHO_WINDOW_MS = 2500
 const APPLY_ECHO_SEEK_TOL = 1.5
 const HEARTBEAT_MS = 2000 // how often the controller reports its position to the server
-const HEARTBEAT_DRIFT = 1.0 // a follower re-seeks on a (server) heartbeat when off by more than this — keeps everyone within ~1s
+// Smooth-convergence tuning (followers only). Instead of hard-seeking on every bit of drift
+// (which stutters), a follower nudges its playbackRate a few percent to GLIDE back into sync:
+//   |drift| < DEADBAND        -> normal speed (already in sync)
+//   DEADBAND..HARD_SEEK_DRIFT -> rate = 1 + clamp(drift*GAIN, ±MAX); eases in, never jumps
+//   > HARD_SEEK_DRIFT         -> hard seek (a real gap from a seek/buffer; snap instantly)
+// NUDGE_MAX 0.05 = ±5% ≈ a barely-perceptible pitch shift (a semitone is ~6%); GAIN makes the
+// nudge proportional so it shrinks as it converges (no oscillation). Steady-state drift stays
+// small because the server fans out fresh positions every 500ms, so the nudge is usually <2%.
+const SYNC_DEADBAND = 0.15
+const HARD_SEEK_DRIFT = 0.6
+const NUDGE_GAIN = 0.12
+const NUDGE_MAX = 0.05
 
 export function useWatchRoomPlayerSync() {
     const room = useAtomValue(currentWatchRoomAtom)
@@ -113,6 +124,15 @@ export function useWatchRoomPlayerSync() {
         })
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [videoElement, playerActive, room?.id, canControl, amController])
+
+    // Only a FOLLOWER nudges its playbackRate to converge; the driver always plays at normal
+    // speed. The driver returns early in apply (never reaching the nudge), so if this client just
+    // BECAME the driver (control handoff) it could be left at a leftover nudged rate — reset it.
+    React.useEffect(() => {
+        if (videoElement && canControl && amController && videoElement.playbackRate !== 1) {
+            videoElement.playbackRate = 1
+        }
+    }, [videoElement, canControl, amController])
 
     // ---- Follow the controller into the episode (auto-start) ----
     // The sync above only adjusts an EXISTING player. When the controller starts an episode
@@ -332,13 +352,26 @@ export function useWatchRoomPlayerSync() {
             // recognized as echoes and not re-broadcast (state-matched, robust to late events).
             lastAppliedRef.current = { paused: p.paused, currentTime: p.currentTime, at: Date.now() }
 
-            // Heartbeats only correct large drift (steady playback naturally wanders a little);
-            // discrete seeks apply precisely.
-            const seekThreshold = p.heartbeat ? HEARTBEAT_DRIFT : SEEK_THRESHOLD
+            // Discrete actions snap precisely; heartbeats converge SMOOTHLY via playbackRate
+            // (see the tuning constants) so steady playback doesn't stutter from constant re-seeks.
             let action = "none"
-            if (isFinite(p.currentTime) && Math.abs(videoElement.currentTime - p.currentTime) > seekThreshold) {
+            const drift = isFinite(p.currentTime) ? p.currentTime - videoElement.currentTime : 0
+            const ad = Math.abs(drift)
+            if (!p.heartbeat) {
+                if (ad > SEEK_THRESHOLD) {
+                    action = `seek->${p.currentTime.toFixed(1)}`
+                    videoElement.currentTime = p.currentTime
+                }
+                videoElement.playbackRate = 1 // a real action -> normal speed
+            } else if (ad > HARD_SEEK_DRIFT) {
                 action = `seek->${p.currentTime.toFixed(1)}`
                 videoElement.currentTime = p.currentTime
+                videoElement.playbackRate = 1
+            } else if (ad > SYNC_DEADBAND) {
+                const off = Math.max(-NUDGE_MAX, Math.min(NUDGE_MAX, drift * NUDGE_GAIN))
+                videoElement.playbackRate = 1 + off // glide toward the controller (no log: continuous)
+            } else if (videoElement.playbackRate !== 1) {
+                videoElement.playbackRate = 1 // converged -> normal speed
             }
             if (p.paused && !videoElement.paused) {
                 action += " pause"
