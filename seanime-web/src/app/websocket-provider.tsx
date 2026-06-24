@@ -1,4 +1,5 @@
 import { getServerBaseUrl } from "@/api/client/server-url"
+import { recordRtt } from "@/lib/server/ws-latency"
 import { serverAuthTokenAtom, serverStatusAtom, sessionTokenAtom } from "@/app/(main)/_atoms/server-status.atoms"
 import { websocketAtom, WebSocketContext } from "@/app/(main)/_atoms/websocket.atoms"
 import { ElectronRestartServerPrompt } from "@/app/(main)/_electron/electron-restart-server-prompt"
@@ -310,8 +311,10 @@ function WebsocketManagement() {
                         if (data.type === "pong") {
                             // Update the last pong timestamp
                             lastPongRef.current = Date.now()
-                            // For debugging purposes
-                            // logger("WebsocketProvider").info("Pong received, timestamp updated", lastPongRef.current)
+                            // Measure round-trip latency (the server echoes our ping timestamp) so the
+                            // watch-room sync can lead positions by the network lag.
+                            const ts = data.payload?.timestamp
+                            if (typeof ts === "number") recordRtt(Date.now() - ts)
                         }
                     }
                     catch (e) {

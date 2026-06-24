@@ -11,6 +11,7 @@ import { useWebsocketMessageListener, useWebsocketSender } from "@/app/(main)/_h
 import { clientIdAtom } from "@/app/websocket-provider"
 import { logger } from "@/lib/helpers/debug"
 import { WSEvents } from "@/lib/server/ws-events"
+import { getHalfRttSeconds } from "@/lib/server/ws-latency"
 import { useNakamaJoinWatchRoomStream } from "@/api/hooks/nakama.hooks"
 import { useAtomValue, useSetAtom } from "jotai"
 import React from "react"
@@ -53,7 +54,7 @@ const SEEK_THRESHOLD = 0.75 // only seek when off by more than this (avoids jitt
 // so it's robust to a late event (buffering) without swallowing real input like a timer would.
 const APPLY_ECHO_WINDOW_MS = 2500
 const APPLY_ECHO_SEEK_TOL = 1.5
-const HEARTBEAT_MS = 2000 // how often the controller reports its position to the server
+const HEARTBEAT_MS = 1000 // how often the controller reports its position (re-anchors followers after a seek/buffer)
 // Smooth-convergence tuning (followers only). Instead of hard-seeking on every bit of drift
 // (which stutters), a follower nudges its playbackRate a few percent to GLIDE back into sync:
 //   |drift| < DEADBAND        -> normal speed (already in sync)
@@ -62,7 +63,7 @@ const HEARTBEAT_MS = 2000 // how often the controller reports its position to th
 // NUDGE_MAX 0.05 = ±5% ≈ a barely-perceptible pitch shift (a semitone is ~6%); GAIN makes the
 // nudge proportional so it shrinks as it converges (no oscillation). Steady-state drift stays
 // small because the server fans out fresh positions every 500ms, so the nudge is usually <2%.
-const SYNC_DEADBAND = 0.15
+const SYNC_DEADBAND = 0.08
 const HARD_SEEK_DRIFT = 0.6
 const NUDGE_GAIN = 0.12
 const NUDGE_MAX = 0.05
@@ -244,7 +245,10 @@ export function useWatchRoomPlayerSync() {
             return {
                 roomId: room!.id,
                 paused: player.paused,
-                currentTime: player.currentTime,
+                // Lead by our own uplink latency while playing, so by the time this reaches the
+                // server and is fanned to followers (who add their own downlink) everyone lands on
+                // our true current frame. No lead while paused — position isn't advancing.
+                currentTime: player.currentTime + (player.paused ? 0 : getHalfRttSeconds()),
                 duration: isFinite(player.duration) ? player.duration : 0,
                 // Prefer the global nativePlayer playbackInfo: lastProgress comes from
                 // vc_lastKnownProgress which (like vc_videoElement) is bridged from the scoped
@@ -260,8 +264,12 @@ export function useWatchRoomPlayerSync() {
             }
         }
 
-        function emit() {
+        function emit(isSeek: boolean) {
             if (!canControl) return
+            // Buffering guard: a player stalling at a seek target fires play/pause as it rebuffers —
+            // don't broadcast those (only genuine toggles; a seek always passes). The heartbeat
+            // carries the settled paused state once buffering clears.
+            if (!isSeek && (player.seeking || player.readyState < 3)) return
             // Drop the echo of a state we were just told to be in. A genuine local action
             // (different paused state, or a seek away from the applied position) diverges and
             // passes through immediately.
@@ -286,9 +294,12 @@ export function useWatchRoomPlayerSync() {
             sendMessage({ type: WSEvents.NAKAMA_ROOM_PLAYBACK_STATUS, payload })
         }
 
-        player.addEventListener("play", emit)
-        player.addEventListener("pause", emit)
-        player.addEventListener("seeked", emit)
+        const onPlay = () => emit(false)
+        const onPause = () => emit(false)
+        const onSeeked = () => emit(true)
+        player.addEventListener("play", onPlay)
+        player.addEventListener("pause", onPause)
+        player.addEventListener("seeked", onSeeked)
 
         // Heartbeat: the active driver broadcasts its position every couple seconds so
         // followers reconcile drift and late/desynced players catch up — discrete play/pause/
@@ -303,9 +314,9 @@ export function useWatchRoomPlayerSync() {
 
         return () => {
             if (hb) clearInterval(hb)
-            player.removeEventListener("play", emit)
-            player.removeEventListener("pause", emit)
-            player.removeEventListener("seeked", emit)
+            player.removeEventListener("play", onPlay)
+            player.removeEventListener("pause", onPause)
+            player.removeEventListener("seeked", onSeeked)
         }
     }, [videoElement, room, canControl, amController, amHost, forceHostTracks, lastProgress, audioManager, subtitleManager,
         mediaCaptionsManager, playbackInfo, sendMessage])
@@ -355,17 +366,20 @@ export function useWatchRoomPlayerSync() {
             // Discrete actions snap precisely; heartbeats converge SMOOTHLY via playbackRate
             // (see the tuning constants) so steady playback doesn't stutter from constant re-seeks.
             let action = "none"
-            const drift = isFinite(p.currentTime) ? p.currentTime - videoElement.currentTime : 0
+            // Lead the target by our own downlink latency while playing, so we land on the
+            // controller's TRUE current frame (it already led by its uplink). No lead while paused.
+            const target = isFinite(p.currentTime) ? p.currentTime + (p.paused ? 0 : getHalfRttSeconds()) : videoElement.currentTime
+            const drift = target - videoElement.currentTime
             const ad = Math.abs(drift)
             if (!p.heartbeat) {
                 if (ad > SEEK_THRESHOLD) {
-                    action = `seek->${p.currentTime.toFixed(1)}`
-                    videoElement.currentTime = p.currentTime
+                    action = `seek->${target.toFixed(1)}`
+                    videoElement.currentTime = target
                 }
                 videoElement.playbackRate = 1 // a real action -> normal speed
             } else if (ad > HARD_SEEK_DRIFT) {
-                action = `seek->${p.currentTime.toFixed(1)}`
-                videoElement.currentTime = p.currentTime
+                action = `seek->${target.toFixed(1)}`
+                videoElement.currentTime = target
                 videoElement.playbackRate = 1
             } else if (ad > SYNC_DEADBAND) {
                 const off = Math.max(-NUDGE_MAX, Math.min(NUDGE_MAX, drift * NUDGE_GAIN))
