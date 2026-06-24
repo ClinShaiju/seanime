@@ -467,7 +467,7 @@ export function MediaEntryCard<T extends "anime" | "manga">(props: MediaEntryCar
                     <PrewarmBadge
                         mediaId={media.id}
                         episodeNumber={(listData?.progress ?? 0) + 1}
-                        className="absolute left-1 top-2 z-[10]"
+                        className="absolute left-2.5 top-2.5 z-[10]"
                     />
                 )}
 
