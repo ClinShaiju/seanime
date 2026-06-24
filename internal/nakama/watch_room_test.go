@@ -1,6 +1,9 @@
 package nakama
 
 import (
+	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -312,5 +315,86 @@ func TestWatchRoom_SetControl(t *testing.T) {
 	// Host always controls.
 	if !h.CanControl(room.ID, host.Key()) {
 		t.Fatal("host should always control")
+	}
+}
+
+// TestWatchRoom_ConcurrentSnapshotMarshal guards the concurrency fix: the live room (with its
+// Participants map) must never be JSON-marshaled while a membership op mutates the map, which the
+// Go runtime turns into a fatal "concurrent map read and map write". broadcastRoomState and the
+// HTTP handlers now marshal room.Snapshot() instead. Run under -race to prove it's clean.
+func TestWatchRoom_ConcurrentSnapshotMarshal(t *testing.T) {
+	h := newTestHub()
+	host := localUser("alice")
+	room, _ := h.CreateRoom(host, "client-alice", "Room", "")
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// Churn membership (mutates room.Participants under room.mu). Host stays, so the room lives.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			u := localUser(fmt.Sprintf("u%d", i%8))
+			h.JoinRoom(room.ID, u, fmt.Sprintf("c%d", i%8), "")
+			h.LeaveRoom(room.ID, u.Key())
+		}
+	}()
+
+	// Concurrently marshal snapshots — what broadcastRoomState / the HTTP handlers do. Marshaling
+	// the LIVE room here would crash the process; the snapshot must not.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 3000; i++ {
+			if _, err := json.Marshal(room.Snapshot()); err != nil {
+				t.Errorf("marshal snapshot: %v", err)
+				return
+			}
+		}
+	}()
+
+	time.Sleep(60 * time.Millisecond)
+	close(stop)
+	wg.Wait()
+
+	// Snapshot is a real copy: a later mutation of the live room must not change a prior snapshot.
+	snap := room.Snapshot()
+	before := len(snap.Participants)
+	h.JoinRoom(room.ID, localUser("zoe"), "client-zoe", "")
+	if len(snap.Participants) != before {
+		t.Fatalf("snapshot participants changed after a later join: %d -> %d", before, len(snap.Participants))
+	}
+}
+
+// TestWatchRoom_ReapIdleRooms covers the zombie-room reaper: a room is kept while it has a live
+// client (and its idle timer refreshes), kept while within roomIdleTTL of its last live client,
+// and closed once it has had no live client for longer than the TTL.
+func TestWatchRoom_ReapIdleRooms(t *testing.T) {
+	h := newTestHub()
+	host := localUser("alice")
+	room, _ := h.CreateRoom(host, "client-alice", "Room", "")
+
+	// Host's client is live → kept, and lastLiveAt is refreshed to `now`.
+	h.reapIdleRoomsWith(map[string]struct{}{"client-alice": {}}, time.Now())
+	if _, ok := h.GetRoom(room.ID); !ok {
+		t.Fatal("room with a live client must not be reaped")
+	}
+
+	// No live clients but within the TTL → kept.
+	h.reapIdleRoomsWith(map[string]struct{}{}, time.Now())
+	if _, ok := h.GetRoom(room.ID); !ok {
+		t.Fatal("room within idle TTL must not be reaped")
+	}
+
+	// No live clients and past the TTL → reaped.
+	h.reapIdleRoomsWith(map[string]struct{}{}, time.Now().Add(roomIdleTTL+time.Second))
+	if _, ok := h.GetRoom(room.ID); ok {
+		t.Fatal("room idle past the TTL should be reaped")
 	}
 }

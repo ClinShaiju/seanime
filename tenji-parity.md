@@ -1,5 +1,72 @@
 # Tenji parity — bringing the iOS client up to date
 
+> ## SESSION-3 HANDOFF (2026-06-23, later) — watch-room PLAYBACK control (start/stop/close/reconnect)
+>
+> **✅ TENJI PORTED + tsc-clean + pushed (commit `24df0b8`).** Needs a fresh IPA build + a live
+> Denshi↔Tenji test. Implementation: app-wide `useWatchRoomFollow()` in `src/lib/nakama/watch-room.ts`
+> (auto-start via playback-intent + entry navigation, stop/close via `watchRoomTerminateSignalAtom`,
+> reconnect re-join on clientId change); `emitStop` in `use-watch-room-sync.ts` wired to the player's
+> back; `player.tsx` watches the terminate signal. The spec below is retained for reference.
+>
+> **Seanime side: all LIVE on the VPS** (committed `c4bef93d`, pushed to fork; arm64 deployed, 200).
+> Denshi installer rebuilt: `seanime-denshi/dist/seanime-denshi-3.8.7_Windows_x64.exe`.
+>
+> Session-2 ported room *sync* (apply seek/play/pause to an already-playing MPV stream). That's
+> necessary but NOT sufficient — in cross-platform testing the peer never STARTED playback. This
+> round closes four gaps. **All backend is server-side & deployed (Tenji gets it free); the items
+> below are the CLIENT behaviors Tenji must add.** Web reference: `seanime-web/.../nakama/
+> nakama-room-sync.ts` + `nakama-manager.tsx` (`WatchRoomsSection`), `native-player.atoms.ts`
+> (`nativePlayer_terminateRequestedAtom`).
+>
+> **0) Generated-types delta (do first):** `Nakama_RoomPlaybackStatusPayload` gained
+> `streamType: Nakama_WatchPartyStreamType` ("file"|"torrent"|"debrid"|"onlinestream"),
+> `aniDbEpisode: string`, and **new** `stopped?: boolean`. Re-sync these fields. Add WS const
+> **`nakama-watch-room-closed`** (server→client).
+>
+> **1) Peer AUTO-START (the actual fix — "host starts → peers start"):** the relayed status now
+> carries `streamType` + `aniDbEpisode`, so a follower can launch the SAME source.
+> - **Emit side (controller):** populate `streamType` + `aniDbEpisode` from the active MPV
+>   playback descriptor. Web maps its player streamType → room type: `localfile→file`,
+>   `torrent→torrent`, `debrid→debrid`, else "". `aniDbEpisode` from the episode being played.
+> - **Apply side (follower):** on each incoming `nakama-room-playback-sync` AND on late-join
+>   (`room.lastPlayback`), if `p.mediaId/p.episodeNumber` is set, `!p.stopped`, the streamType is
+>   **debrid or torrent**, and we're NOT already playing that exact media+episode → start it via
+>   Tenji's MPV stream-start path (the auto-select equivalent of web's
+>   `handleAutoSelectStream({mediaId, episodeNumber, aniDBEpisode})` — i.e. `debrid/stream/start`
+>   or torrent stream start with `autoSelect:true`). Then the existing position-sync takes over
+>   once MPV loads. Guard: a `lastStartedKey` ref (`mediaId:ep:streamType`) + the start mutation's
+>   isPending so a burst of syncs doesn't relaunch. Skip `file`/`onlinestream` (can't share
+>   cross-device). See web `maybeAutoStart`.
+>
+> **2) Peer STOP ("host stops episode → peers stop"):** mirror of auto-start.
+> - **Emit:** when the controller's MPV player closes/ends (goes inactive) while in a room +
+>   controlling, send `nakama-room-playback-status` with `{stopped:true, mediaId:0, ...}`. An
+>   episode SWITCH must NOT trip this (only a real stop/close).
+> - **Apply:** on a sync with `stopped:true`, tear down MPV (stop playback / leave player). Set the
+>   echo guard window to ~2s so your own teardown doesn't re-emit a stop.
+>
+> **3) Host CLOSE ROOM → members drop + stop:** backend now closes the whole room when the HOST
+> leaves (non-host leave just removes that member) and pushes **`nakama-watch-room-closed`**
+> (payload = roomId string) to the others. Tenji: on that event, if it's our current room → clear
+> the current-room atom, stop MPV, toast "host closed the room". (The host's existing "Close room"
+> = Leave endpoint already triggers it server-side — no new call needed.)
+>
+> **4) RECONNECT reclaim (host control came back wrong):** a WS reconnect issues a NEW clientId, so
+> the server was still broadcasting to the host's dead client and control stayed handed-off. Fix is
+> **client re-join on reconnect**: when `clientId` changes while in a room, call
+> `useNakamaJoinWatchRoom({roomId, password:"", clientId})` and update the current-room atom. This
+> remaps the driving client (sync reaches the host again) AND reverts control to the host. Backend
+> `JoinRoom` now skips the password check for an existing member, so empty-password re-join is safe.
+> Mirror web's effect in `nakama-manager.tsx` (`prevClientIdRef`). **Temporary disconnect is already
+> safe server-side** (the participant isn't removed; control hands off and is reclaimed on re-join).
+>
+> **Order:** (0) types/WS const → (4) reconnect re-join (cheap, high-value) → (1) auto-start (the
+> headline fix; needs Tenji's MPV stream-start entry point, likely `use-torrent-stream-controller.ts`)
+> → (2) stop → (3) close. Then live Denshi↔Tenji test: host start→peer starts, host stop→peer stops,
+> host close→peer drops, host reconnect→control returns.
+>
+> ---
+
 > ## SESSION-2 HANDOFF (2026-06-23, late) — what Tenji needs after this round
 >
 > **All of the below is now LIVE on the VPS** (server backend + browser/Denshi web). The
@@ -15,7 +82,16 @@
 >   benefits automatically.
 > - `urlRefreshTTL` 15m→2h (minor).
 >
-> **CLIENT-side — Tenji MUST PORT this one:**
+> **CLIENT-side — Tenji MUST PORT this one:** ✅ PORTED 2026-06-23 (commit `1129a51`, in the
+> IPA build alongside rooms). `src/lib/player/debrid-reconnect.ts` (`lastDebridStreamStartAtom`
+> + `useDebridReconnectResume()`, mounted in `app/(app)/(media)/player.tsx`); capture at both
+> debrid start sites in `use-torrent-stream-controller.ts`; `session.ts` external-player handler
+> made **idempotent** (skip MPV reload when the resolved URL is unchanged) so mobile WS blips
+> (backgrounding/network switch) don't reload mid-playback — only an aged/refreshed URL reloads
+> + resumes. **Progress tracking needed NO port:** the server's `af16ba17` live-save is the
+> playback-MANAGER path, which Tenji cancels; Tenji already reports live via **continuity**
+> (~15s + on pause + on background), persisted server-side immediately — which is the position
+> the resume reads. tsc-clean.
 > - **Debrid reconnect-resume (1b)** — when the server restarts mid-playback (deploy/crash),
 >   auto re-issue the stream + resume. **Web impl to mirror in Tenji:**
 >   `seanime-web/.../debrid-stream/_lib/handle-debrid-reconnect.ts` — `lastDebridStreamStartAtom`

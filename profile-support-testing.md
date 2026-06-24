@@ -191,6 +191,25 @@ static analysis. Re-test AFTER M1/M2 are deployed:
 
 ---
 
+## N. Streaming-bleed audit fixes (sha 465d2edb) — re-test
+
+Full end-to-end audit found the real root causes of the tracking/playback bleed.
+
+**N0. PRECONDITIONS (without these the test is invalid):**
+- [ ] Both users **logged in** (so each client tags its `/events` WS with `?session=` — the per-user routing depends on it).
+- [ ] **Denshi (cvslinc) set to the BUILT-IN / native player, NOT the external/default player.** The logs showed cvslinc streaming with `playbackType=default`, which launches **mpv on the headless VPS** (`audio driver 'sdl'` fails) → "player opens, nothing plays, no tracks". That is a client setting, not a server bug. Remote multi-user must use the native player.
+- [ ] Note: Torbox was returning `500 DATABASE_ERROR` / `502` during the last test (provider-side) — if a stream stalls, check the log for that before blaming the server.
+
+**N1. Per-user VideoCore routing (FIXED — was the headline bug):** root cause was every per-session VideoCore subscribing to client player events under the same global key `"videocore"`, so only the last-created session received events and others went dark + mis-attributed.
+- [ ] With both on the native player: cvslinc now sees **his own** currently-watching/progress (T6.1 should pass now).
+- [ ] cvslinc playing does NOT show bob's popup, and vice-versa (T3.2).
+- [ ] Each side's tracking/progress persists per-user across reload (T3.3/T3.4).
+- [ ] Audio/subtitle track selection appears for cvslinc on the native player (T3.1, native-player only).
+
+**N2. Debrid StreamManager shared state (NOT fixed yet — next):** the debrid Repository still has ONE `streamManager` (currentTorrentItemId / cancel funcs / previousStreamOptions shared). Two users debrid-streaming at the *same time* can still clobber each other (a 2nd start cancels the 1st's resolve → "stuck on selecting"). If you see this with both on native player and Torbox healthy, it's N2 — note it; the fix is per-user StreamManager.
+
+---
+
 ## Known gaps — NOT bugs (don't report these as failures)
 
 DONE since earlier rounds: Theme, playlists, AniList account/collection, per-user

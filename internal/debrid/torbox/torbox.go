@@ -543,7 +543,9 @@ const mylistCacheTTL = 120 * time.Second
 func (t *TorBox) getTorrentsCached() ([]*Torrent, error) {
 	t.mylistMu.Lock()
 	if t.mylist != nil && time.Since(t.mylistAt) < mylistCacheTTL {
-		cached := t.mylist
+		// Copy-on-return: AddTorrent appends into t.mylist under the lock; handing out the
+		// shared backing array would race a lock-free iterator if the append reuses spare cap.
+		cached := slices.Clone(t.mylist)
 		t.mylistMu.Unlock()
 		return cached, nil
 	}
@@ -563,8 +565,9 @@ func (t *TorBox) getTorrentsCached() ([]*Torrent, error) {
 	t.mylistMu.Lock()
 	t.mylist = torrents
 	t.mylistAt = time.Now()
+	cached := slices.Clone(t.mylist)
 	t.mylistMu.Unlock()
-	return torrents, nil
+	return cached, nil
 }
 
 func (t *TorBox) getTorrents(bypassCache bool) (ret []*Torrent, err error) {

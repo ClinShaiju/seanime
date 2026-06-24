@@ -6,6 +6,7 @@ import { useSyncIsActive } from "@/app/(main)/_atoms/sync.atoms"
 import { ElectronUpdateModal } from "@/app/(main)/_electron/electron-update-modal"
 import { SidebarNavbar } from "@/app/(main)/_features/layout/top-navbar"
 import { usePluginSidebarItems } from "@/app/(main)/_features/plugin/webview/plugin-sidebar"
+import { StaleClientNotice } from "@/app/(main)/_features/update/stale-client-notice"
 import { UpdateModal } from "@/app/(main)/_features/update/update-modal"
 import { useAutoDownloaderQueueCount } from "@/app/(main)/_hooks/autodownloader-queue-count"
 import { useWebsocketMessageListener } from "@/app/(main)/_hooks/handle-websockets"
@@ -196,9 +197,13 @@ function SidebarNavigation({ isCollapsed }: { isCollapsed: boolean }) {
 
 function SidebarUpdates({ isCollapsed }: { isCollapsed: boolean }) {
     return (
-        !__isDesktop__ ? <UpdateModal collapsed={isCollapsed} /> :
-            __isElectronDesktop__ ? <ElectronUpdateModal collapsed={isCollapsed} /> :
-                null
+        <>
+            {/* Stale-tab "reload to update" popup (no-ops on Denshi / in dev) */}
+            {!__isElectronDesktop__ && <StaleClientNotice />}
+            {!__isDesktop__ ? <UpdateModal collapsed={isCollapsed} /> :
+                __isElectronDesktop__ ? <ElectronUpdateModal collapsed={isCollapsed} /> :
+                    null}
+        </>
     )
 }
 

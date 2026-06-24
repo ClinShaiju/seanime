@@ -272,6 +272,9 @@ func NewApp(configOpts *ConfigOptions, selfupdater *updater.SelfUpdater) *App {
 
 	// Initialize WebSocket event manager for real-time communication
 	wsEventManager := events.NewWSEventManager(logger)
+	// On a password-protected (networked, multi-user) server, don't fan per-user events
+	// out to anonymous UserID==0 connections (pre-login clients).
+	wsEventManager.SetRequireUserScoping(cfg.Server.Password != "")
 
 	// Exit if no WebSocket connections in desktop sidecar mode
 	if configOpts.Flags.IsDesktopSidecar {

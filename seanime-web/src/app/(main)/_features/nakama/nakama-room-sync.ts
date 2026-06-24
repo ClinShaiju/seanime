@@ -162,13 +162,26 @@ export function useWatchRoomPlayerSync() {
     // the mirror of auto-start. Episode SWITCHES keep the player active (just swap media), so
     // they don't trip this. Skip while applying a remote stop (echo guard) so it doesn't loop.
     const setOptedOut = useSetAtom(optedOutStreamRoomIdAtom)
+    // Did the player actually come alive (a <video> mounted) this open? A server ABORT of a
+    // failed open also flips active true->false but never mounts a video — that is NOT a user
+    // close, so it must not opt us out. Opting out there would wedge auto-follow AND make every
+    // "Join room stream" retry re-fail (the original "follower never plays the whole session").
+    const everHadVideoRef = React.useRef(false)
+    React.useEffect(() => {
+        if (videoElement) everHadVideoRef.current = true
+    }, [videoElement])
     const prevActiveRef = React.useRef(playerActive)
     React.useEffect(() => {
         const was = prevActiveRef.current
         prevActiveRef.current = playerActive
         if (!was || playerActive) return // only on true -> false
+        const hadVideo = everHadVideoRef.current
+        everHadVideoRef.current = false // reset for the next open
         if (!room) return
         if (Date.now() < applyingRemoteUntil.current) return // teardown caused by a remote stop, not a user close
+        // Open failed/aborted before showing any video => not a user close. Don't opt out (so
+        // auto-follow can recover and the Join button still works), don't emit a stop.
+        if (!hadVideo) return
         if (canControl && amController) {
             // The driver closed the episode => stop for everyone (mirror of auto-start).
             sendMessage({

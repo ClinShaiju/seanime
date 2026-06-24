@@ -114,7 +114,14 @@ func (h *Handler) HandleGetChangelog(c echo.Context) error {
 		return h.RespondWithData(c, cached)
 	}
 
-	changelogBody, err := http.Get("https://raw.githubusercontent.com/5rahim/seanime/main/CHANGELOG.md")
+	// Fork: the upstream changelog feed is disabled. Point this at the fork's
+	// raw CHANGELOG.md to re-enable the "what's new" body in the update modal.
+	changelogURL := ""
+	if changelogURL == "" {
+		return h.RespondWithData(c, []*changelogItem{})
+	}
+
+	changelogBody, err := http.Get(changelogURL)
 	if err != nil {
 		return h.RespondWithData(c, []*changelogItem{})
 	}

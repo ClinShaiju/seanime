@@ -114,6 +114,11 @@ func (u *Updater) GetAnnouncements(version string, platform string, settings *mo
 func (u *Updater) FetchAnnouncements() []Announcement {
 	var announcements []Announcement
 
+	// Fork: announcements are disabled when no URL is configured.
+	if constants.AnnouncementURL == "" {
+		return announcements
+	}
+
 	response, err := http.Get(constants.AnnouncementURL)
 	if err != nil {
 		u.logger.Error().Err(err).Msgf("updater: Failed to get announcements")

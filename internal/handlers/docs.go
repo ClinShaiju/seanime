@@ -62,7 +62,7 @@ func (h *Handler) HandleGetDocs(c echo.Context) error {
 	}
 
 	// Read the file
-	url := "https://raw.githubusercontent.com/5rahim/seanime/refs/heads/main/codegen/generated/handlers.json?t=1"
+	url := "https://raw.githubusercontent.com/ClinShaiju/seanime/refs/heads/main/codegen/generated/handlers.json?t=1"
 	res, err := http.Get(url)
 	if err != nil {
 		return h.RespondWithError(c, err)

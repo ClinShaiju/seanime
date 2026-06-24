@@ -6,11 +6,17 @@ import (
 	"seanime/internal/library/anime"
 	"seanime/internal/util"
 	"seanime/internal/util/comparison"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/5rahim/habari"
 )
+
+// dualAudioNameRe matches an audio-specific dual/multi token in a release name:
+// "dual audio", "dual-audio", "dualaudio", "multi audio", "multi-audio", etc.
+// (separator optional). Deliberately does NOT match bare "multi" (subtitle markers).
+var dualAudioNameRe = regexp.MustCompile(`(?i)(dual|multi)[\s._-]?audio`)
 
 const (
 	scoreResolutionBase    = 100
@@ -23,12 +29,6 @@ const (
 	scoreCodecDecay        = 5
 	scoreSourceBase        = 30
 	scoreSourceDecay       = 5
-	scoreLanguageBase      = 20
-	scoreLanguageDecay     = 2
-	// Penalty for releases that declare language(s), none of which is preferred
-	// (e.g. Russian-only). Sized ~= resolution weight so they sink below every
-	// preferred-language release and below the cached-first quality threshold.
-	scoreLanguageUnpreferred = 100
 	scoreMultiAudio        = 15
 	scoreMultiSubs         = 10
 	scoreBatch             = 20
@@ -307,7 +307,11 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 		return false
 	}
 
-	isDual := containsMultiOrDual(parsed.AudioTerm) || containsMultiOrDual([]string{c.lowerName})
+	// At the NAME level require an audio-specific token ("dual audio", "multi-audio", …) —
+	// bare "multi"/"dub" must NOT match, since "[Multiple Subtitle]" / "Multi-Subs" are
+	// ubiquitous subtitle markers on Japanese-audio releases and would otherwise flip them
+	// into the English-dub tier. parsed.AudioTerm matching (which is audio-scoped) stays as-is.
+	isDual := containsMultiOrDual(parsed.AudioTerm) || dualAudioNameRe.MatchString(c.lowerName)
 
 	// A declared language (flag emoji or parsed tag) that isn't in any preferred group is a
 	// foreign dub (e.g. FR, RU).

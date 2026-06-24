@@ -347,6 +347,10 @@ func mediaDateKey(m *anilist.BaseAnime) int {
 	return y*10000 + mo*100 + d
 }
 
+// SeasonNumberFromMetadata is the exported form used outside this package (autoselect)
+// to recover an entry's real season number when its AniList title carries no number.
+func SeasonNumberFromMetadata(md *metadata.AnimeMetadata) int { return seasonNumberFromMetadata(md) }
+
 // seasonNumberFromMetadata picks the entry's season number from animap episode
 // data: the first main episode's season, else the smallest positive season among
 // numeric episodes. -1 if none.

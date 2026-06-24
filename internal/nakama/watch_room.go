@@ -96,6 +96,14 @@ type WatchRoom struct {
 	paused     bool
 	position   float64 // seconds, as of positionAt
 	positionAt time.Time
+	// lastControllerClientID is the client whose report set the current authoritative state —
+	// i.e. whoever is actually driving right now (may be a granted member, not ControllerKey).
+	// The broadcast ticker excludes it so the driver isn't echoed its own position.
+	lastControllerClientID string
+	// lastLiveAt is the last time the room had at least one connected client. The reaper closes
+	// a room that has had no live client for longer than roomIdleTTL, so a room whose members all
+	// vanish (tab close / network loss, no explicit leave) doesn't linger as a joinable ghost.
+	lastLiveAt time.Time
 
 	passwordHash string       // sha256 hex of the password; empty = open room
 	mu           sync.RWMutex `json:"-"`
@@ -190,6 +198,11 @@ type WatchRoomHub struct {
 // to all members, so followers stay within ~1s of the controller during steady playback.
 const broadcastTickMs = 1000
 
+// roomIdleTTL is how long a room may have zero connected clients before the reaper closes it.
+// Generous enough to survive reconnects (tab reload, brief network loss) without dropping a room
+// out from under its members.
+const roomIdleTTL = 2 * time.Minute
+
 func NewWatchRoomHub(manager *Manager, logger *zerolog.Logger) *WatchRoomHub {
 	h := &WatchRoomHub{
 		manager: manager,
@@ -216,21 +229,21 @@ func (h *WatchRoomHub) runBroadcastLoop() {
 			if h.manager == nil || h.manager.wsEventManager == nil {
 				continue
 			}
+			h.reapIdleRooms()
 			for _, room := range h.snapshotRooms() {
 				room.mu.RLock()
 				payload := room.playbackBroadcastLocked(true)
-				// The authoritative position is derived from the controller's reports, so the
-				// controller is the source — don't echo it back to itself (that's what caused
-				// the self-driven oscillation). Everyone else (incl. a non-driving host)
-				// reconciles to it.
-				var controllerClientID string
-				if ctrl, ok := room.Participants[room.ControllerKey]; ok {
-					controllerClientID = ctrl.ClientID
-				}
+				// The authoritative position is derived from the driver's reports, so the driver
+				// is the source — don't echo it back to itself (that's what caused the self-driven
+				// oscillation). Exclude the ACTUAL last driver, not ControllerKey: with control
+				// granted to a member, the driver may not be ControllerKey, and echoing the
+				// position back to them made them reconcile to their own report. Everyone else
+				// (incl. a non-driving host) reconciles to it.
+				sourceClientID := room.lastControllerClientID
 				clientIDs := make([]string, 0, len(room.Participants))
 				if payload != nil {
 					for _, p := range room.Participants {
-						if p.ClientID != "" && p.ClientID != controllerClientID {
+						if p.ClientID != "" && p.ClientID != sourceClientID {
 							clientIDs = append(clientIDs, p.ClientID)
 						}
 					}
@@ -291,7 +304,8 @@ func (h *WatchRoomHub) CreateRoom(host PoolUser, clientID, name, password string
 				AutoSkipPref: "auto",
 			},
 		},
-		CreatedAt: now,
+		CreatedAt:  now,
+		lastLiveAt: now,
 	}
 
 	h.mu.Lock()
@@ -545,23 +559,29 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 		return
 	}
 
-	targets, allowed := room.resolveRelay(senderClientID)
-	if !allowed {
+	if _, allowed := room.resolveRelay(senderClientID); !allowed {
 		h.logf("dropping playback status from client %s (not allowed to control room %s)", senderClientID, p.RoomId)
 		return
 	}
-
-	_ = targets // membership fan-out is computed below; resolveRelay is kept for its permission check
 
 	// Update the AUTHORITATIVE room state from the controller's report. The server — not the
 	// controller's client — is now the source of truth: it holds {paused, position} and the
 	// broadcast loop fans the computed live position out to everyone.
 	room.mu.Lock()
+	// Record the driver's client so the ticker doesn't echo the position back to them (the
+	// driver may be a granted member, not ControllerKey).
+	room.lastControllerClientID = senderClientID
 	room.LastPlayback = p
+	// Whether the room's advertised media (the discovery card) changed, so we can refresh the
+	// card list — but only on an actual start/episode change, never on every heartbeat.
+	cardMediaChanged := false
 	if p.Stopped {
 		room.PlaybackActive = false
 		room.paused = true
 	} else {
+		if room.CurrentMediaInfo == nil || room.CurrentMediaInfo.MediaId != p.MediaId || room.CurrentMediaInfo.EpisodeNumber != p.EpisodeNumber {
+			cardMediaChanged = true
+		}
 		room.PlaybackActive = true
 		room.paused = p.Paused
 		room.position = p.CurrentTime
@@ -596,6 +616,13 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 		return ok && ctrl.ClientID == senderClientID
 	}()
 	room.mu.Unlock()
+
+	// The discovery cards surface mediaId/episode; refresh them when a room starts or switches
+	// episode (only on an actual media change, not every heartbeat). Called outside room.mu —
+	// broadcastRoomsUpdated takes its own locks.
+	if cardMediaChanged {
+		h.broadcastRoomsUpdated()
+	}
 
 	// Diagnostic: log discrete actions (not the periodic heartbeats) so the full sync
 	// conversation is visible — who sent it, whether they're the controller, the paused/
@@ -772,6 +799,100 @@ func (h *WatchRoomHub) broadcastRoomsUpdated() {
 	h.manager.wsEventManager.SendEvent(events.NakamaRoomsUpdated, h.ListRooms())
 }
 
+// snapshotLocked returns a copy of the room that is safe to JSON-marshal/send OUTSIDE room.mu:
+// a fresh Participants map of value-copied participants, plus the pointer fields (which are
+// replaced wholesale, never mutated in place, so sharing them is race-free). Marshaling the LIVE
+// room while a membership op mutates Participants under the lock is a "concurrent map read and
+// map write" — a fatal, unrecoverable runtime crash — so every serialization path uses this
+// instead of the live struct. Caller holds room.mu (read or write).
+func (room *WatchRoom) snapshotLocked() *WatchRoom {
+	cp := &WatchRoom{
+		ID:                room.ID,
+		Name:              room.Name,
+		HostKey:           room.HostKey,
+		ControllerKey:     room.ControllerKey,
+		HasPassword:       room.HasPassword,
+		ForceHostTracks:   room.ForceHostTracks,
+		CurrentMediaInfo:  room.CurrentMediaInfo, // replaced wholesale on change, never mutated in place
+		LastPlayback:      room.LastPlayback,     // ditto
+		EffectiveAutoSkip: room.EffectiveAutoSkip,
+		AutoSkipVotesOn:   room.AutoSkipVotesOn,
+		AutoSkipVotesOff:  room.AutoSkipVotesOff,
+		CreatedAt:         room.CreatedAt,
+		PlaybackActive:    room.PlaybackActive,
+	}
+	if room.Participants != nil {
+		cp.Participants = make(map[string]*RoomParticipant, len(room.Participants))
+		for k, p := range room.Participants {
+			pc := *p // RoomParticipant is all value fields → a full copy
+			cp.Participants[k] = &pc
+		}
+	}
+	return cp
+}
+
+// Snapshot returns a marshal-safe copy of the room (see snapshotLocked). Use it whenever the
+// room is serialized outside the hub — e.g. an HTTP handler returning the room after a mutation.
+func (room *WatchRoom) Snapshot() *WatchRoom {
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	return room.snapshotLocked()
+}
+
+// reapIdleRooms closes any room that has had no connected client for longer than roomIdleTTL.
+// HandleClientDisconnect keeps participants (for reconnect) and only an explicit leave deletes a
+// room, so a room whose members all vanish without leaving would otherwise linger forever —
+// ticked every second and advertised in ListRooms as a joinable ghost with dead client ids.
+// Called once per broadcast tick.
+func (h *WatchRoomHub) reapIdleRooms() {
+	live := make(map[string]struct{})
+	for _, id := range h.manager.wsEventManager.GetClientIds() {
+		live[id] = struct{}{}
+	}
+	h.reapIdleRoomsWith(live, time.Now())
+}
+
+// reapIdleRoomsWith is the pure core of the reaper (live = currently-connected client ids).
+// Split out so the TTL/liveness logic is unit-testable without a manager/ws layer.
+func (h *WatchRoomHub) reapIdleRoomsWith(live map[string]struct{}, now time.Time) {
+	var reaped []string
+	for _, room := range h.snapshotRooms() {
+		room.mu.Lock()
+		hasLive := false
+		for _, p := range room.Participants {
+			if p.ClientID == "" {
+				continue
+			}
+			if _, ok := live[p.ClientID]; ok {
+				hasLive = true
+				break
+			}
+		}
+		if hasLive {
+			room.lastLiveAt = now
+			room.mu.Unlock()
+			continue
+		}
+		idle := !room.lastLiveAt.IsZero() && now.Sub(room.lastLiveAt) > roomIdleTTL
+		room.mu.Unlock()
+		if idle {
+			reaped = append(reaped, room.ID)
+		}
+	}
+	if len(reaped) == 0 {
+		return
+	}
+	h.mu.Lock()
+	for _, id := range reaped {
+		delete(h.rooms, id)
+	}
+	h.mu.Unlock()
+	for _, id := range reaped {
+		h.logf("reaped idle room %s (no connected client for >%s)", id, roomIdleTTL)
+	}
+	h.broadcastRoomsUpdated()
+}
+
 // broadcastRoomState pushes one room's full state (incl. participant list) to that
 // room's members only — the member list is visible only inside the room.
 func (h *WatchRoomHub) broadcastRoomState(room *WatchRoom) {
@@ -779,6 +900,7 @@ func (h *WatchRoomHub) broadcastRoomState(room *WatchRoom) {
 		return
 	}
 	room.mu.RLock()
+	snapshot := room.snapshotLocked() // marshal a copy, never the live room (concurrent-map-write crash)
 	clientIDs := make([]string, 0, len(room.Participants))
 	for _, p := range room.Participants {
 		if p.ClientID != "" {
@@ -787,6 +909,6 @@ func (h *WatchRoomHub) broadcastRoomState(room *WatchRoom) {
 	}
 	room.mu.RUnlock()
 	for _, cid := range clientIDs {
-		h.manager.wsEventManager.SendEventTo(cid, events.NakamaWatchRoomState, room, true)
+		h.manager.wsEventManager.SendEventTo(cid, events.NakamaWatchRoomState, snapshot, true)
 	}
 }

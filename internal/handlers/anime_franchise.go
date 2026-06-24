@@ -104,7 +104,7 @@ func (h *Handler) resolveFranchiseGroup(c echo.Context, mId int) (*anime.Franchi
 	tree := anilist.NewCompleteAnimeRelationTree()
 	cache := anilist.NewCompleteAnimeCache()
 	root := &anilist.BaseAnime{ID: mId}
-	_ = root.FetchMediaTree(anilist.FetchMediaTreeAll, client, rl, tree, cache)
+	treeErr := root.FetchMediaTree(anilist.FetchMediaTreeAll, client, rl, tree, cache)
 
 	members := make([]*anilist.BaseAnime, 0)
 	seen := make(map[int]bool)
@@ -191,7 +191,13 @@ func (h *Handler) resolveFranchiseGroup(c echo.Context, mId int) (*anime.Franchi
 	})
 
 	group := anime.BuildFranchiseFromMembers(members, refs, relationOf)
-	anime.CacheFranchiseGroup(h.App.FileCacher, group)
+	// Don't poison the 24h group cache with an under-populated franchise from a transient
+	// AniList failure — a failed/partial tree walk yields just the root via the fallback
+	// above, which would "stick" as an un-grouped view for a day. Skip caching on error so
+	// the next request retries the walk.
+	if treeErr == nil {
+		anime.CacheFranchiseGroup(h.App.FileCacher, group)
+	}
 
 	return group, nil
 }
@@ -232,7 +238,10 @@ func (h *Handler) HandleGetMergedSeason(c echo.Context) error {
 		return h.RespondWithError(c, errors.New("no cours found for that season"))
 	}
 
-	animeCollection, _ := h.App.GetAnimeCollection(false)
+	// Per-user collection (not the global/admin one) so progress on the merged view is
+	// the requesting user's, not the admin's, on a networked multi-user server.
+	sess := h.userSession(c)
+	animeCollection, _ := sess.GetAnimeCollection(false)
 
 	merged := &anime.MergedSeason{SeasonNumber: seasonNum, Cours: []*anime.MergedCour{}, Episodes: []*anime.Episode{}}
 	globalEp := 0

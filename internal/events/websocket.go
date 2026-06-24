@@ -63,6 +63,11 @@ type (
 		Conns                              []*WSConn
 		Logger                             *zerolog.Logger
 		hasHadConnection                   bool
+		// requireUserScoping is true on a password-protected (networked, multi-user)
+		// server: there, a UserID==0 connection is an anonymous pre-login client, NOT the
+		// local single user, so per-user events must not fan out to it. On a password-less
+		// local/desktop install it stays false (UserID==0 is the legitimate sole user).
+		requireUserScoping                 bool
 		mu                                 sync.Mutex
 		eventMu                            sync.RWMutex
 		clientEventSubscribers             *result.Map[string, *ClientEventSubscriber]
@@ -162,6 +167,15 @@ func (m *WSEventManager) AddConn(id string, conn *websocket.Conn, platform ...st
 	})
 }
 
+// SetRequireUserScoping marks the server as password-protected (networked), so
+// per-user events stop fanning out to anonymous UserID==0 connections. Set once at
+// startup from cfg.Server.Password != "".
+func (m *WSEventManager) SetRequireUserScoping(v bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requireUserScoping = v
+}
+
 // SetConnUserID associates a connection with a Seanime user, for per-user event
 // scoping. Called once at upgrade when a session token is present.
 func (m *WSEventManager) SetConnUserID(id string, userID uint) {
@@ -216,7 +230,9 @@ func (m *WSEventManager) SendEventToUserOrUnscoped(userID uint, t string, payloa
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, conn := range m.Conns {
-		if conn.UserID != userID && conn.UserID != 0 {
+		// On a networked server, UserID==0 is an anonymous pre-login client — don't leak
+		// the owner's per-user events (e.g. DebridStreamState carries the torrent name) to it.
+		if conn.UserID != userID && (m.requireUserScoping || conn.UserID != 0) {
 			continue
 		}
 		_ = conn.Conn.WriteJSON(WSEvent{

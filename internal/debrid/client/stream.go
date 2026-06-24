@@ -24,11 +24,25 @@ import (
 
 type (
 	StreamManager struct {
-		repository            *Repository
+		repository *Repository
+		// stateMu guards the active-stream "share" scalars below (currentTorrentItemId,
+		// currentStreamUrl, currentFileId, previousStreamOptions). startStream's download
+		// goroutine writes them while the watch-room / Nakama / plugin host paths read them
+		// from other goroutines (Repository.GetStreamURL / GetUserStreamShare) — without this
+		// a peer could read a torn selection (URL refreshed but file id not, or vice-versa).
+		// Always go through the get*/set* helpers below, never the fields directly.
+		// ponytail: the two ctx cancel funcs are NOT under this lock — context.CancelFunc is
+		// idempotent and safe to call concurrently, so their worst case is a benign double-cancel
+		// or a brief ctx leak; guard them here too if a -race test for this package is ever wired up.
+		stateMu               sync.RWMutex
 		currentTorrentItemId  string
 		downloadCtxCancelFunc context.CancelFunc
 
 		currentStreamUrl string
+		// currentFileId is the active stream's debrid file id. Captured so the watch-room
+		// "join stream" path can share the SELECTION (torrent item + file) with peers, who
+		// then resolve their OWN CDN link from it (no shared single link to contend on).
+		currentFileId string
 
 		playbackSubscriberCtxCancelFunc context.CancelFunc
 
@@ -81,6 +95,12 @@ type (
 		Torrent           *hibiketorrent.AnimeTorrent // Selected torrent
 		FileId            string                      // File ID or index
 		FileIndex         *int                        // Index of the file to stream (Manual selection)
+		// SharedTorrentItemId, when set (with AutoSelect=false), reuses an ALREADY-ADDED debrid
+		// torrent item instead of adding one: the stream skips AddTorrent and resolves its own
+		// fresh CDN link from this item id (cheap — no createtorrent). The watch-room join path
+		// sets it from the host's active selection so peers reuse the selection without
+		// contending on the host's single resolved link (the cause of a follower never loading).
+		SharedTorrentItemId string
 		UserAgent         string
 		ClientId          string
 		// UserID is the Seanime user who owns this stream; routes playback/events to
@@ -124,6 +144,58 @@ func NewStreamManager(repository *Repository) *StreamManager {
 		preloadInflight:       make(map[string]context.CancelFunc),
 		previousStreamOptions: mo.None[*StartStreamOptions](),
 	}
+}
+
+// --- active-stream share-state accessors (guarded by stateMu) ---
+
+func (s *StreamManager) setCurrentStreamUrl(v string) {
+	s.stateMu.Lock()
+	s.currentStreamUrl = v
+	s.stateMu.Unlock()
+}
+
+func (s *StreamManager) getCurrentStreamUrl() string {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.currentStreamUrl
+}
+
+func (s *StreamManager) setCurrentTorrentItemId(v string) {
+	s.stateMu.Lock()
+	s.currentTorrentItemId = v
+	s.stateMu.Unlock()
+}
+
+func (s *StreamManager) getCurrentTorrentItemId() string {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.currentTorrentItemId
+}
+
+func (s *StreamManager) setCurrentFileId(v string) {
+	s.stateMu.Lock()
+	s.currentFileId = v
+	s.stateMu.Unlock()
+}
+
+// shareSnapshot returns a consistent (url, torrentItemId, fileId) triple for the
+// watch-room "join stream" path, so a peer never reads a half-updated selection.
+func (s *StreamManager) shareSnapshot() (url, torrentItemId, fileId string) {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.currentStreamUrl, s.currentTorrentItemId, s.currentFileId
+}
+
+func (s *StreamManager) setPreviousStreamOptions(opts *StartStreamOptions) {
+	s.stateMu.Lock()
+	s.previousStreamOptions = mo.Some(opts)
+	s.stateMu.Unlock()
+}
+
+func (s *StreamManager) getPreviousStreamOptions() (*StartStreamOptions, bool) {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.previousStreamOptions.Get()
 }
 
 const (
@@ -234,8 +306,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		}
 	}
 
-	s.previousStreamOptions = mo.Some(opts)              // this user's last stream (for cancel)
-	s.repository.previousStreamOptions = mo.Some(opts)   // last-active (host/plugin accessors)
+	s.setPreviousStreamOptions(opts)                 // this user's last stream (for cancel)
+	s.repository.setPreviousStreamOptions(opts)      // last-active (host/plugin accessors)
 
 	s.repository.logger.Info().
 		Str("user", s.repository.usernameFor(opts.UserID)).
@@ -335,6 +407,11 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			// Pre-resolved direct stream — nothing to analyze.
 			directStreamUrl = selectedTorrent.StreamUrl
 			filepath = selectedTorrent.Name
+		} else if opts.SharedTorrentItemId != "" {
+			// Shared selection (watch-room peer): the torrent is already added under
+			// SharedTorrentItemId and fileId is the host's file. Skip analysis; our own CDN
+			// link is resolved from the item below. Name carries the host's filepath.
+			filepath = selectedTorrent.Name
 		} else if fileId == "" {
 			// If no fileId is provided, we need to analyze the torrent to find the correct file
 			var chosenFileIndex *int
@@ -376,34 +453,41 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 	// goroutine below uses directStreamUrl instead of polling GetTorrentStreamUrl.
 	torrentItemId := ""
 	if directStreamUrl == "" {
-		s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
-			Status:      StreamStatusDownloading,
-			TorrentName: selectedTorrent.Name,
-			Message:     "Adding torrent...",
-		})
-
-		// Add the torrent to the debrid service
-		torrentItemId, err = provider.AddTorrent(debrid.AddTorrentOptions{
-			MagnetLink:   selectedTorrent.MagnetLink,
-			InfoHash:     selectedTorrent.InfoHash,
-			SelectFileId: fileId, // RD-only, download only the selected file
-		})
-		if err != nil {
+		if opts.SharedTorrentItemId != "" {
+			// Reuse the host's already-added torrent item; our own CDN link is resolved from
+			// it in the goroutine below. No AddTorrent (no createtorrent), and a fresh per-peer
+			// link means peers don't contend on the host's single resolved link.
+			torrentItemId = opts.SharedTorrentItemId
+		} else {
 			s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
-				Status:      StreamStatusFailed,
+				Status:      StreamStatusDownloading,
 				TorrentName: selectedTorrent.Name,
-				Message:     fmt.Sprintf("Failed to add torrent, %v", err),
+				Message:     "Adding torrent...",
 			})
-			s.ev(opts).SendEvent(events.HideIndefiniteLoader, "debridstream")
-			return fmt.Errorf("debridstream: Failed to add torrent: %w", err)
-		}
 
-		// ponytail: no settle needed — GetTorrentStreamUrl's first poll is now 500ms out (with
-		// backoff), which is plenty for the just-added item to become queryable.
+			// Add the torrent to the debrid service
+			torrentItemId, err = provider.AddTorrent(debrid.AddTorrentOptions{
+				MagnetLink:   selectedTorrent.MagnetLink,
+				InfoHash:     selectedTorrent.InfoHash,
+				SelectFileId: fileId, // RD-only, download only the selected file
+			})
+			if err != nil {
+				s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
+					Status:      StreamStatusFailed,
+					TorrentName: selectedTorrent.Name,
+					Message:     fmt.Sprintf("Failed to add torrent, %v", err),
+				})
+				s.ev(opts).SendEvent(events.HideIndefiniteLoader, "debridstream")
+				return fmt.Errorf("debridstream: Failed to add torrent: %w", err)
+			}
+
+			// ponytail: no settle needed — GetTorrentStreamUrl's first poll is now 500ms out (with
+			// backoff), which is plenty for the just-added item to become queryable.
+		}
 	}
 
 	// Save the current torrent item id
-	s.currentTorrentItemId = torrentItemId
+	s.setCurrentTorrentItemId(torrentItemId)
 	ctx, cancelCtx := context.WithCancel(context.Background())
 	s.downloadCtxCancelFunc = cancelCtx
 
@@ -594,9 +678,10 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			return
 		}
 
-		s.currentStreamUrl = streamUrl
+		s.setCurrentStreamUrl(streamUrl)
+		s.setCurrentFileId(fileId) // shareable selection for watch-room peers
 		// Snapshot the freshly-resolved stream so a server restart can replay it instantly.
-		s.persistActiveStream(opts, streamUrl, s.currentTorrentItemId, fileId, filepath, media, selectedTorrent, time.Now())
+		s.persistActiveStream(opts, streamUrl, torrentItemId, fileId, filepath, media, selectedTorrent, time.Now())
 
 		switch playbackType {
 		case PlaybackTypeNone:
@@ -664,14 +749,14 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 				case <-playbackSubscriberCtx.Done():
 					s.ev(opts).SendEvent(events.HideIndefiniteLoader, "debridstream")
 					s.pb(opts).UnsubscribeFromPlaybackStatus("debridstream")
-					s.currentStreamUrl = ""
+					s.setCurrentStreamUrl("")
 				case event := <-playbackSubscriber.EventCh:
 					switch event.(type) {
 					case playbackmanager.StreamStartedEvent:
 						s.ev(opts).SendEvent(events.HideIndefiniteLoader, "debridstream")
 					case playbackmanager.StreamStoppedEvent:
 						go s.pb(opts).UnsubscribeFromPlaybackStatus("debridstream")
-						s.currentStreamUrl = ""
+						s.setCurrentStreamUrl("")
 					}
 				}
 			}()
@@ -759,7 +844,7 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 	// Resolve the directStream of the user who owns the stream being cancelled — THIS
 	// manager's own last stream (per-user), not the repository's last-active copy.
 	var prevOpts *StartStreamOptions
-	if p, ok := s.previousStreamOptions.Get(); ok {
+	if p, ok := s.getPreviousStreamOptions(); ok {
 		prevOpts = p
 	}
 	if dm := s.ds(prevOpts); dm != nil {
@@ -773,9 +858,10 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 
 	s.ev(prevOpts).SendEvent(events.HideIndefiniteLoader, "debridstream")
 
-	s.currentStreamUrl = ""
+	s.setCurrentStreamUrl("")
 
-	if opts.RemoveTorrent && s.currentTorrentItemId != "" {
+	torrentItemId := s.getCurrentTorrentItemId()
+	if opts.RemoveTorrent && torrentItemId != "" {
 		// Remove the torrent from the debrid service
 		provider, err := s.repository.GetProvider()
 		if err != nil {
@@ -784,7 +870,7 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 		}
 
 		// Remove the torrent from the debrid service
-		err = provider.DeleteTorrent(s.currentTorrentItemId)
+		err = provider.DeleteTorrent(torrentItemId)
 		if err != nil {
 			s.repository.logger.Err(err).Msg("debridstream: Failed to remove torrent")
 		}
@@ -1127,7 +1213,10 @@ func (s *StreamManager) loadPersistedActiveStream(userID uint) {
 func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStreamOptions, cached *preloadedDebridStream) (err error) {
 	defer util.HandlePanicInModuleWithError("debrid/client/playPreloadedStream", &err)
 
-	s.repository.previousStreamOptions = mo.Some(opts)
+	// Mirror startStream: set both the per-user slot (for cancelStream) and the repository's
+	// last-active slot (host/plugin accessors), under their respective locks.
+	s.setPreviousStreamOptions(opts)
+	s.repository.setPreviousStreamOptions(opts)
 	s.repository.logger.Info().
 		Int("mediaId", opts.MediaId).
 		Str("playbackType", string(opts.PlaybackType)).
@@ -1152,7 +1241,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		}
 	}
 
-	s.currentTorrentItemId = cached.torrentItemId
+	s.setCurrentTorrentItemId(cached.torrentItemId)
 
 	streamCtx, cancelCtx := context.WithCancel(context.Background())
 	s.downloadCtxCancelFunc = cancelCtx
@@ -1208,7 +1297,8 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		return nil
 	}
 
-	s.currentStreamUrl = streamUrl
+	s.setCurrentStreamUrl(streamUrl)
+	s.setCurrentFileId(cached.fileId) // shareable selection for watch-room peers
 	// Re-snapshot (URL may have been refreshed above) so a restart can replay it instantly.
 	s.persistActiveStream(opts, streamUrl, cached.torrentItemId, cached.fileId, cached.filepath, media, cached.torrent, cached.urlResolvedAt)
 

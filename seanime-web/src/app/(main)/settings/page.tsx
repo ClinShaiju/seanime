@@ -771,7 +771,11 @@ export default function Page() {
                                                 help="Used by the search engine. Select 'None' if you don't need torrent support."
                                                 leftIcon={<RiFolderDownloadFill className="text-orange-500" />}
                                                 options={[
-                                                    ...(torrentProviderExtensions?.filter(ext => ext?.settings?.type === "main")?.map(ext => ({
+                                                    // Allow "special" providers (e.g. AIOStreams) as the default too, not just "main".
+                                                    // Aggregators like AIOStreams flag supportsAdult=true simply because they can return
+                                                    // anything, so we can't exclude on that without hiding them — list all non-"none"
+                                                    // providers. The backend uses whatever id is stored here for manual search.
+                                                    ...(torrentProviderExtensions?.filter(ext => ext?.settings?.type === "main" || ext?.settings?.type === "special")?.map(ext => ({
                                                         label: ext.name,
                                                         value: ext.id,
                                                     })) ?? []).sort((a, b) => a?.label?.localeCompare(b?.label) ?? 0),

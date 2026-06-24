@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"seanime/internal/api/anilist"
+	"seanime/internal/api/metadata"
 	"seanime/internal/api/metadata_provider"
 	"seanime/internal/debrid/debrid"
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
@@ -95,12 +96,32 @@ func (s *AutoSelect) FindBestTorrent(
 
 	// 2. Filter & sort
 	s.log("Filtering and sorting candidates")
-	expectedSeason := media.GetPossibleSeasonNumber()
+	expectedSeason := s.ResolveExpectedSeason(media.GetID(), media.GetPossibleSeasonNumber())
 	torrents = s.filterAndSort(torrents, profile, expectedSeason, episodeNumber, postSearchSort)
 
 	// 3. Select file (iterate top 3)
 	s.log("Selecting best file from top candidates")
 	return s.selectFile(ctx, media, episodeNumber, torrents, mode, torrentClient, debridClient)
+}
+
+// ResolveExpectedSeason recovers the entry's real season number. AniList titles for sequels
+// often carry a unique subtitle and no season number (e.g. "...Santa Claus no Yume" = Bunny
+// Girl Senpai S2), so GetPossibleSeasonNumber() returns -1 and the S1-leak gate never fires.
+// The metadata provider (animap -> TMDB season) is the same source the UI's season grouping
+// uses, so prefer it and fall back to titleSeason (the caller's title-parsed number) only when
+// metadata is unavailable. titleSeason lets BaseAnime callers (the UI sort) reuse this without
+// a CompleteAnime. The metadata lookup is in-memory cached, so it's free for a viewed entry.
+func (s *AutoSelect) ResolveExpectedSeason(mediaId int, titleSeason int) int {
+	if s.metadataProvider != nil {
+		if p := s.metadataProvider.Get(); p != nil {
+			if md, err := p.GetAnimeMetadata(metadata.AnilistPlatform, mediaId); err == nil && md != nil {
+				if n := anime.SeasonNumberFromMetadata(md); n >= 1 {
+					return n
+				}
+			}
+		}
+	}
+	return titleSeason
 }
 
 func (s *AutoSelect) log(msg string) {

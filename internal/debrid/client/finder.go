@@ -207,12 +207,17 @@ func (r *Repository) RankTorrentsForDisplay(
 		return statuses
 	}
 
-	ordered = r.autoSelect.Rank(torrents, profile, media.GetPossibleSeasonNumber(), episodeNumber, postSearchSort)
+	// Same season source as auto-select (metadata-derived, title fallback) so the UI "Auto"
+	// sort ranks sequels correctly — a subtitle-only S2 entry no longer floats S1 to the top.
+	expectedSeason := r.autoSelect.ResolveExpectedSeason(media.GetID(), media.GetPossibleSeasonNumber())
+	ordered = r.autoSelect.Rank(torrents, profile, expectedSeason, episodeNumber, postSearchSort)
 	return ordered, cachedHashes
 }
 
 // findBestTorrentFromManualSelection is like findBestTorrent but for a pre-selected torrent
 func (r *Repository) findBestTorrentFromManualSelection(provider debrid.Provider, t *hibiketorrent.AnimeTorrent, media *anilist.CompleteAnime, episodeNumber int, chosenFileIndex *int) (ret *playbackTorrent, err error) {
+
+	defer util.HandlePanicInModuleWithError("debridstream/findBestTorrentFromManualSelection", &err)
 
 	r.logger.Debug().Msgf("debridstream: Analyzing torrent from %s for %s", t.Link, media.GetTitleSafe())
 
@@ -317,6 +322,12 @@ func (r *Repository) findBestTorrentFromManualSelection(provider debrid.Provider
 		r.logger.Debug().Msgf("debridstream: Found corresponding file for episode %s: %s", strconv.Itoa(episodeNumber), analysisFile.GetLocalFile().Name)
 
 		fileIndex = analysisFile.GetIndex()
+	}
+
+	// Bounds-check: fileIndex may be a UI-supplied chosenFileIndex, or an analyzer index
+	// against a since-changed file list — an out-of-range value would panic the handler.
+	if fileIndex < 0 || fileIndex >= len(info.Files) {
+		return nil, fmt.Errorf("selected file index %d out of range (%d files)", fileIndex, len(info.Files))
 	}
 
 	tFile := info.Files[fileIndex]

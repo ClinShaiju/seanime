@@ -1,7 +1,6 @@
 package updater
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -12,14 +11,10 @@ import (
 	"github.com/goccy/go-json"
 )
 
-// We fetch the latest release from the website first, if it fails we fallback to GitHub API
-// This allows updates even if Seanime is removed from GitHub
+// Fork: updates resolve exclusively to this fork's GitHub releases. The upstream
+// seanime.app channels (website/stable/nightly/github-status) are not used.
 var (
-	websiteUrl           = "https://seanime.app/api/release"
 	fallbackGithubUrl    = "https://api.github.com/repos/ClinShaiju/seanime/releases/latest"
-	githubCheckUrl       = "https://seanime.app/api/github-status"
-	seanimeStableUrl     = "https://seanime.app/api/updates/stable/stable_server.json"
-	seanimeNightlyUrl    = "https://seanime.app/api/updates/nightly/nightly_server.json"
 	ErrInsecureUpdateURL = errors.New("update URL must use https")
 )
 
@@ -78,10 +73,6 @@ type (
 		TarballURL string `json:"tarball_url"`
 		ZipballURL string `json:"zipball_url"`
 		Body       string `json:"body"`
-	}
-
-	DocsResponse struct {
-		Release Release `json:"release"`
 	}
 
 	Release struct {
@@ -198,87 +189,8 @@ func (u *Updater) fetchLatestReleaseFromGitHub() (*Release, error) {
 	return release, nil
 }
 
-// returns true if github is ok OR url is unreachable
-// returns false if github is down and fallback should be used
+// fetchGithubStatus is a no-op for this fork: GitHub is the only update source, so
+// there is no upstream status endpoint to consult and no fallback channel to switch to.
 func (u *Updater) fetchGithubStatus() (string, bool) {
-	type GithubStatus struct {
-		Status      string `json:"status"`
-		Fallback    string `json:"fallback"`
-		Description string `json:"description"`
-	}
-
-	if err := validateUpdateURL(githubCheckUrl); err != nil {
-		return "", true
-	}
-
-	response, err := u.client.Get(githubCheckUrl)
-	if err != nil {
-		return "", true // unreachable = ok
-	}
-	defer response.Body.Close()
-
-	statusCode := response.StatusCode
-
-	if !((statusCode >= 200) && (statusCode <= 299)) {
-		return "", true // unreachable = ok
-	}
-
-	byteArr, readErr := io.ReadAll(response.Body)
-	if readErr != nil {
-		return "", true // unreachable = ok
-	}
-
-	var res GithubStatus
-	err = json.Unmarshal(byteArr, &res)
-	if err != nil {
-		return "", true // unreachable = ok
-	}
-
-	// url is reachable, status is "down"
-	if res.Status == "down" {
-		u.logger.Warn().Str("reason", res.Description).Msgf("app: Changing update channel to %s", res.Fallback)
-		return cmp.Or(res.Fallback, "seanime"), false
-	}
-
 	return "", true
-}
-
-func (u *Updater) fetchLatestReleaseFromApi(releaseUrl string) (*Release, error) {
-	if err := validateUpdateURL(releaseUrl); err != nil {
-		return nil, err
-	}
-
-	response, err := u.client.Get(releaseUrl)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-
-	statusCode := response.StatusCode
-
-	if statusCode == 429 {
-		return nil, errors.New("rate limited, try again later")
-	}
-
-	if !((statusCode >= 200) && (statusCode <= 299)) {
-		return nil, fmt.Errorf("http error code: %d\n", statusCode)
-	}
-
-	byteArr, readErr := io.ReadAll(response.Body)
-	if readErr != nil {
-		return nil, fmt.Errorf("error reading response: %w", readErr)
-	}
-
-	var res DocsResponse
-	err = json.Unmarshal(byteArr, &res)
-	if err != nil {
-		return nil, err
-	}
-
-	res.Release.Version = strings.TrimPrefix(res.Release.TagName, "v")
-	if err := validateReleaseDownloadURLs(&res.Release); err != nil {
-		return nil, err
-	}
-
-	return &res.Release, nil
 }

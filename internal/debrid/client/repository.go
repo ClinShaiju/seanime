@@ -21,6 +21,7 @@ import (
 	"seanime/internal/torrents/torrent"
 	"seanime/internal/util"
 	"seanime/internal/util/result"
+	"sync"
 
 	"github.com/rs/zerolog"
 	"github.com/samber/mo"
@@ -66,6 +67,11 @@ type (
 
 		autoSelect *autoselect.AutoSelect
 
+		// previousStreamOptions is the most-recently-started stream, GLOBAL across users —
+		// consumed by single-host features (Nakama host party, plugins) that have one notion
+		// of "the current stream". prevOptsMu guards it against concurrent multi-user writes;
+		// semantically it's last-writer-wins (the active host/admin stream).
+		prevOptsMu            sync.RWMutex
 		previousStreamOptions mo.Option[*StartStreamOptions]
 	}
 
@@ -364,8 +370,8 @@ func (r *Repository) PreloadStream(ctx context.Context, opts *StartStreamOptions
 func (r *Repository) GetStreamURL() (string, bool) {
 	var url string
 	r.streamManagers.Range(func(_ uint, sm *StreamManager) bool {
-		if sm.currentStreamUrl != "" {
-			url = sm.currentStreamUrl
+		if u := sm.getCurrentStreamUrl(); u != "" {
+			url = u
 			return false
 		}
 		return true
@@ -373,28 +379,57 @@ func (r *Repository) GetStreamURL() (string, bool) {
 	return url, url != ""
 }
 
-// GetUserStreamShare returns a specific user's currently-active resolved debrid stream URL
-// (and the file path, for the right extension/metadata). The watch-room "join stream" path
-// reuses the host's already-resolved CDN link directly, so a peer needs zero re-selection or
-// re-resolution. Returns ok=false when that user has no active stream in memory yet.
-func (r *Repository) GetUserStreamShare(userID uint) (streamUrl string, filepath string, ok bool) {
+// UserStreamShare is what the watch-room "join stream" path needs to let a peer (re)play the
+// host's stream. Preferred path: reuse the SELECTION (TorrentItemId + FileId) — already added
+// to the debrid account — and have the peer resolve its OWN fresh CDN link from it (cheap, no
+// createtorrent), so peers don't contend on one resolved link. StreamUrl is the host's link,
+// kept as a fallback for cases with no torrent item (e.g. a direct-StreamUrl release).
+type UserStreamShare struct {
+	StreamUrl     string
+	Filepath      string
+	TorrentItemId string
+	FileId        string
+}
+
+// GetUserStreamShare returns the shareable selection for a user's currently-active debrid
+// stream. Returns ok=false when that user has no active stream in memory yet.
+func (r *Repository) GetUserStreamShare(userID uint) (share UserStreamShare, ok bool) {
 	sm, found := r.streamManagers.Get(userID)
-	if !found || sm.currentStreamUrl == "" {
-		return "", "", false
+	if !found {
+		return UserStreamShare{}, false
 	}
+	// Consistent triple — never a torn selection (URL refreshed but file id stale, or vice-versa).
+	streamUrl, torrentItemId, fileId := sm.shareSnapshot()
+	if streamUrl == "" {
+		return UserStreamShare{}, false
+	}
+	filepath := ""
 	sm.preloadMu.Lock()
 	if e, ok := sm.preloads[sm.lastConsumedKey]; ok && e != nil {
 		filepath = e.filepath
 	}
 	sm.preloadMu.Unlock()
-	return sm.currentStreamUrl, filepath, true
+	return UserStreamShare{
+		StreamUrl:     streamUrl,
+		Filepath:      filepath,
+		TorrentItemId: torrentItemId,
+		FileId:        fileId,
+	}, true
 }
 
 func (r *Repository) CancelStream(opts *CancelStreamOptions) {
 	r.smFor(opts.UserID).cancelStream(opts)
 }
 
+func (r *Repository) setPreviousStreamOptions(opts *StartStreamOptions) {
+	r.prevOptsMu.Lock()
+	r.previousStreamOptions = mo.Some(opts)
+	r.prevOptsMu.Unlock()
+}
+
 func (r *Repository) GetPreviousStreamOptions() (*StartStreamOptions, bool) {
+	r.prevOptsMu.RLock()
+	defer r.prevOptsMu.RUnlock()
 	return r.previousStreamOptions.Get()
 }
 

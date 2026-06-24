@@ -88,7 +88,7 @@ func (h *Handler) HandleNakamaWatchRoomCreate(c echo.Context) error {
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
-	return h.RespondWithData(c, room)
+	return h.RespondWithData(c, room.Snapshot()) // marshal a copy, never the live room (concurrent-map-write crash)
 }
 
 // HandleNakamaWatchRoomJoin
@@ -115,7 +115,7 @@ func (h *Handler) HandleNakamaWatchRoomJoin(c echo.Context) error {
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}
-	return h.RespondWithData(c, room)
+	return h.RespondWithData(c, room.Snapshot()) // marshal a copy, never the live room (concurrent-map-write crash)
 }
 
 // HandleNakamaWatchRoomLeave
@@ -236,17 +236,25 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 		PlaybackType:  b.PlaybackType,
 	}
 
-	// Share the host's resolved CDN link verbatim: a torrent carrying StreamUrl skips
-	// AddTorrent + URL resolution server-side (see debrid stream.go), so the peer plays
-	// instantly off the same link — account-agnostic. Fall back to auto-select if the host
-	// hasn't resolved yet (or this isn't a debrid room).
+	// Reuse the host's SELECTION (already-added debrid torrent item + file) and have this peer
+	// resolve its OWN fresh CDN link from it — cheap (no re-search, no createtorrent) and, unlike
+	// sharing the host's single resolved link verbatim, peers don't contend on one link (that
+	// contention is why a follower's player would open but never load). Falls back to the raw
+	// link when there's no torrent item (e.g. a direct-StreamUrl release), then to auto-select.
 	if info.StreamType == nakama.WatchPartyStreamTypeDebrid {
-		if url, fp, ok := h.App.DebridClientRepository.GetUserStreamShare(info.ControllerUserID); ok {
+		if share, ok := h.App.DebridClientRepository.GetUserStreamShare(info.ControllerUserID); ok {
+			fp := share.Filepath
 			if fp == "" {
 				fp = "stream.mkv"
 			}
 			opts.AutoSelect = false
-			opts.Torrent = &hibiketorrent.AnimeTorrent{StreamUrl: url, Name: fp}
+			opts.Torrent = &hibiketorrent.AnimeTorrent{Name: fp}
+			if share.TorrentItemId != "" && share.FileId != "" {
+				opts.SharedTorrentItemId = share.TorrentItemId
+				opts.FileId = share.FileId
+			} else {
+				opts.Torrent.StreamUrl = share.StreamUrl // no shared item — reuse the raw link
+			}
 		} else {
 			opts.AutoSelect = true
 		}
