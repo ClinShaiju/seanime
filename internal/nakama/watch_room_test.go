@@ -18,6 +18,49 @@ func localUser(name string) PoolUser {
 	return PoolUser{Username: name, Source: PoolSourceLocal}
 }
 
+func TestWatchRoom_AuthoritativeStateAndStreamInfo(t *testing.T) {
+	h := newTestHub()
+	host := localUser("alice")
+	room, _ := h.CreateRoom(host, "client-alice", "Room", "")
+
+	// Host reports a debrid play at t=100.
+	h.RelayPlaybackStatus("client-alice", &RoomPlaybackStatusPayload{
+		RoomId: room.ID, Paused: false, CurrentTime: 100, MediaId: 42, EpisodeNumber: 5,
+		AniDBEpisode: "5", StreamType: WatchPartyStreamTypeDebrid,
+	})
+
+	info := h.StreamInfo(room.ID)
+	if !info.Active || info.MediaId != 42 || info.EpisodeNumber != 5 || info.StreamType != WatchPartyStreamTypeDebrid {
+		t.Fatalf("expected active debrid stream media 42 ep5, got %+v", info)
+	}
+
+	// Live position advances while playing; pause freezes it.
+	room2, _ := h.GetRoom(room.ID)
+	room2.mu.RLock()
+	playing := room2.currentPositionLocked()
+	room2.mu.RUnlock()
+	if playing < 100 {
+		t.Fatalf("playing position should be >= 100, got %.2f", playing)
+	}
+
+	h.RelayPlaybackStatus("client-alice", &RoomPlaybackStatusPayload{
+		RoomId: room.ID, Paused: true, CurrentTime: 150, MediaId: 42, EpisodeNumber: 5, StreamType: WatchPartyStreamTypeDebrid,
+	})
+	time.Sleep(15 * time.Millisecond)
+	room2.mu.RLock()
+	paused := room2.currentPositionLocked()
+	room2.mu.RUnlock()
+	if paused != 150 {
+		t.Fatalf("paused position should be frozen at 150, got %.2f", paused)
+	}
+
+	// Stop deactivates the room playback.
+	h.RelayPlaybackStatus("client-alice", &RoomPlaybackStatusPayload{RoomId: room.ID, Stopped: true})
+	if h.StreamInfo(room.ID).Active {
+		t.Fatal("stream should be inactive after stop")
+	}
+}
+
 func TestWatchRoom_CreateJoinLeave(t *testing.T) {
 	h := newTestHub()
 

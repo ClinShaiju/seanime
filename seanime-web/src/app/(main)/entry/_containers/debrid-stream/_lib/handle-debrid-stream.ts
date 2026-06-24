@@ -137,6 +137,9 @@ export function useHandleStartDebridStream() {
     }
 
     return {
+        // Resolved playback type for the current device (no force) — used by the watch-room
+        // "join stream" path so the peer launches the same player kind a normal start would.
+        getResolvedPlaybackType: () => getPlaybackType(),
         isUsingNativePlayer: __isElectronDesktop__ && electronPlaybackMethod === ElectronPlaybackMethod.NativePlayer,
         // The backend only consumes a preloaded stream for the native + external-player paths
         // (not the desktop "default" mpv path). Prewarming for "default" would add a debrid torrent

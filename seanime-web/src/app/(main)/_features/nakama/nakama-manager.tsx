@@ -35,7 +35,7 @@ import { TextInput } from "@/components/ui/text-input"
 import { Tooltip } from "@/components/ui/tooltip"
 import { copyToClipboard } from "@/lib/helpers/browser"
 import { nativePlayer_terminateRequestedAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
-import { useWatchRoomPlayerSync } from "./nakama-room-sync"
+import { useRoomStreamJoin, useWatchRoomPlayerSync } from "./nakama-room-sync"
 import { WSEvents } from "@/lib/server/ws-events"
 import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { __isElectronDesktop__ } from "@/types/constants"
@@ -62,6 +62,11 @@ export const currentWatchRoomAtom = atom<Nakama_WatchRoom | null>(null)
 // atom) so reopening returns to where you left off. "room" = the in-room panel; "main" =
 // discovery + legacy host/peer sections. Defaults to "room" (the common case once joined).
 export const nakamaModalViewAtom = atom<"main" | "room">("room")
+
+// The roomId whose active stream this client has opted OUT of (closed/late-joined). While set,
+// the room's playback sync won't auto-open the player — a "Join room stream" button does.
+// Cleared on join, on the join button, and when leaving the room.
+export const optedOutStreamRoomIdAtom = atom<string | null>(null)
 
 export function useNakamaStatus() {
     return useAtomValue(nakamaStatusAtom)
@@ -101,6 +106,7 @@ export function useNakamaWatchParty() {
 export function NakamaManager() {
     // Bridge the local player to the same-instance watch-room relay (emit/apply sync).
     useWatchRoomPlayerSync()
+    const roomStreamJoin = useRoomStreamJoin()
 
     const { sendMessage } = useWebsocketSender()
     const [isModalOpen, setIsModalOpen] = useAtom(nakamaModalOpenAtom)
@@ -296,6 +302,22 @@ export function NakamaManager() {
     })
 
     return <>
+        {/* Global floating "Join room stream" prompt — shown when the room has a live stream
+            this client isn't watching (e.g. after leaving it), so you can rejoin without the modal. */}
+        {roomStreamJoin.canJoin && !isModalOpen && (
+            <div className="fixed bottom-6 right-6 z-[100]">
+                <Button
+                    intent="primary"
+                    leftIcon={<HiOutlinePlay className="size-5" />}
+                    disabled={roomStreamJoin.isPending}
+                    onClick={roomStreamJoin.join}
+                    className="shadow-xl"
+                >
+                    {roomStreamJoin.isPending ? "Joining..." : "Join room stream"}
+                </Button>
+            </div>
+        )}
+
         <Modal
             open={isModalOpen}
             onOpenChange={setIsModalOpen}
@@ -551,6 +573,8 @@ function WatchRoomsSection({ open }: { open: boolean }) {
     const [currentRoom, setCurrentRoom] = useAtom(currentWatchRoomAtom)
     const [modalView, setModalView] = useAtom(nakamaModalViewAtom)
     const requestTerminate = useSetAtom(nativePlayer_terminateRequestedAtom)
+    const setOptedOut = useSetAtom(optedOutStreamRoomIdAtom)
+    const roomStreamJoin = useRoomStreamJoin()
     const [showCreate, setShowCreate] = React.useState(false)
     const [newName, setNewName] = React.useState("")
     const [newPassword, setNewPassword] = React.useState("")
@@ -641,6 +665,9 @@ function WatchRoomsSection({ open }: { open: boolean }) {
                 setModalView("room")
                 setJoinTarget(null)
                 setJoinPassword("")
+                // Joining a room that already has a live stream is button-only (don't force-open):
+                // pre-opt-out so the heartbeat doesn't auto-pull us in. The "Join stream" button clears it.
+                setOptedOut(room?.playbackActive ? roomId : null)
                 refetchRooms()
             },
             onError: (e) => toast.error(e.message),
@@ -653,6 +680,7 @@ function WatchRoomsSection({ open }: { open: boolean }) {
             onSuccess: () => {
                 setCurrentRoom(null)
                 setModalView("main")
+                setOptedOut(null)
                 refetchRooms()
             },
         })
@@ -687,6 +715,18 @@ function WatchRoomsSection({ open }: { open: boolean }) {
                         {isLeaving ? "Leaving..." : amHost ? "Close room" : "Leave"}
                     </Button>
                 </div>
+
+                {roomStreamJoin.canJoin && (
+                    <div className="flex items-center justify-between p-3 border rounded-lg bg-indigo-950/40 border-indigo-800/50">
+                        <span className="text-sm flex items-center gap-2">
+                            <HiOutlinePlay className="size-5 text-indigo-300" />
+                            A stream is playing in this room
+                        </span>
+                        <Button size="sm" intent="primary" disabled={roomStreamJoin.isPending} onClick={roomStreamJoin.join}>
+                            {roomStreamJoin.isPending ? "Joining..." : "Join stream"}
+                        </Button>
+                    </div>
+                )}
 
                 <h5>Members ({participants.length})</h5>
                 <div className="p-4 border rounded-lg bg-gray-950 space-y-1">

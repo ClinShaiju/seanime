@@ -5,6 +5,7 @@ import {
     NakamaPlayVideo_Variables,
     NakamaSendChatMessage_Variables,
     NakamaWatchRoomAutoSkip_Variables,
+    NakamaWatchRoomJoinStream_Variables,
     NakamaWatchRoomCreate_Variables,
     NakamaWatchRoomForceTracks_Variables,
     NakamaWatchRoomJoin_Variables,
@@ -200,5 +201,13 @@ export function useNakamaSetWatchRoomAutoSkip() {
         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.endpoint,
         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.methods[0],
         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.key],
+    })
+}
+
+export function useNakamaJoinWatchRoomStream() {
+    return useServerMutation<boolean, NakamaWatchRoomJoinStream_Variables>({
+        endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoinStream.endpoint,
+        method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoinStream.methods[0],
+        mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoinStream.key],
     })
 }

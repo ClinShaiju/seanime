@@ -3,6 +3,8 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	debrid_client "seanime/internal/debrid/client"
+	hibiketorrent "seanime/internal/extension/hibike/torrent"
 	"seanime/internal/nakama"
 
 	"github.com/labstack/echo/v4"
@@ -192,6 +194,67 @@ func (h *Handler) HandleNakamaWatchRoomAutoSkip(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 	if err := h.App.NakamaManager.GetWatchRoomHub().SetAutoSkipPref(b.RoomId, h.nakamaPoolUser(c).Key(), b.Pref); err != nil {
+		return h.RespondWithError(c, err)
+	}
+	return h.RespondWithData(c, true)
+}
+
+// HandleNakamaWatchRoomJoinStream
+//
+//	@summary starts (or rejoins) the room's active debrid stream for the caller.
+//	@desc Reuses the host's already-resolved debrid link directly — no second torrent
+//	@desc selection or CDN resolution. Falls back to auto-select if the host link isn't ready.
+//	@route /api/v1/nakama/watch-room/join-stream [POST]
+//	@returns bool
+func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
+	if err := h.guardStreamingUser(c); err != nil {
+		return err
+	}
+	type body struct {
+		RoomId       string                           `json:"roomId"`
+		ClientId     string                           `json:"clientId"`
+		PlaybackType debrid_client.StreamPlaybackType `json:"playbackType"`
+	}
+	var b body
+	if err := c.Bind(&b); err != nil {
+		return h.RespondWithError(c, err)
+	}
+	b.ClientId = getRequestClientId(c, b.ClientId)
+
+	info := h.App.NakamaManager.GetWatchRoomHub().StreamInfo(b.RoomId)
+	if !info.Active {
+		return h.RespondWithError(c, errors.New("the room has no active stream"))
+	}
+
+	opts := &debrid_client.StartStreamOptions{
+		MediaId:       info.MediaId,
+		EpisodeNumber: info.EpisodeNumber,
+		AniDBEpisode:  info.AniDBEpisode,
+		UserAgent:     c.Request().Header.Get("User-Agent"),
+		ClientId:      b.ClientId,
+		UserID:        h.dataUserID(c),
+		PlaybackType:  b.PlaybackType,
+	}
+
+	// Share the host's resolved CDN link verbatim: a torrent carrying StreamUrl skips
+	// AddTorrent + URL resolution server-side (see debrid stream.go), so the peer plays
+	// instantly off the same link — account-agnostic. Fall back to auto-select if the host
+	// hasn't resolved yet (or this isn't a debrid room).
+	if info.StreamType == nakama.WatchPartyStreamTypeDebrid {
+		if url, fp, ok := h.App.DebridClientRepository.GetUserStreamShare(info.ControllerUserID); ok {
+			if fp == "" {
+				fp = "stream.mkv"
+			}
+			opts.AutoSelect = false
+			opts.Torrent = &hibiketorrent.AnimeTorrent{StreamUrl: url, Name: fp}
+		} else {
+			opts.AutoSelect = true
+		}
+	} else {
+		opts.AutoSelect = true
+	}
+
+	if err := h.App.DebridClientRepository.StartStream(c.Request().Context(), opts); err != nil {
 		return h.RespondWithError(c, err)
 	}
 	return h.RespondWithData(c, true)

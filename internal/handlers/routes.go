@@ -626,6 +626,7 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1Nakama.POST("/watch-room/control", h.HandleNakamaWatchRoomSetControl)
 	v1Nakama.POST("/watch-room/force-tracks", h.HandleNakamaWatchRoomForceTracks)
 	v1Nakama.POST("/watch-room/autoskip", h.HandleNakamaWatchRoomAutoSkip)
+	v1Nakama.POST("/watch-room/join-stream", h.HandleNakamaWatchRoomJoinStream)
 
 	//
 	// Custom Source

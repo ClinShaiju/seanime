@@ -1749,6 +1749,11 @@ export const API_ENDPOINTS = {
             methods: ["POST"],
             endpoint: "/api/v1/nakama/watch-room/autoskip",
         },
+        NakamaWatchRoomJoinStream: {
+            key: "NAKAMA-ROOMS-nakama-watch-room-join-stream",
+            methods: ["POST"],
+            endpoint: "/api/v1/nakama/watch-room/join-stream",
+        },
     },
     ONLINESTREAM: {
         /**

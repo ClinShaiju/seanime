@@ -86,8 +86,48 @@ type WatchRoom struct {
 	AutoSkipVotesOff  int  `json:"autoSkipVotesOff"`
 	CreatedAt         time.Time `json:"createdAt"`
 
+	// PlaybackActive: is a stream currently running in the room? Drives the "join stream" UI
+	// (a peer who isn't watching it sees a join button). The server is authoritative for the
+	// playback state below — it's reported by the controller and broadcast to all members.
+	PlaybackActive bool `json:"playbackActive"`
+
+	// Authoritative playback state (server source of truth). Not exported directly; the live
+	// position is computed (position + elapsed while playing) into the broadcast payload.
+	paused     bool
+	position   float64 // seconds, as of positionAt
+	positionAt time.Time
+
 	passwordHash string       // sha256 hex of the password; empty = open room
 	mu           sync.RWMutex `json:"-"`
+}
+
+// currentPositionLocked returns the authoritative live position (caller holds room.mu).
+func (room *WatchRoom) currentPositionLocked() float64 {
+	if room.paused || room.positionAt.IsZero() {
+		return room.position
+	}
+	return room.position + time.Since(room.positionAt).Seconds()
+}
+
+// playbackBroadcastLocked builds the authoritative sync payload with the server-computed live
+// position (caller holds room.mu). Returns nil when nothing is playing. heartbeat=true marks
+// the periodic broadcast (followers reconcile it with a looser threshold); discrete actions
+// are sent with heartbeat=false for a precise apply.
+func (room *WatchRoom) playbackBroadcastLocked(heartbeat bool) *RoomPlaybackStatusPayload {
+	mi := room.CurrentMediaInfo
+	if !room.PlaybackActive || mi == nil {
+		return nil
+	}
+	return &RoomPlaybackStatusPayload{
+		RoomId:        room.ID,
+		Paused:        room.paused,
+		CurrentTime:   room.currentPositionLocked(),
+		MediaId:       mi.MediaId,
+		EpisodeNumber: mi.EpisodeNumber,
+		AniDBEpisode:  mi.AniDBEpisode,
+		StreamType:    mi.StreamType,
+		Heartbeat:     heartbeat,
+	}
 }
 
 // RoomPlaybackStatusPayload is a control action relayed between members. It carries
@@ -141,14 +181,64 @@ type WatchRoomHub struct {
 
 	mu    sync.RWMutex
 	rooms map[string]*WatchRoom
+
+	stopOnce sync.Once
+	stop     chan struct{}
 }
 
+// broadcastTickMs is how often the server fans out each active room's authoritative position
+// to all members, so followers stay within ~1s of the controller during steady playback.
+const broadcastTickMs = 1000
+
 func NewWatchRoomHub(manager *Manager, logger *zerolog.Logger) *WatchRoomHub {
-	return &WatchRoomHub{
+	h := &WatchRoomHub{
 		manager: manager,
 		logger:  logger,
 		rooms:   make(map[string]*WatchRoom),
+		stop:    make(chan struct{}),
 	}
+	// ponytail: one process-lifetime ticker for all rooms (rooms are few; members are few).
+	go h.runBroadcastLoop()
+	return h
+}
+
+// runBroadcastLoop periodically fans out every active room's authoritative (server-computed)
+// playback state to all its members. This is what keeps followers synced during steady
+// playback — the controller only needs to report discrete actions + occasional corrections.
+func (h *WatchRoomHub) runBroadcastLoop() {
+	ticker := time.NewTicker(broadcastTickMs * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.stop:
+			return
+		case <-ticker.C:
+			if h.manager == nil || h.manager.wsEventManager == nil {
+				continue
+			}
+			for _, room := range h.snapshotRooms() {
+				room.mu.RLock()
+				payload := room.playbackBroadcastLocked(true)
+				clientIDs := make([]string, 0, len(room.Participants))
+				if payload != nil {
+					for _, p := range room.Participants {
+						if p.ClientID != "" {
+							clientIDs = append(clientIDs, p.ClientID)
+						}
+					}
+				}
+				room.mu.RUnlock()
+				for _, cid := range clientIDs {
+					h.manager.wsEventManager.SendEventTo(cid, events.NakamaRoomPlaybackSync, payload, true)
+				}
+			}
+		}
+	}
+}
+
+// Stop ends the broadcast loop. Idempotent.
+func (h *WatchRoomHub) Stop() {
+	h.stopOnce.Do(func() { close(h.stop) })
 }
 
 var (
@@ -453,29 +543,96 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 		return
 	}
 
-	// Diagnostic: log discrete actions (not the 2s heartbeats) so the sync conversation is
-	// visible in the server log — who sent what paused/position and how many followers got it.
+	_ = targets // membership fan-out is computed below; resolveRelay is kept for its permission check
+
+	// Diagnostic: log discrete actions (not the periodic heartbeats) so the sync conversation
+	// is visible in the server log — who sent what paused/position.
 	if !p.Heartbeat {
-		h.logf("relay status sender=%s paused=%v t=%.1f stopped=%v media=%d ep=%d targets=%d",
-			senderClientID, p.Paused, p.CurrentTime, p.Stopped, p.MediaId, p.EpisodeNumber, len(targets))
+		h.logf("relay status sender=%s paused=%v t=%.1f stopped=%v hb=%v media=%d ep=%d",
+			senderClientID, p.Paused, p.CurrentTime, p.Stopped, p.Heartbeat, p.MediaId, p.EpisodeNumber)
 	}
 
-	// Snapshot the latest action so late joiners can catch up.
+	// Update the AUTHORITATIVE room state from the controller's report. The server — not the
+	// controller's client — is now the source of truth: it holds {paused, position} and the
+	// broadcast loop fans the computed live position out to everyone.
 	room.mu.Lock()
 	room.LastPlayback = p
-	room.CurrentMediaInfo = &WatchPartySessionMediaInfo{
-		MediaId:       p.MediaId,
-		EpisodeNumber: p.EpisodeNumber,
-		AniDBEpisode:  p.AniDBEpisode,
-		StreamType:    p.StreamType,
+	if p.Stopped {
+		room.PlaybackActive = false
+		room.paused = true
+	} else {
+		room.PlaybackActive = true
+		room.paused = p.Paused
+		room.position = p.CurrentTime
+		room.positionAt = time.Now()
+		room.CurrentMediaInfo = &WatchPartySessionMediaInfo{
+			MediaId:       p.MediaId,
+			EpisodeNumber: p.EpisodeNumber,
+			AniDBEpisode:  p.AniDBEpisode,
+			StreamType:    p.StreamType,
+		}
+	}
+	// A discrete action (play/pause/seek/stop) broadcasts immediately for snappiness; a
+	// periodic heartbeat just updates state and lets the ticker fan it out.
+	var immediate *RoomPlaybackStatusPayload
+	if p.Stopped {
+		immediate = p // forward the stop verbatim so followers tear down
+	} else if !p.Heartbeat {
+		immediate = room.playbackBroadcastLocked(false)
+	}
+	clientIDs := make([]string, 0, len(room.Participants))
+	for _, rp := range room.Participants {
+		if rp.ClientID != "" {
+			clientIDs = append(clientIDs, rp.ClientID)
+		}
 	}
 	room.mu.Unlock()
 
-	if h.manager == nil || h.manager.wsEventManager == nil {
+	if immediate == nil || h.manager == nil || h.manager.wsEventManager == nil {
 		return
 	}
-	for _, cid := range targets {
-		h.manager.wsEventManager.SendEventTo(cid, events.NakamaRoomPlaybackSync, p, true)
+	// Broadcast to ALL members (including the controller). The active controller ignores its
+	// own position client-side; a non-controller host reconciles to it.
+	for _, cid := range clientIDs {
+		h.manager.wsEventManager.SendEventTo(cid, events.NakamaRoomPlaybackSync, immediate, true)
+	}
+}
+
+// RoomStreamInfo is the active-stream summary the "join stream" path needs: what to play
+// (media identity) and whose resolved debrid link to reuse (the controller's user id).
+type RoomStreamInfo struct {
+	Active           bool
+	MediaId          int
+	EpisodeNumber    int
+	AniDBEpisode     string
+	StreamType       WatchPartyStreamType
+	ControllerUserID uint
+}
+
+// StreamInfo returns the room's current active-stream summary (Active=false if nothing is
+// playing). Used by the join-stream endpoint so a peer can (re)join the host's stream.
+func (h *WatchRoomHub) StreamInfo(roomID string) RoomStreamInfo {
+	room, ok := h.getRoom(roomID)
+	if !ok {
+		return RoomStreamInfo{}
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	if !room.PlaybackActive || room.CurrentMediaInfo == nil {
+		return RoomStreamInfo{}
+	}
+	mi := room.CurrentMediaInfo
+	var uid uint
+	if ctrl, ok := room.Participants[room.ControllerKey]; ok {
+		uid = ctrl.User.UserID
+	}
+	return RoomStreamInfo{
+		Active:           true,
+		MediaId:          mi.MediaId,
+		EpisodeNumber:    mi.EpisodeNumber,
+		AniDBEpisode:     mi.AniDBEpisode,
+		StreamType:       mi.StreamType,
+		ControllerUserID: uid,
 	}
 }
 

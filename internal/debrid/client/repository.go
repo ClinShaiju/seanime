@@ -373,6 +373,23 @@ func (r *Repository) GetStreamURL() (string, bool) {
 	return url, url != ""
 }
 
+// GetUserStreamShare returns a specific user's currently-active resolved debrid stream URL
+// (and the file path, for the right extension/metadata). The watch-room "join stream" path
+// reuses the host's already-resolved CDN link directly, so a peer needs zero re-selection or
+// re-resolution. Returns ok=false when that user has no active stream in memory yet.
+func (r *Repository) GetUserStreamShare(userID uint) (streamUrl string, filepath string, ok bool) {
+	sm, found := r.streamManagers.Get(userID)
+	if !found || sm.currentStreamUrl == "" {
+		return "", "", false
+	}
+	sm.preloadMu.Lock()
+	if e, ok := sm.preloads[sm.lastConsumedKey]; ok && e != nil {
+		filepath = e.filepath
+	}
+	sm.preloadMu.Unlock()
+	return sm.currentStreamUrl, filepath, true
+}
+
 func (r *Repository) CancelStream(opts *CancelStreamOptions) {
 	r.smFor(opts.UserID).cancelStream(opts)
 }

@@ -8,9 +8,10 @@ import { useWebsocketMessageListener, useWebsocketSender } from "@/app/(main)/_h
 import { clientIdAtom } from "@/app/websocket-provider"
 import { logger } from "@/lib/helpers/debug"
 import { WSEvents } from "@/lib/server/ws-events"
+import { useNakamaJoinWatchRoomStream } from "@/api/hooks/nakama.hooks"
 import { useAtomValue, useSetAtom } from "jotai"
 import React from "react"
-import { currentWatchRoomAtom } from "./nakama-manager"
+import { currentWatchRoomAtom, optedOutStreamRoomIdAtom } from "./nakama-manager"
 
 // Same-instance watch-room player sync.
 //
@@ -49,8 +50,8 @@ const SEEK_THRESHOLD = 0.75 // only seek when off by more than this (avoids jitt
 // so it's robust to a late event (buffering) without swallowing real input like a timer would.
 const APPLY_ECHO_WINDOW_MS = 2500
 const APPLY_ECHO_SEEK_TOL = 1.5
-const HEARTBEAT_MS = 2000 // how often the active driver re-broadcasts its position
-const HEARTBEAT_DRIFT = 2.0 // a follower only re-seeks on a heartbeat when off by more than this (avoids constant micro-jumps)
+const HEARTBEAT_MS = 2000 // how often the controller reports its position to the server
+const HEARTBEAT_DRIFT = 1.0 // a follower re-seeks on a (server) heartbeat when off by more than this — keeps everyone within ~1s
 
 export function useWatchRoomPlayerSync() {
     const room = useAtomValue(currentWatchRoomAtom)
@@ -103,22 +104,39 @@ export function useWatchRoomPlayerSync() {
     // the same stream here, then the position/play-pause sync takes over once it loads.
     const debridStart = useHandleStartDebridStream()
     const torrentStart = useHandleStartTorrentStream()
+    const joinRoomStream = useNakamaJoinWatchRoomStream()
+    const optedOutRoomId = useAtomValue(optedOutStreamRoomIdAtom)
     // The media+episode we last kicked off, so a burst of syncs doesn't restart it.
     // ponytail: a failed start stays latched on its key until the controller picks a
     // different episode (the next distinct key clears it). Acceptable: retrying the same
     // failed auto-select immediately would just fail again.
     const autoStartingKeyRef = React.useRef("")
 
+    // startRoomStream launches the room's stream for this client. Debrid reuses the host's
+    // already-resolved link (join-stream endpoint, no re-selection); torrent auto-selects.
+    const startRoomStream = React.useCallback((p: RoomPlaybackSync) => {
+        const key = `${p.mediaId}:${p.episodeNumber}:${p.streamType}`
+        if (autoStartingKeyRef.current === key) return
+        if (debridStart.isPending || torrentStart.isPending || joinRoomStream.isPending) return
+        autoStartingKeyRef.current = key
+        if (p.streamType === "debrid" && room?.id) {
+            logger("NAKAMA ROOM SYNC").info("Joining room debrid stream (shared link)", p.mediaId, p.episodeNumber)
+            joinRoomStream.mutate({ roomId: room.id, clientId: clientId || "", playbackType: debridStart.getResolvedPlaybackType() })
+        } else if (p.streamType === "torrent") {
+            torrentStart.handleAutoSelectStream({ mediaId: p.mediaId, episodeNumber: p.episodeNumber, aniDBEpisode: p.aniDbEpisode || "" })
+        }
+    }, [room, clientId, debridStart, torrentStart, joinRoomStream])
+
     const maybeAutoStart = React.useCallback((p: RoomPlaybackSync) => {
         if (!p || p.stopped || !p.mediaId || !p.episodeNumber) return
         // Only the ACTIVE DRIVER (can control AND is the controller) skips following — it
-        // started the stream itself. A member who merely got promoted to controllerKey but
-        // can't actually control (e.g. after a host blip) still has no stream, so it must
-        // follow; guarding on amController alone would wrongly freeze it out.
+        // started the stream itself. A member promoted to controllerKey but unable to control
+        // still has no stream, so it must follow.
         if (canControl && amController) return
+        // Opted out of this room's stream (closed it, or joined while it was already live)?
+        // Don't auto-open — the "Join room stream" button does.
+        if (optedOutRoomId === p.roomId) return
         // Already playing/loading this exact media+episode? Let the position sync handle it.
-        // Check the active player's TARGET (playbackInfo) — true even while the stream is still
-        // loading/stalled, unlike lastProgress which needs playback to have progressed.
         const playingThis = (
             (playbackInfo?.media?.id === p.mediaId && playbackInfo?.episode?.episodeNumber === p.episodeNumber)
             || (!!videoElement && lastProgress?.mediaId === p.mediaId && lastProgress?.progressNumber === p.episodeNumber)
@@ -127,49 +145,44 @@ export function useWatchRoomPlayerSync() {
             autoStartingKeyRef.current = ""
             return
         }
-        // Cross-instance rooms can't share local files / online streams — only debrid &
-        // torrent resolve the same source on another machine.
         if (p.streamType !== "debrid" && p.streamType !== "torrent") {
             logger("NAKAMA ROOM SYNC").warning("Cannot auto-follow stream type", p.streamType)
             return
         }
-        const key = `${p.mediaId}:${p.episodeNumber}:${p.streamType}`
-        if (autoStartingKeyRef.current === key) return
-        if (debridStart.isPending || torrentStart.isPending) return
-        autoStartingKeyRef.current = key
-        const args = { mediaId: p.mediaId, episodeNumber: p.episodeNumber, aniDBEpisode: p.aniDbEpisode || "" }
-        logger("NAKAMA ROOM SYNC").info("Auto-starting room stream", args, p.streamType)
-        if (p.streamType === "torrent") {
-            torrentStart.handleAutoSelectStream(args)
-        } else {
-            debridStart.handleAutoSelectStream(args)
-        }
-    }, [canControl, amController, videoElement, lastProgress, playbackInfo, debridStart, torrentStart])
+        startRoomStream(p)
+    }, [canControl, amController, optedOutRoomId, videoElement, lastProgress, playbackInfo, startRoomStream])
 
-    // Late join / room state refresh: if the room already has a playback action, follow it.
-    React.useEffect(() => {
-        if (room?.lastPlayback) maybeAutoStart(room.lastPlayback)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [room?.id, room?.lastPlayback?.mediaId, room?.lastPlayback?.episodeNumber, room?.lastPlayback?.streamType])
+    // NOTE: no late-join auto-open. Joining a room that already has a live stream surfaces the
+    // "Join room stream" button (button-only) instead of force-opening. Auto-open happens only
+    // when the controller STARTS while you're present (a live sync arriving for a non-opted-out
+    // member), handled in the apply listener below.
 
     // ---- Emit stop when the controller ends the episode ----
     // The player going active=false (closed) while we drive the room = "stop for everyone",
     // the mirror of auto-start. Episode SWITCHES keep the player active (just swap media), so
     // they don't trip this. Skip while applying a remote stop (echo guard) so it doesn't loop.
+    const setOptedOut = useSetAtom(optedOutStreamRoomIdAtom)
     const prevActiveRef = React.useRef(playerActive)
     React.useEffect(() => {
         const was = prevActiveRef.current
         prevActiveRef.current = playerActive
         if (!was || playerActive) return // only on true -> false
-        if (!room || !canControl) return
-        if (Date.now() < applyingRemoteUntil.current) return
-        sendMessage({
-            type: WSEvents.NAKAMA_ROOM_PLAYBACK_STATUS,
-            payload: {
-                roomId: room.id, stopped: true, paused: true, currentTime: 0, duration: 0,
-                mediaId: 0, episodeNumber: 0, aniDbEpisode: "", streamType: nakamaStreamType(undefined),
-            } satisfies RoomPlaybackSync,
-        })
+        if (!room) return
+        if (Date.now() < applyingRemoteUntil.current) return // teardown caused by a remote stop, not a user close
+        if (canControl && amController) {
+            // The driver closed the episode => stop for everyone (mirror of auto-start).
+            sendMessage({
+                type: WSEvents.NAKAMA_ROOM_PLAYBACK_STATUS,
+                payload: {
+                    roomId: room.id, stopped: true, paused: true, currentTime: 0, duration: 0,
+                    mediaId: 0, episodeNumber: 0, aniDbEpisode: "", streamType: nakamaStreamType(undefined),
+                } satisfies RoomPlaybackSync,
+            })
+        } else if (room.playbackActive) {
+            // A follower closed the player => opt out so the room's heartbeat doesn't re-open us.
+            // Leaving stays left; the "Join room stream" button brings it back.
+            setOptedOut(room.id)
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [playerActive])
 
@@ -246,7 +259,7 @@ export function useWatchRoomPlayerSync() {
     // ---- Apply incoming sync ----
     useWebsocketMessageListener({
         type: WSEvents.NAKAMA_ROOM_PLAYBACK_SYNC,
-        deps: [videoElement, forceHostTracks, audioManager, subtitleManager, mediaCaptionsManager, maybeAutoStart, requestTerminate],
+        deps: [videoElement, canControl, amController, forceHostTracks, audioManager, subtitleManager, mediaCaptionsManager, maybeAutoStart, requestTerminate],
         onMessage: (p: RoomPlaybackSync | null) => {
             if (!p) return
 
@@ -263,6 +276,11 @@ export function useWatchRoomPlayerSync() {
             // the position sync below applies once the player is up.
             maybeAutoStart(p)
             if (!videoElement) return
+
+            // The active driver is the SOURCE of truth — it feeds the server and must not
+            // reconcile to its own echoed-back state (that would suppress its next emit and
+            // could yank its position).
+            if (canControl && amController) return
 
             // Record the state we're applying so the play/pause/seeked events it fires are
             // recognized as echoes and not re-broadcast (state-matched, robust to late events).
@@ -295,4 +313,41 @@ export function useWatchRoomPlayerSync() {
             }
         },
     })
+}
+
+// useRoomStreamJoin powers the "Join room stream" button. canJoin is true when the room has a
+// live stream this client isn't already watching (and isn't driving). join() clears the opt-out
+// and starts — debrid reuses the host's shared link; torrent auto-selects.
+export function useRoomStreamJoin() {
+    const room = useAtomValue(currentWatchRoomAtom)
+    const clientId = useAtomValue(clientIdAtom)
+    const setOptedOut = useSetAtom(optedOutStreamRoomIdAtom)
+    const joinRoomStream = useNakamaJoinWatchRoomStream()
+    const debridStart = useHandleStartDebridStream()
+    const torrentStart = useHandleStartTorrentStream()
+    const playbackInfo = useAtomValue(nativePlayer_stateAtom).playbackInfo
+
+    const mi = room?.currentMediaInfo
+    const amController = React.useMemo(() => {
+        if (!room?.participants || !room.controllerKey) return false
+        const e = Object.entries(room.participants).find(([, pp]) => pp.clientId === clientId)
+        return !!e && e[0] === room.controllerKey && (!!e[1].isHost || !!e[1].canControl)
+    }, [room, clientId])
+
+    const watchingThis = !!playbackInfo && playbackInfo.media?.id === mi?.mediaId
+        && playbackInfo.episode?.episodeNumber === mi?.episodeNumber
+
+    const canJoin = !!room?.playbackActive && !!mi && !watchingThis && !amController
+
+    const join = React.useCallback(() => {
+        if (!room?.id || !mi) return
+        setOptedOut(null)
+        if (mi.streamType === "torrent") {
+            torrentStart.handleAutoSelectStream({ mediaId: mi.mediaId, episodeNumber: mi.episodeNumber, aniDBEpisode: mi.aniDbEpisode || "" })
+        } else {
+            joinRoomStream.mutate({ roomId: room.id, clientId: clientId || "", playbackType: debridStart.getResolvedPlaybackType() })
+        }
+    }, [room, mi, clientId, setOptedOut, joinRoomStream, debridStart, torrentStart])
+
+    return { canJoin, join, isPending: joinRoomStream.isPending || debridStart.isPending || torrentStart.isPending }
 }
