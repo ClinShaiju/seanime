@@ -198,12 +198,12 @@ function SidebarNavigation({ isCollapsed }: { isCollapsed: boolean }) {
 function SidebarUpdates({ isCollapsed }: { isCollapsed: boolean }) {
     return (
         <>
-            {/* Stale-tab "reload to update" popup. Mounted on Denshi too: a Denshi pointed at a
-                REMOTE server (VPS) gets no electron-updater event when that server's web bundle is
-                redeployed, so it would silently keep stale JS and mismatch the new server protocol.
-                The version-equality gate inside makes it a no-op for a normal bundled-sidecar Denshi
-                (renderer + sidecar always ship the same version) and in dev (no baked version). */}
-            <StaleClientNotice />
+            {/* Stale-tab "reload to update" popup. Browser/PWA only: those load their JS from the
+                server, so a reload picks up a redeployed bundle. Denshi loads its renderer from the
+                bundled web-denshi via app:// (NOT from the server it talks to), so window.reload()
+                can't fetch newer JS — a version skew there is fixed by updating/rebuilding Denshi,
+                not reloading. Hence suppressed on Denshi (a reload CTA would be a no-op loop). */}
+            {!__isElectronDesktop__ && <StaleClientNotice />}
             {!__isDesktop__ ? <UpdateModal collapsed={isCollapsed} /> :
                 __isElectronDesktop__ ? <ElectronUpdateModal collapsed={isCollapsed} /> :
                     null}
