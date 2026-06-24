@@ -37,6 +37,7 @@ import { vc_cursorBusy } from "@/app/(main)/_features/video-core/video-core-atom
 import { vc_cursorPosition } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_busy } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_videoElement } from "@/app/(main)/_features/video-core/video-core-atoms"
+import { vc_globalVideoElement, vc_globalLastProgress } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_containerElement } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_previousPausedState } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_lastKnownProgress } from "@/app/(main)/_features/video-core/video-core-atoms"
@@ -200,6 +201,30 @@ export const vc_audioManager = atom<VideoCoreAudioManager | null>(null)
 export const vc_previewManager = atom<VideoCorePreviewManager | null>(null)
 export const vc_anime4kManager = atom<VideoCoreAnime4KManager | null>(null)
 
+// VideoCoreGlobalBridge mirrors the SCOPED vc_videoElement / vc_lastKnownProgress (visible only
+// inside this provider's jotai-scope) into the UNSCOPED vc_globalVideoElement / vc_globalLastProgress,
+// so consumers mounted OUTSIDE the provider (the app-wide watch-room sync hook) can observe the
+// active player. Rendered inside the ScopeProvider below; the activePlayer guard ensures only one
+// videocore instance is live at a time, so there's a single writer.
+function VideoCoreGlobalBridge() {
+    const videoElement = useAtomValue(vc_videoElement)       // scoped
+    const lastProgress = useAtomValue(vc_lastKnownProgress)  // scoped
+    const setGlobalVideo = useSetAtom(vc_globalVideoElement)
+    const setGlobalProgress = useSetAtom(vc_globalLastProgress)
+    React.useEffect(() => {
+        setGlobalVideo(videoElement)
+    }, [videoElement, setGlobalVideo])
+    React.useEffect(() => {
+        setGlobalProgress(lastProgress)
+    }, [lastProgress, setGlobalProgress])
+    // Clear on unmount (player closed) so a stale element/progress doesn't linger globally.
+    React.useEffect(() => () => {
+        setGlobalVideo(null)
+        setGlobalProgress(null)
+    }, [setGlobalVideo, setGlobalProgress])
+    return null
+}
+
 export function VideoCoreProvider(props: { id: string, children: React.ReactNode }) {
     const { children } = props
 
@@ -275,6 +300,7 @@ export function VideoCoreProvider(props: { id: string, children: React.ReactNode
                 vc_swipeSeekTime,
             ]}
         >
+            <VideoCoreGlobalBridge />
             {children}
         </ScopeProvider>
     )

@@ -54,5 +54,14 @@ export const vc_videoElement = atom<HTMLVideoElement | null>(null)
 export const vc_containerElement = atom<HTMLDivElement | null>(null)
 export const vc_previousPausedState = atom(false)
 export const vc_lastKnownProgress = atom<{ mediaId: number, progressNumber: number, time: number } | null>(null)
+
+// Global (UNSCOPED) mirrors of the active player's vc_videoElement / vc_lastKnownProgress.
+// vc_videoElement above is SCOPED to VideoCoreProvider (jotai-scope), so consumers mounted OUTSIDE
+// that provider — notably the app-wide watch-room sync hook — read the unscoped atom and only ever
+// see null. VideoCoreProvider renders a bridge INSIDE the scope that mirrors the active player's
+// values into these atoms. IMPORTANT: never add these to the ScopeProvider `atoms` list, or they'd
+// be scoped too and the bridge would break.
+export const vc_globalVideoElement = atom<HTMLVideoElement | null>(null)
+export const vc_globalLastProgress = atom<{ mediaId: number, progressNumber: number, time: number } | null>(null)
 export const vc_skipOpeningTime = atom<number | null>(null)
 export const vc_skipEndingTime = atom<number | null>(null)

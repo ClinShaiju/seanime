@@ -1,7 +1,10 @@
 import { Nakama_RoomPlaybackStatusPayload, Nakama_WatchPartyStreamType, NativePlayer_StreamType } from "@/api/generated/types"
 import { nativePlayer_stateAtom, nativePlayer_terminateRequestedAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
 import { vc_audioManager, vc_mediaCaptionsManager, vc_subtitleManager } from "@/app/(main)/_features/video-core/video-core"
-import { vc_lastKnownProgress, vc_videoElement } from "@/app/(main)/_features/video-core/video-core-atoms"
+// Use the GLOBAL mirrors, not vc_videoElement / vc_lastKnownProgress directly: those are scoped to
+// VideoCoreProvider (jotai-scope) and this hook runs app-wide in NakamaManager, OUTSIDE that scope,
+// so the scoped atoms always read null here. VideoCoreGlobalBridge mirrors the active player into these.
+import { vc_globalLastProgress, vc_globalVideoElement } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { useHandleStartDebridStream } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-stream"
 import { useHandleStartTorrentStream } from "@/app/(main)/entry/_containers/torrent-stream/_lib/handle-torrent-stream"
 import { useWebsocketMessageListener, useWebsocketSender } from "@/app/(main)/_hooks/handle-websockets"
@@ -56,8 +59,8 @@ const HEARTBEAT_DRIFT = 1.0 // a follower re-seeks on a (server) heartbeat when 
 export function useWatchRoomPlayerSync() {
     const room = useAtomValue(currentWatchRoomAtom)
     const clientId = useAtomValue(clientIdAtom)
-    const videoElement = useAtomValue(vc_videoElement)
-    const lastProgress = useAtomValue(vc_lastKnownProgress)
+    const videoElement = useAtomValue(vc_globalVideoElement)
+    const lastProgress = useAtomValue(vc_globalLastProgress)
     const audioManager = useAtomValue(vc_audioManager)
     const subtitleManager = useAtomValue(vc_subtitleManager)
     const mediaCaptionsManager = useAtomValue(vc_mediaCaptionsManager)
