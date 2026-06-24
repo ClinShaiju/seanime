@@ -226,8 +226,13 @@ export function useWatchRoomPlayerSync() {
                 paused: player.paused,
                 currentTime: player.currentTime,
                 duration: isFinite(player.duration) ? player.duration : 0,
-                mediaId: lastProgress?.mediaId ?? 0,
-                episodeNumber: lastProgress?.progressNumber ?? 0,
+                // Prefer the global nativePlayer playbackInfo: lastProgress comes from
+                // vc_lastKnownProgress which (like vc_videoElement) is bridged from the scoped
+                // store and can lag/stay null, making emits go out with mediaId 0 — a follower's
+                // maybeAutoStart drops those (no media to open), so Tenji never opened when Denshi
+                // hosted. playbackInfo.media.id is the reliable global identity.
+                mediaId: playbackInfo?.media?.id ?? lastProgress?.mediaId ?? 0,
+                episodeNumber: playbackInfo?.episode?.episodeNumber ?? lastProgress?.progressNumber ?? 0,
                 // Source identity so a follower can start the SAME stream (debrid/torrent).
                 aniDbEpisode: playbackInfo?.episode?.aniDBEpisode ?? "",
                 streamType: nakamaStreamType(playbackInfo?.streamType),
@@ -342,12 +347,15 @@ export function useWatchRoomPlayerSync() {
                 action += " play"
                 videoElement.play().catch(() => { })
             }
-            // DIAGNOSTIC (temporary): show what the follower received vs its local state + action.
-            sendMessage({
-                type: WSEvents.NAKAMA_ROOM_DEBUG,
-                payload: `apply recv{paused:${p.paused},t:${p.currentTime.toFixed(1)},hb:${!!p.heartbeat}} `
-                    + `local{paused:${videoElement.paused},t:${videoElement.currentTime.toFixed(1)}} action=[${action.trim()}]`,
-            })
+            // DIAGNOSTIC (temporary): only log when something actually applied (or a discrete
+            // sync) — heartbeats with action=[none] are once-per-second and drowned the log.
+            if (!p.heartbeat || action !== "none") {
+                sendMessage({
+                    type: WSEvents.NAKAMA_ROOM_DEBUG,
+                    payload: `apply recv{paused:${p.paused},t:${p.currentTime.toFixed(1)},hb:${!!p.heartbeat}} `
+                        + `local{paused:${videoElement.paused},t:${videoElement.currentTime.toFixed(1)}} action=[${action.trim()}]`,
+                })
+            }
 
             // Force-host-tracks: mirror the host's audio/subtitle selection.
             if (forceHostTracks) {

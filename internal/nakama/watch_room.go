@@ -196,7 +196,7 @@ type WatchRoomHub struct {
 
 // broadcastTickMs is how often the server fans out each active room's authoritative position
 // to all members, so followers stay within ~1s of the controller during steady playback.
-const broadcastTickMs = 1000
+const broadcastTickMs = 500
 
 // roomIdleTTL is how long a room may have zero connected clients before the reaper closes it.
 // Generous enough to survive reconnects (tab reload, brief network loss) without dropping a room
