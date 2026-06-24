@@ -592,20 +592,23 @@ function WatchRoomsSection({ open }: { open: boolean }) {
         if (open) refetchRooms()
     }, [open])
 
-    // On reconnect the websocket hands us a fresh clientId. Re-join the current room so the
-    // server remaps our driving client (broadcasts/sync reach us again) and the host reclaims
-    // control. Empty password is fine — we're already a member, so it's not re-checked.
-    const prevClientIdRef = React.useRef(clientId)
+    // On websocket reconnect, re-join the current room. The clientId is stable across
+    // reconnects, but a brief drop still (a) made the server promote control away (handled in
+    // HandleClientDisconnect) and (b) may have lost events sent while we were down. Re-joining
+    // reclaims control for the host and resyncs room state. Empty password is fine — we're
+    // already a member, so it isn't re-checked.
+    const websocketConnected = useAtomValue(websocketConnectedAtom)
+    const prevConnectedRef = React.useRef(websocketConnected)
     React.useEffect(() => {
-        const prev = prevClientIdRef.current
-        prevClientIdRef.current = clientId
-        if (prev && clientId && prev !== clientId && currentRoom) {
+        const was = prevConnectedRef.current
+        prevConnectedRef.current = websocketConnected
+        if (!was && websocketConnected && currentRoom && clientId) {
             joinRoom({ roomId: currentRoom.id, password: "", clientId }, {
                 onSuccess: (room) => { if (room) setCurrentRoom(room) },
             })
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clientId])
+    }, [websocketConnected])
 
     // "Me" = the participant whose driving client is this client.
     const me = React.useMemo(() => {

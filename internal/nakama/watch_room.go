@@ -252,13 +252,16 @@ func (h *WatchRoomHub) JoinRoom(roomID string, user PoolUser, clientID, password
 func (h *WatchRoomHub) LeaveRoom(roomID string, userKey string) error {
 	room, ok := h.getRoom(roomID)
 	if !ok {
-		return ErrRoomNotFound
+		// Idempotent: the room is already gone (e.g. the host closed it while we were
+		// disconnected and we missed the close event). Treat as a successful leave so the
+		// client can clear its local room state instead of getting stuck on a 500.
+		return nil
 	}
 
 	room.mu.Lock()
 	if _, exists := room.Participants[userKey]; !exists {
 		room.mu.Unlock()
-		return ErrParticipantUnknown
+		return nil // already not a member — idempotent
 	}
 	// The host leaving = closing the room intentionally: tear it down and tell every other
 	// member to stop playback. (A host whose CLIENT merely drops keeps the room alive — that

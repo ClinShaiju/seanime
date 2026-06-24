@@ -70,6 +70,16 @@ export function useWatchRoomPlayerSync() {
         return !!me?.isHost
     }, [room, clientId])
 
+    // Am I the effective controller (the one driving)? The controller must NEVER auto-follow
+    // its own action — that re-launches the stream it just started (the room's lastPlayback
+    // reflects the controller's own start), hammering the CDN with restarts. Only followers
+    // auto-start.
+    const amController = React.useMemo(() => {
+        if (!room?.participants || !room.controllerKey) return false
+        const myEntry = Object.entries(room.participants).find(([, p]) => p.clientId === clientId)
+        return !!myEntry && myEntry[0] === room.controllerKey
+    }, [room, clientId])
+
     const forceHostTracks = !!room?.forceHostTracks
 
     // Suppress emits while we're applying a remote action (prevents feedback loops).
@@ -89,10 +99,16 @@ export function useWatchRoomPlayerSync() {
 
     const maybeAutoStart = React.useCallback((p: RoomPlaybackSync) => {
         if (!p || p.stopped || !p.mediaId || !p.episodeNumber) return
-        // Already playing this exact media/episode? Let the position sync handle it.
-        const playingThis = !!videoElement
-            && lastProgress?.mediaId === p.mediaId
-            && lastProgress?.progressNumber === p.episodeNumber
+        // The controller drives — it must never follow its own action (would restart its
+        // own stream and hammer the CDN).
+        if (amController) return
+        // Already playing/loading this exact media+episode? Let the position sync handle it.
+        // Check the active player's TARGET (playbackInfo) — true even while the stream is still
+        // loading/stalled, unlike lastProgress which needs playback to have progressed.
+        const playingThis = (
+            (playbackInfo?.media?.id === p.mediaId && playbackInfo?.episode?.episodeNumber === p.episodeNumber)
+            || (!!videoElement && lastProgress?.mediaId === p.mediaId && lastProgress?.progressNumber === p.episodeNumber)
+        )
         if (playingThis) {
             autoStartingKeyRef.current = ""
             return
@@ -114,7 +130,7 @@ export function useWatchRoomPlayerSync() {
         } else {
             debridStart.handleAutoSelectStream(args)
         }
-    }, [videoElement, lastProgress, debridStart, torrentStart])
+    }, [amController, videoElement, lastProgress, playbackInfo, debridStart, torrentStart])
 
     // Late join / room state refresh: if the room already has a playback action, follow it.
     React.useEffect(() => {
