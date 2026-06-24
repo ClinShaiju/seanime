@@ -23,6 +23,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/samber/mo"
+	"golang.org/x/time/rate"
 )
 
 // Manager handles direct stream playback and progress tracking for the built-in video player.
@@ -139,6 +140,13 @@ func (m *Manager) PrewarmStreamMetadata(streamUrl string) {
 	if streamUrl == "" {
 		return
 	}
+	// CDN-warm budget: the parse (downloads fonts) + warmStreamStart hit the debrid CDN directly,
+	// not the rate-limited TorBox API. Shed bursts so re-enabled metadata prewarm can't 429 the CDN
+	// like before. Skipping is graceful — the stream just parses metadata at play time instead.
+	if !cdnWarmLimiter.Allow() {
+		m.Logger.Debug().Str("url", streamUrl).Msg("directstream: Skipping metadata prewarm (CDN-warm budget)")
+		return
+	}
 	// Prewarm the content-type/length HEAD too — otherwise the play still pays a ~1-2s CDN
 	// round-trip in LoadContentType even when the metadata parse is cached.
 	info, _ := m.FetchStreamInfoWithHeaders(streamUrl, nil)
@@ -156,7 +164,7 @@ func (m *Manager) PrewarmStreamMetadata(streamUrl string) {
 	if md == nil || md.Error != nil {
 		return
 	}
-	m.parserCache.SetT(streamUrl, parser, 15*time.Minute)
+	m.parserCache.SetT(streamUrl, parser, metadataCacheTTL)
 	m.Logger.Debug().Str("url", streamUrl).Msg("directstream: Prewarmed stream metadata")
 
 	// Warm the playable-start region on the debrid CDN so the play-time first range fetch isn't a
@@ -179,6 +187,20 @@ const (
 	warmMaxBytes      = 48 * 1024 * 1024
 	warmFallbackBytes = 16 * 1024 * 1024
 )
+
+// metadataCacheTTL bounds how long a URL-keyed MKV parser / HEAD result is cached. Metadata is
+// immutable for a given stream URL and a TorBox link stays valid ~3h, so cache for ~the link
+// lifetime (was 15m — needlessly short, forcing a re-parse on every replay/reconnect). Bounded by
+// the number of distinct in-flight URLs (each parser holds font attachments in RAM), which the
+// preload slot caps keep small.
+const metadataCacheTTL = 2 * time.Hour
+
+// cdnWarmLimiter bounds speculative debrid-CDN warming (metadata prewarm: HEAD + MKV/font parse +
+// warmStreamStart). These bypass the TorBox API rate limiter because they hit the CDN directly, so
+// they get their own budget. Generous burst so legitimate tier-1 prewarms pass; sheds sustained
+// bursts — the per-user×3 simultaneous font fan-out is what 429'd the CDN before this was re-enabled.
+// Shared across all (per-user) Manager instances since the CDN/account is shared.
+var cdnWarmLimiter = rate.NewLimiter(rate.Every(1500*time.Millisecond), 3)
 
 // computeWarmBytes returns ~warmSeconds of video for the given file, clamped to [warmMin, warmMax].
 func computeWarmBytes(contentLength int64, durationSec float64) int64 {

@@ -16,6 +16,7 @@ type EpisodeGridItemProps = {
     media: AL_BaseAnime,
     children?: React.ReactNode
     action?: React.ReactNode
+    badge?: React.ReactNode // top-right of the thumbnail (e.g. prewarm fire badge)
     image?: string | null
     onClick?: () => void
     title: string,
@@ -47,6 +48,7 @@ export const EpisodeGridItem = React.memo((props: EpisodeGridItemProps & React.C
     const {
         children,
         action,
+        badge,
         image,
         onClick,
         episodeTitle,
@@ -203,6 +205,12 @@ export const EpisodeGridItem = React.memo((props: EpisodeGridItemProps & React.C
                         <div data-episode-grid-item-progress-bar-container className="absolute bottom-0 left-0 w-full z-[3]">
                             <ProgressBar value={percentageComplete} size="xs" />
                         </div>}
+
+                    {badge && (
+                        <div data-episode-grid-item-badge className="absolute top-1 right-1 z-[4]">
+                            {badge}
+                        </div>
+                    )}
                 </div>
 
                 <div data-episode-grid-item-content className="relative overflow-hidden">

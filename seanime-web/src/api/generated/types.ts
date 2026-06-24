@@ -2281,6 +2281,22 @@ export type DebridClient_FilePreview = {
 }
 
 /**
+ * - Filepath: internal/debrid/client/prewarm_db.go
+ * - Filename: prewarm_db.go
+ * - Package: debrid_client
+ * @description
+ *  PrewarmStatusItem reports that a given episode is prewarmed (will play instantly). Metadata=true
+ *  means it's also metadata/CDN-warmed (the tier-1 target — instant first frame too). Consumed by the
+ *  UI to badge episodes; read-only, never triggers a resolve.
+ */
+export type DebridClient_PrewarmStatusItem = {
+    mediaId: number
+    episodeNumber: number
+    anidbEpisode: string
+    metadata: boolean
+}
+
+/**
  * - Filepath: internal/debrid/client/stream.go
  * - Filename: stream.go
  * - Package: debrid_client
@@ -4664,10 +4680,15 @@ export type Nakama_WatchRoom = {
     autoSkipVotesOn: number
     autoSkipVotesOff: number
     createdAt?: string
-    /**
-     * is a stream currently running in the room (drives the "join stream" UI)
-     */
     playbackActive: boolean
+    paused: boolean
+    /**
+     * seconds, as of positionAt
+     */
+    position: number
+    positionAt?: string
+    lastControllerClientID: string
+    lastLiveAt?: string
     /**
      * sha256 hex of the password; empty = open room
      */

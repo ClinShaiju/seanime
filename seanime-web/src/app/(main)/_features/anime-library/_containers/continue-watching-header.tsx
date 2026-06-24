@@ -7,6 +7,7 @@ import { MediaEntryAudienceScore } from "@/app/(main)/_features/media/_component
 import { useMediaPreviewModal } from "@/app/(main)/_features/media/_containers/media-preview-modal"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { useDebridPrewarm } from "@/app/(main)/entry/_containers/debrid-stream/_lib/use-debrid-prewarm"
+import { PrewarmBadge } from "@/app/(main)/_features/media/_components/media-entry-prewarm-badge"
 import { imageShimmer } from "@/components/shared/image-helpers"
 import { SeaImage } from "@/components/shared/sea-image"
 import { SeaLink } from "@/components/shared/sea-link"
@@ -314,6 +315,7 @@ function EpisodeCardSidebar({ episode, isTransitioning }: EpisodeCardSidebarProp
                      </div> */}
                     <EpisodeCard
                         episode={episode}
+                        badge={<PrewarmBadge mediaId={episode.baseAnime?.id} episodeNumber={episode.episodeNumber} />}
                         image={episode.episodeMetadata?.image || episode.baseAnime?.bannerImage || episode.baseAnime?.coverImage?.extraLarge}
                         topTitle={episode.episodeTitle || episode?.baseAnime?.title?.userPreferred}
                         spoilerSafeTopTitle={episode?.baseAnime?.title?.userPreferred}

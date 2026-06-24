@@ -644,6 +644,26 @@ type DebridActiveStream struct {
 	Data   string `gorm:"column:data" json:"data"`
 }
 
+// DebridPrewarm is the server-wide, account-partitioned cache of resolved debrid prewarms
+// (selection + resolved CDN URL). A prewarm done for one user is reused by ANY user on the SAME
+// TorBox account (same API key) without re-searching/re-adding, and it survives restarts. Keyed by
+// (account_hash, media_id, episode_number, anidb_episode, profile_hash) — see prewarm-audit.md Part 4.
+// account_hash = hash(provider+apiKey) so the raw key is never stored; profile_hash gates reuse to
+// matching auto-select profiles (the quality-over-speed rule, made mechanical).
+type DebridPrewarm struct {
+	BaseModel
+	AccountHash   string    `gorm:"column:account_hash;index:idx_debrid_prewarm_key,unique,priority:1" json:"accountHash"`
+	MediaId       int       `gorm:"column:media_id;index:idx_debrid_prewarm_key,unique,priority:2" json:"mediaId"`
+	EpisodeNumber int       `gorm:"column:episode_number;index:idx_debrid_prewarm_key,unique,priority:3" json:"episodeNumber"`
+	AniDBEpisode  string    `gorm:"column:anidb_episode;index:idx_debrid_prewarm_key,unique,priority:4" json:"anidbEpisode"`
+	ProfileHash   string    `gorm:"column:profile_hash;index:idx_debrid_prewarm_key,unique,priority:5" json:"profileHash"`
+	UserTags      string    `gorm:"column:user_tags" json:"userTags"` // JSON array of user ids that want this entry
+	Data          string    `gorm:"column:data" json:"data"`          // JSON: selection + resolved URL (persistedActiveStream)
+	ResolvedAt    time.Time `gorm:"column:resolved_at" json:"resolvedAt"`
+	UrlResolvedAt time.Time `gorm:"column:url_resolved_at" json:"urlResolvedAt"`
+	TtlNanos      int64     `gorm:"column:ttl_nanos" json:"ttlNanos"`
+}
+
 // +---------------------+
 // |       Plugin        |
 // +---------------------+

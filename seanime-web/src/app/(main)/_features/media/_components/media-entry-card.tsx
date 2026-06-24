@@ -12,6 +12,7 @@ import { getMangaCollectionEntryAtom } from "@/app/(main)/_atoms/manga-collectio
 import { usePlayNext } from "@/app/(main)/_atoms/playback.atoms"
 import { ToggleLockFilesButton } from "@/app/(main)/_features/anime-library/_containers/toggle-lock-files-button"
 import { AnimeEntryCardUnwatchedBadge } from "@/app/(main)/_features/anime/_containers/anime-entry-card-unwatched-badge"
+import { PrewarmBadge } from "@/app/(main)/_features/media/_components/media-entry-prewarm-badge"
 import { SeaContextMenu } from "@/app/(main)/_features/context-menu/sea-context-menu"
 import { useLibraryExplorer } from "@/app/(main)/_features/library-explorer/library-explorer.atoms"
 import {
@@ -459,6 +460,15 @@ export function MediaEntryCard<T extends "anime" | "manga">(props: MediaEntryCar
                             size="xl"
                         ><RiCalendarLine /></Badge>
                     </div>
+                )}
+                {/* Prewarm fire badge — top-LEFT so it never collides with the releasing/"set to air"
+                 badge (top-right). Scoped to shows you're watching, mirroring the unwatched badge. */}
+                {(type === "anime" && (listData?.status === "CURRENT" || listData?.status === "REPEATING")) && (
+                    <PrewarmBadge
+                        mediaId={media.id}
+                        episodeNumber={(listData?.progress ?? 0) + 1}
+                        className="absolute left-1 top-2 z-[10]"
+                    />
                 )}
 
             </MediaEntryCardBody>

@@ -14,6 +14,7 @@ import (
 
 const (
 	prewarmContinueWatchingCount = 3                // next-up episode of the last N watched shows
+	prewarmJustAiredCount        = 3                // + new episode of up to N currently-airing shows
 	prewarmInitialDelay          = 30 * time.Second // let the collection + debrid settings load first
 	prewarmInterval              = 10 * time.Minute // refresh before debrid URLs expire (cache TTL is 15m)
 )
@@ -21,10 +22,11 @@ const (
 // prewarmCandidate is the minimal per-show data needed to pick prewarm targets.
 // Kept free of anilist types so selectPrewarmTargets is a pure, unit-testable function.
 type prewarmCandidate struct {
-	mediaId  int
-	progress int
-	epCount  int       // current available episode count, -1 if unknown
-	updated  time.Time // last watched, for recency ordering
+	mediaId   int
+	progress  int
+	epCount   int       // current available episode count, -1 if unknown
+	updated   time.Time // last watched, for recency ordering
+	releasing bool      // show is currently airing (for the just-aired axis)
 }
 
 // prewarmTarget is a selected show + the next episode number to prewarm.
@@ -33,16 +35,25 @@ type prewarmTarget struct {
 	nextEp  int
 }
 
-// selectPrewarmTargets picks the next-up episode for the `max` most-recently-watched shows that
-// are still in progress (started, not caught up). Pure function — no I/O.
-func selectPrewarmTargets(cands []prewarmCandidate, max int) []prewarmTarget {
+// selectPrewarmTargets picks next-up episodes to prewarm, from two axes (pure function, no I/O):
+//  1. the `maxWatched` most-recently-watched in-progress shows — the resume signal;
+//  2. up to `maxJustAired` currently-RELEASING shows whose latest episode just became available
+//     (progress+1 == epCount) and aren't already picked by axis 1 — so a new episode of a show you
+//     follow gets prewarmed even if you didn't watch it in the last few sessions.
+//
+// Axis-1 order is preserved first, so opts[0] stays the most-recent watched (the tier-1 metadata
+// target). progress is used only to pick which episode, never as a ranking signal.
+func selectPrewarmTargets(cands []prewarmCandidate, maxWatched, maxJustAired int) []prewarmTarget {
 	sort.SliceStable(cands, func(i, j int) bool {
 		return cands[i].updated.After(cands[j].updated) // most recent first
 	})
 
-	targets := make([]prewarmTarget, 0, max)
+	targets := make([]prewarmTarget, 0, maxWatched+maxJustAired)
+	picked := make(map[int]bool)
+
+	// Axis 1: most-recently-watched in-progress shows.
 	for _, c := range cands {
-		if len(targets) >= max {
+		if len(targets) >= maxWatched {
 			break
 		}
 		if c.progress < 1 {
@@ -53,6 +64,27 @@ func selectPrewarmTargets(cands []prewarmCandidate, max int) []prewarmTarget {
 			continue // caught up to what's aired/available
 		}
 		targets = append(targets, prewarmTarget{mediaId: c.mediaId, nextEp: nextEp})
+		picked[c.mediaId] = true
+	}
+
+	// Axis 2: just-aired — releasing shows whose latest episode just dropped (one ahead of progress),
+	// not already picked above. progress+1 == epCount precisely means "I'm caught up except the
+	// newest", i.e. a fresh episode without needing air-time math.
+	justAired := 0
+	for _, c := range cands {
+		if justAired >= maxJustAired {
+			break
+		}
+		if picked[c.mediaId] || !c.releasing || c.progress < 1 {
+			continue
+		}
+		nextEp := c.progress + 1
+		if c.epCount <= 0 || nextEp != c.epCount {
+			continue // only the just-available latest episode, not an older backlog ep
+		}
+		targets = append(targets, prewarmTarget{mediaId: c.mediaId, nextEp: nextEp})
+		picked[c.mediaId] = true
+		justAired++
 	}
 	return targets
 }
@@ -66,9 +98,10 @@ func (a *App) buildPrewarmCandidates(collection *anilist.AnimeCollection, cont *
 	}
 
 	type entryInfo struct {
-		progress int
-		epCount  int
-		media    *anilist.BaseAnime
+		progress  int
+		epCount   int
+		releasing bool
+		media     *anilist.BaseAnime
 	}
 	entries := make(map[int]entryInfo)
 	for _, list := range collection.GetMediaListCollection().GetLists() {
@@ -88,7 +121,8 @@ func (a *App) buildPrewarmCandidates(collection *anilist.AnimeCollection, cont *
 			if e.GetProgress() != nil {
 				progress = *e.GetProgress()
 			}
-			entries[m.GetID()] = entryInfo{progress: progress, epCount: m.GetCurrentEpisodeCount(), media: m}
+			releasing := m.GetStatus() != nil && *m.GetStatus() == anilist.MediaStatusReleasing
+			entries[m.GetID()] = entryInfo{progress: progress, epCount: m.GetCurrentEpisodeCount(), releasing: releasing, media: m}
 		}
 	}
 
@@ -101,10 +135,11 @@ func (a *App) buildPrewarmCandidates(collection *anilist.AnimeCollection, cont *
 			continue // not in current/repeating list (finished, dropped, etc.)
 		}
 		cands = append(cands, prewarmCandidate{
-			mediaId:  mediaId,
-			progress: info.progress,
-			epCount:  info.epCount,
-			updated:  item.TimeUpdated,
+			mediaId:   mediaId,
+			progress:  info.progress,
+			epCount:   info.epCount,
+			updated:   item.TimeUpdated,
+			releasing: info.releasing,
 		})
 		mediaById[mediaId] = info.media
 	}
@@ -124,6 +159,9 @@ func (a *App) prewarmContinueWatchingStreams() {
 	if settings == nil || !settings.PreloadNextStream {
 		return
 	}
+
+	// Drop expired shared prewarm rows on the tick (cheap; the table is small).
+	a.DebridClientRepository.SweepExpiredPrewarms()
 
 	// Per-user prewarm: the admin plus every active per-user session. Each user's next-up
 	// episodes are resolved from THEIR collection + continuity and cached in THEIR stream
@@ -167,7 +205,7 @@ func (a *App) buildPrewarmOptsForSession(s *UserSession) []*debrid_client.StartS
 		return nil
 	}
 	cands, mediaById := a.buildPrewarmCandidates(collection, s.Continuity())
-	targets := selectPrewarmTargets(cands, prewarmContinueWatchingCount)
+	targets := selectPrewarmTargets(cands, prewarmContinueWatchingCount, prewarmJustAiredCount)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -200,11 +238,18 @@ func (a *App) buildPrewarmOptsForSession(s *UserSession) []*debrid_client.StartS
 			// Priority: this is the continue-watching next-up set the user actually clicks — it must
 			// survive the speculative browse/search/discover hover firehose (uncapped, not evicted).
 			Priority: true,
-			// URL-only prewarm — do NOT pre-parse MKV metadata. With per-user prewarm (admin +
-			// every active session × N shows) the metadata/font downloads bursting the debrid CDN
-			// caused HTTP 429 rate-limiting. Metadata is parsed at play time instead.
+			// Default URL-only; the tier-1 target (most-recent show, set after the loop) also
+			// pre-parses MKV metadata + warms the CDN. Keeping it to ONE target/user (was 3) + the
+			// prewarm queue + the directstream CDN-warm limiter is what makes this safe — the
+			// per-user×3 simultaneous font fan-out is what 429'd the CDN before.
 			PrewarmMetadata: false,
 		})
+	}
+	// Tier-1 metadata prewarm (M1/M2): opts are recency-ordered (selectPrewarmTargets sorts
+	// most-recent first), so opts[0] is the show the user is most likely to resume next. Enable the
+	// full metadata-parse + CDN-warm for it alone — the "instant first frame" win without the burst.
+	if len(opts) > 0 {
+		opts[0].PrewarmMetadata = true
 	}
 	return opts
 }

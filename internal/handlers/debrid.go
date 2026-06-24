@@ -473,3 +473,15 @@ func (h *Handler) HandleDebridCancelStream(c echo.Context) error {
 
 	return h.RespondWithData(c, true)
 }
+
+// HandleDebridGetPrewarmStatus
+//
+//	@summary returns the set of prewarmed episodes for the current user.
+//	@desc Used by the UI to badge episodes that are prewarmed and will play instantly.
+//	@desc Read-only; never triggers a resolve. Returns an empty list when debrid/preload is off.
+//	@returns []debrid_client.PrewarmStatusItem
+//	@route /api/v1/debrid/stream/prewarm-status [GET]
+func (h *Handler) HandleDebridGetPrewarmStatus(c echo.Context) error {
+	items := h.App.DebridClientRepository.GetPrewarmStatus(h.dataUserID(c))
+	return h.RespondWithData(c, items)
+}

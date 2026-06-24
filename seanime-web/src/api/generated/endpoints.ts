@@ -666,6 +666,17 @@ export const API_ENDPOINTS = {
             methods: ["POST"],
             endpoint: "/api/v1/debrid/stream/cancel",
         },
+        /**
+         *  @description
+         *  Route returns the set of prewarmed episodes for the current user.
+         *  Used by the UI to badge episodes that are prewarmed and will play instantly.
+         *  Read-only; never triggers a resolve. Returns an empty list when debrid/preload is off.
+         */
+        DebridGetPrewarmStatus: {
+            key: "DEBRID-debrid-get-prewarm-status",
+            methods: ["GET"],
+            endpoint: "/api/v1/debrid/stream/prewarm-status",
+        },
     },
     DIRECTORY_SELECTOR: {
         /**
@@ -1749,6 +1760,12 @@ export const API_ENDPOINTS = {
             methods: ["POST"],
             endpoint: "/api/v1/nakama/watch-room/autoskip",
         },
+        /**
+         *  @description
+         *  Route starts (or rejoins) the room's active debrid stream for the caller.
+         *  Reuses the host's already-resolved debrid link directly — no second torrent
+         *  selection or CDN resolution. Falls back to auto-select if the host link isn't ready.
+         */
         NakamaWatchRoomJoinStream: {
             key: "NAKAMA-ROOMS-nakama-watch-room-join-stream",
             methods: ["POST"],

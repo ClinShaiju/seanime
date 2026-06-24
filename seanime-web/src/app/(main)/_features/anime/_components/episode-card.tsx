@@ -260,6 +260,13 @@ export function EpisodeCard(props: EpisodeCardProps) {
                             />
                         )}
 
+                        {/*TOP-RIGHT BADGE (e.g. prewarm fire badge) — no other badge occupies this corner*/}
+                        {badge && (
+                            <div data-episode-card-badge className="absolute top-2 right-2 z-[4]">
+                                {badge}
+                            </div>
+                        )}
+
                         {/*[CUSTOM UI] BOTTOM GRADIENT*/}
                         <EpisodeItemBottomGradient isSingleContainer={isSingleContainer} className="rounded-b-xl" />
 

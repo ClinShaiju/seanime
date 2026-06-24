@@ -3007,6 +3007,38 @@
     }
   },
   {
+    "name": "HandleDebridGetPrewarmStatus",
+    "trimmedName": "DebridGetPrewarmStatus",
+    "comments": [
+      "HandleDebridGetPrewarmStatus",
+      "",
+      "\t@summary returns the set of prewarmed episodes for the current user.",
+      "\t@desc Used by the UI to badge episodes that are prewarmed and will play instantly.",
+      "\t@desc Read-only; never triggers a resolve. Returns an empty list when debrid/preload is off.",
+      "\t@returns []debrid_client.PrewarmStatusItem",
+      "\t@route /api/v1/debrid/stream/prewarm-status [GET]",
+      ""
+    ],
+    "filepath": "internal/handlers/debrid.go",
+    "filename": "debrid.go",
+    "api": {
+      "summary": "returns the set of prewarmed episodes for the current user.",
+      "descriptions": [
+        "Used by the UI to badge episodes that are prewarmed and will play instantly.",
+        "Read-only; never triggers a resolve. Returns an empty list when debrid/preload is off."
+      ],
+      "endpoint": "/api/v1/debrid/stream/prewarm-status",
+      "methods": [
+        "GET"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "[]debrid_client.PrewarmStatusItem",
+      "returnGoType": "debrid_client.PrewarmStatusItem",
+      "returnTypescriptType": "Array\u003cDebridClient_PrewarmStatusItem\u003e"
+    }
+  },
+  {
     "name": "HandleDirectorySelector",
     "trimmedName": "DirectorySelector",
     "comments": [
@@ -9383,6 +9415,66 @@
           "goType": "string",
           "usedStructType": "",
           "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleNakamaWatchRoomJoinStream",
+    "trimmedName": "NakamaWatchRoomJoinStream",
+    "comments": [
+      "HandleNakamaWatchRoomJoinStream",
+      "",
+      "\t@summary starts (or rejoins) the room's active debrid stream for the caller.",
+      "\t@desc Reuses the host's already-resolved debrid link directly — no second torrent",
+      "\t@desc selection or CDN resolution. Falls back to auto-select if the host link isn't ready.",
+      "\t@route /api/v1/nakama/watch-room/join-stream [POST]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "starts (or rejoins) the room's active debrid stream for the caller.",
+      "descriptions": [
+        "Reuses the host's already-resolved debrid link directly — no second torrent",
+        "selection or CDN resolution. Falls back to auto-select if the host link isn't ready."
+      ],
+      "endpoint": "/api/v1/nakama/watch-room/join-stream",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "RoomId",
+          "jsonName": "roomId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "ClientId",
+          "jsonName": "clientId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "PlaybackType",
+          "jsonName": "playbackType",
+          "goType": "debrid_client.StreamPlaybackType",
+          "usedStructType": "debrid_client.StreamPlaybackType",
+          "typescriptType": "DebridClient_StreamPlaybackType",
           "required": true,
           "descriptions": []
         }

@@ -253,7 +253,7 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 			playbackInfo.MkvMetadata = metadata
 			playbackInfo.MkvMetadataParser = mo.Some(parser)
 			// Cache for instant re-press of this same episode (URL-keyed, short TTL).
-			s.manager.parserCache.SetT(s.streamUrl, parser, 15*time.Minute)
+			s.manager.parserCache.SetT(s.streamUrl, parser, metadataCacheTTL)
 		}
 
 		s.playbackInfo = &playbackInfo

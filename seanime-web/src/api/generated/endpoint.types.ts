@@ -1668,10 +1668,17 @@ export type NakamaWatchRoomAutoSkip_Variables = {
     pref: string
 }
 
+/**
+ * - Filepath: internal/handlers/nakama_rooms.go
+ * - Filename: nakama_rooms.go
+ * - Endpoint: /api/v1/nakama/watch-room/join-stream
+ * @description
+ * Route starts (or rejoins) the room's active debrid stream for the caller.
+ */
 export type NakamaWatchRoomJoinStream_Variables = {
     roomId: string
     clientId: string
-    playbackType: string
+    playbackType: DebridClient_StreamPlaybackType
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

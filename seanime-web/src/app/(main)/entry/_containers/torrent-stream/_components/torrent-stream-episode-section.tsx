@@ -3,6 +3,7 @@ import { getEpisodeMinutesRemaining, getEpisodePercentageComplete, useGetContinu
 import { EpisodeCard } from "@/app/(main)/_features/anime/_components/episode-card"
 import { EpisodeGridItem } from "@/app/(main)/_features/anime/_components/episode-grid-item"
 import { MediaEpisodeInfoModal } from "@/app/(main)/_features/media/_components/media-episode-info-modal"
+import { PrewarmBadge } from "@/app/(main)/_features/media/_components/media-entry-prewarm-badge"
 import { PluginEpisodeGridItemMenuItems } from "@/app/(main)/_features/plugin/actions/plugin-actions"
 import { EpisodeListPaginatedGrid } from "@/app/(main)/entry/_components/episode-list-grid"
 import { usePlayNextVideoOnMount } from "@/app/(main)/entry/_lib/handle-play-on-mount"
@@ -90,6 +91,7 @@ export function TorrentStreamEpisodeSection(props: TorrentStreamEpisodeSectionPr
                                 key={episode.localFile?.path || ""}
                                 contextType={contextType}
                                 episode={episode}
+                                badge={<PrewarmBadge mediaId={entry.mediaId} episodeNumber={episode.episodeNumber} />}
                                 image={episode.episodeMetadata?.image || episode.baseAnime?.bannerImage || episode.baseAnime?.coverImage?.extraLarge}
                                 topTitle={episode.episodeTitle || episode?.baseAnime?.title?.userPreferred}
                                 title={episode.displayTitle}
@@ -135,6 +137,7 @@ export function TorrentStreamEpisodeSection(props: TorrentStreamEpisodeSectionPr
                             key={episode?.episodeNumber + (episode?.displayTitle || "")}
                             onMouseEnter={() => episode && onEpisodeHover?.(episode as Anime_Episode)}
                             media={episode?.baseAnime as any}
+                            badge={<PrewarmBadge mediaId={entry.mediaId} episodeNumber={episode?.episodeNumber} />}
                             title={episode?.displayTitle || episode?.baseAnime?.title?.userPreferred || ""}
                             image={episode?.episodeMetadata?.image || episode?.baseAnime?.coverImage?.large}
                             episodeTitle={episode?.episodeTitle}

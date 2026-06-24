@@ -899,7 +899,7 @@ func (m *Manager) FetchStreamInfoWithHeaders(streamUrl string, headers http.Head
 		ContentLength: contentLength,
 	}
 	if m.streamInfoCache != nil && streamUrl != "" {
-		m.streamInfoCache.SetT(streamUrl, info, 15*time.Minute)
+		m.streamInfoCache.SetT(streamUrl, info, metadataCacheTTL)
 	}
 	return info, true
 }

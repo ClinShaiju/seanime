@@ -304,6 +304,18 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		if hit {
 			return s.playPreloadedStream(ctx, opts, cached)
 		}
+		// In-memory miss — try the shared, account-partitioned DB before a cold resolve (cross-user
+		// reuse + post-restart survival). Auto-select only (a manual pick is never shared); the probe
+		// uses a short fast-fail timeout so a dead link falls through cheaply (a live link validates in
+		// <1s). hydrate re-resolves/drops safely on a dead or removed torrent item.
+		if opts.AutoSelect {
+			if entry, ok := s.hydratePrewarmFromDB(ctx, opts, prewarmProbeTimeoutPlay); ok {
+				s.preloadMu.Lock()
+				s.lastConsumedKey = key
+				s.preloadMu.Unlock()
+				return s.playPreloadedStream(ctx, opts, entry)
+			}
+		}
 	}
 
 	s.setPreviousStreamOptions(opts)                 // this user's last stream (for cancel)
@@ -338,7 +350,10 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 	if opts.PlaybackType == PlaybackTypeNativePlayer {
 		s.ds(opts).BeginOpen(opts.ClientId, "Selecting torrent...", func() {
-			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true, UserID: opts.UserID})
+			// Keep the torrent on teardown (was RemoveTorrent:true) so the shared prewarm cache can
+			// reuse it. Cached torrents are free to keep (no active-slot cost) and the TTL sweeper
+			// reclaims the DB rows; hydrate validates + falls back if TorBox evicts an item anyway.
+			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: false, UserID: opts.UserID})
 		})
 	}
 
@@ -1018,6 +1033,13 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 			s.preloadMu.Unlock()
 		}()
 
+		// Shared-DB front-gate: reuse an already-resolved prewarm for this account+profile instead of
+		// re-searching/re-adding (cross-user reuse + post-restart survival). Runs in the background so
+		// the link-validation probe adds no user-facing latency; on a miss/dead-item it falls through.
+		if _, ok := s.hydratePrewarmFromDB(preloadCtx, opts, prewarmProbeTimeout); ok {
+			return
+		}
+
 		media, _, err := s.getMediaInfo(preloadCtx, opts.MediaId)
 		if err != nil || preloadCtx.Err() != nil {
 			return
@@ -1092,12 +1114,13 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 			}
 		}
 
+		var stored *preloadedDebridStream
 		s.preloadMu.Lock()
 		// Only store if this preload wasn't superseded or cancelled in the meantime.
 		if preloadCtx.Err() == nil {
 			s.evictIfNeededLocked(opts.Priority)
 			now := time.Now()
-			s.preloads[key] = &preloadedDebridStream{
+			stored = &preloadedDebridStream{
 				opts:          opts,
 				streamUrl:     streamUrl,
 				fileId:        fileId,
@@ -1110,9 +1133,14 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 				urlResolvedAt: now,
 				priority:      opts.Priority,
 			}
+			s.preloads[key] = stored
 			s.repository.logger.Info().Str("torrent", selectedTorrent.Name).Msg("debridstream: Preloaded stream ready")
 		}
 		s.preloadMu.Unlock()
+		// Share to the account-wide DB (best-effort) so other users on the same key / a restart reuse it.
+		if stored != nil {
+			s.persistPrewarm(opts, stored)
+		}
 
 		// Pre-parse MKV metadata for high-certainty targets (next-episode preloads) so the
 		// play-time "Loading metadata" step is near-instant. Zero disk; gated by PrewarmMetadata
@@ -1234,7 +1262,8 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	// The native player needs an open session before we hand it the stream.
 	if opts.PlaybackType == PlaybackTypeNativePlayer {
 		s.ds(opts).BeginOpen(opts.ClientId, "Loading preloaded stream...", func() {
-			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: true, UserID: opts.UserID})
+			// Keep the torrent on teardown so the shared prewarm cache can reuse it (see startStream).
+			s.repository.CancelStream(&CancelStreamOptions{RemoveTorrent: false, UserID: opts.UserID})
 		})
 		if !s.ds(opts).IsOpenActive(opts.ClientId) {
 			return nil
@@ -1270,6 +1299,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 				cached.urlResolvedAt = time.Now()
 				s.preloadMu.Unlock()
 				s.repository.logger.Debug().Msg("debridstream: Refreshed expired preloaded URL (no createtorrent)")
+				s.persistPrewarm(opts, cached) // share the refreshed URL to the account-wide DB
 			} else if rerr != nil {
 				s.repository.logger.Warn().Err(rerr).Msg("debridstream: Could not refresh preloaded URL; using cached")
 			}

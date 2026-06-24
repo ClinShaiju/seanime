@@ -22,14 +22,20 @@ import (
 	"seanime/internal/util"
 	"seanime/internal/util/result"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/samber/mo"
+	"golang.org/x/time/rate"
 )
 
 var (
 	ErrProviderNotSet = fmt.Errorf("debrid: Provider not set")
 )
+
+// prewarmKickoffInterval spaces scheduled prewarm resolves so a tick's fan-out doesn't hit
+// TorBox simultaneously (see Repository.prewarmLimiter).
+const prewarmKickoffInterval = 1500 * time.Millisecond
 
 type (
 	Repository struct {
@@ -66,6 +72,11 @@ type (
 		platformRef         *util.Ref[platform.Platform]
 
 		autoSelect *autoselect.AutoSelect
+
+		// prewarmLimiter spaces the scheduled continue-watching fan-out so a tick's N_users×N
+		// targets don't hit TorBox simultaneously (the concurrent burst was a prime 429 source).
+		// Client-triggered preloads (play @3s, hover) bypass it — they're individually low-rate.
+		prewarmLimiter *rate.Limiter
 
 		// previousStreamOptions is the most-recently-started stream, GLOBAL across users —
 		// consumed by single-host features (Nakama host party, plugins) that have one notion
@@ -122,6 +133,8 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		Platform:          opts.PlatformRef,
 	})
 
+	ret.prewarmLimiter = rate.NewLimiter(rate.Every(prewarmKickoffInterval), 1)
+
 	return
 }
 
@@ -143,8 +156,13 @@ func (r *Repository) startOrStopDownloadLoop() {
 
 // InitializeProvider is called each time the settings change
 func (r *Repository) InitializeProvider(settings *models.DebridSettings) error {
-	// Provider/account/key may have changed — drop any prewarmed streams from the old account.
-	r.ClearAllPreloads()
+	// Only drop prewarmed streams when the ACCOUNT changes (provider/key/enabled). A benign settings
+	// save (preferred resolution, preload toggle) must NOT cold-start the warm cache and force a
+	// re-resolve (+ re-createtorrent) of everything — that was a needless 429/latency source.
+	prev := r.settings
+	if prev == nil || prev.Provider != settings.Provider || prev.ApiKey != settings.ApiKey || prev.Enabled != settings.Enabled {
+		r.ClearAllPreloads()
+	}
 	r.settings = settings
 
 	if !settings.Enabled {

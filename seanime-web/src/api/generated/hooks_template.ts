@@ -721,6 +721,15 @@
 //     })
 // }
 
+// export function useDebridGetPrewarmStatus() {
+//     return useServerQuery<Array<DebridClient_PrewarmStatusItem>>({
+//         endpoint: API_ENDPOINTS.DEBRID.DebridGetPrewarmStatus.endpoint,
+//         method: API_ENDPOINTS.DEBRID.DebridGetPrewarmStatus.methods[0],
+//         queryKey: [API_ENDPOINTS.DEBRID.DebridGetPrewarmStatus.key],
+//         enabled: true,
+//     })
+// }
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // directory_selector
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2176,6 +2185,17 @@
 //         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.endpoint,
 //         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.methods[0],
 //         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomAutoSkip.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
+// export function useNakamaWatchRoomJoinStream() {
+//     return useServerMutation<boolean, NakamaWatchRoomJoinStream_Variables>({
+//         endpoint: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoinStream.endpoint,
+//         method: API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoinStream.methods[0],
+//         mutationKey: [API_ENDPOINTS.NAKAMA_ROOMS.NakamaWatchRoomJoinStream.key],
 //         onSuccess: async () => {
 // 
 //         },

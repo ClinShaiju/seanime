@@ -3,6 +3,7 @@ import { getEpisodeMinutesRemaining, getEpisodePercentageComplete, useGetContinu
 import { usePlayNext } from "@/app/(main)/_atoms/playback.atoms"
 import { __libraryHeaderImageAtom } from "@/app/(main)/_features/anime-library/_components/library-header"
 import { EpisodeCard } from "@/app/(main)/_features/anime/_components/episode-card"
+import { PrewarmBadge } from "@/app/(main)/_features/media/_components/media-entry-prewarm-badge"
 import { useSeaCommandInject } from "@/app/(main)/_features/sea-command/use-inject"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { episodeCardCarouselItemClass } from "@/components/shared/classnames"
@@ -230,6 +231,7 @@ const _EpisodeCard = React.memo(({ episode, mRef, overrideLink, spoilerActive, w
         <EpisodeCard
             key={episode.localFile?.path || ""}
             episode={episode}
+            badge={<PrewarmBadge mediaId={episode.baseAnime?.id} episodeNumber={episode.episodeNumber} />}
             image={episode.episodeMetadata?.image || episode.baseAnime?.bannerImage || episode.baseAnime?.coverImage?.extraLarge}
             topTitle={episode.episodeTitle || episode?.baseAnime?.title?.userPreferred}
             spoilerSafeTopTitle={episode?.baseAnime?.title?.userPreferred}

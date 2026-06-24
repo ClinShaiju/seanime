@@ -19,15 +19,27 @@ func (r *Repository) PrewarmStreams(ctx context.Context, targets []*StartStreamO
 		return
 	}
 
-	for _, opts := range targets {
-		if opts == nil {
-			continue
+	// Serialize the scheduled fan-out: drain in ONE background goroutine, spacing each kickoff via
+	// prewarmLimiter, so the continue-watching tick no longer hits TorBox simultaneously (the
+	// concurrent N_users×N burst was a prime 429 source). Returns immediately so the tick isn't
+	// blocked; client-triggered preloads (play @3s, hover) stay direct and unthrottled.
+	go func() {
+		defer util.HandlePanicInModuleThen("debrid/client/PrewarmStreams/drain", func() {})
+		for _, opts := range targets {
+			if opts == nil {
+				continue
+			}
+			if r.prewarmLimiter != nil {
+				if err := r.prewarmLimiter.Wait(ctx); err != nil {
+					return // context cancelled
+				}
+			}
+			opts.Preload = true
+			// Per-user: prewarm into the target user's own StreamManager so each user's preload
+			// cache is theirs and is consumed when THEY play.
+			_ = r.smFor(opts.UserID).preloadStream(ctx, opts)
 		}
-		opts.Preload = true
-		// Per-user: prewarm into the target user's own StreamManager so each user's preload
-		// cache is theirs and is consumed when THEY play.
-		_ = r.smFor(opts.UserID).preloadStream(ctx, opts)
-	}
+	}()
 }
 
 // ClearAllPreloads drops every cached/in-flight preload across ALL users. Used on

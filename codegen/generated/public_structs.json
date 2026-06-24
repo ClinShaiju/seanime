@@ -33607,6 +33607,158 @@
   {
     "filepath": "../internal/database/models/models.go",
     "filename": "models.go",
+    "name": "DebridActiveStream",
+    "formattedName": "Models_DebridActiveStream",
+    "package": "models",
+    "fields": [
+      {
+        "name": "UserID",
+        "jsonName": "userId",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Data",
+        "jsonName": "data",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " DebridActiveStream persists a user's last active debrid stream (resolved CDN link +",
+      " selection) so that after a server restart mid-playback, the stream can be re-established",
+      " instantly from the cached link — no auto-select search — for seamless reconnection.",
+      " Data is a JSON blob of the resolution; one row per user."
+    ],
+    "embeddedStructNames": [
+      "models.BaseModel"
+    ]
+  },
+  {
+    "filepath": "../internal/database/models/models.go",
+    "filename": "models.go",
+    "name": "DebridPrewarm",
+    "formattedName": "Models_DebridPrewarm",
+    "package": "models",
+    "fields": [
+      {
+        "name": "AccountHash",
+        "jsonName": "accountHash",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "MediaId",
+        "jsonName": "mediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "EpisodeNumber",
+        "jsonName": "episodeNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AniDBEpisode",
+        "jsonName": "anidbEpisode",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "ProfileHash",
+        "jsonName": "profileHash",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UserTags",
+        "jsonName": "userTags",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " JSON array of user ids that want this entry"
+        ]
+      },
+      {
+        "name": "Data",
+        "jsonName": "data",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": [
+          " JSON: selection + resolved URL (persistedActiveStream)"
+        ]
+      },
+      {
+        "name": "ResolvedAt",
+        "jsonName": "resolvedAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "UrlResolvedAt",
+        "jsonName": "urlResolvedAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "TtlNanos",
+        "jsonName": "ttlNanos",
+        "goType": "int64",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " DebridPrewarm is the server-wide, account-partitioned cache of resolved debrid prewarms",
+      " (selection + resolved CDN URL). A prewarm done for one user is reused by ANY user on the SAME",
+      " TorBox account (same API key) without re-searching/re-adding, and it survives restarts. Keyed by",
+      " (account_hash, media_id, episode_number, anidb_episode, profile_hash) — see prewarm-audit.md Part 4.",
+      " account_hash = hash(provider+apiKey) so the raw key is never stored; profile_hash gates reuse to",
+      " matching auto-select profiles (the quality-over-speed rule, made mechanical)."
+    ],
+    "embeddedStructNames": [
+      "models.BaseModel"
+    ]
+  },
+  {
+    "filepath": "../internal/database/models/models.go",
+    "filename": "models.go",
     "name": "PluginData",
     "formattedName": "Models_PluginData",
     "package": "models",
@@ -34951,6 +35103,56 @@
     "comments": []
   },
   {
+    "filepath": "../internal/debrid/client/prewarm_db.go",
+    "filename": "prewarm_db.go",
+    "name": "PrewarmStatusItem",
+    "formattedName": "DebridClient_PrewarmStatusItem",
+    "package": "debrid_client",
+    "fields": [
+      {
+        "name": "MediaId",
+        "jsonName": "mediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "EpisodeNumber",
+        "jsonName": "episodeNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AniDBEpisode",
+        "jsonName": "anidbEpisode",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Metadata",
+        "jsonName": "metadata",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " PrewarmStatusItem reports that a given episode is prewarmed (will play instantly). Metadata=true",
+      " means it's also metadata/CDN-warmed (the tier-1 target — instant first frame too). Consumed by the",
+      " UI to badge episodes; read-only, never triggers a resolve."
+    ]
+  },
+  {
     "filepath": "../internal/debrid/client/repository.go",
     "filename": "repository.go",
     "name": "Repository",
@@ -35140,6 +35342,28 @@
         "comments": []
       },
       {
+        "name": "prewarmLimiter",
+        "jsonName": "prewarmLimiter",
+        "goType": "rate.Limiter",
+        "typescriptType": "Limiter",
+        "usedTypescriptType": "Limiter",
+        "usedStructName": "rate.Limiter",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "prevOptsMu",
+        "jsonName": "prevOptsMu",
+        "goType": "sync.RWMutex",
+        "typescriptType": "RWMutex",
+        "usedTypescriptType": "RWMutex",
+        "usedStructName": "sync.RWMutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
         "name": "previousStreamOptions",
         "jsonName": "previousStreamOptions",
         "goType": "",
@@ -35264,6 +35488,58 @@
     "comments": []
   },
   {
+    "filepath": "../internal/debrid/client/repository.go",
+    "filename": "repository.go",
+    "name": "UserStreamShare",
+    "formattedName": "DebridClient_UserStreamShare",
+    "package": "debrid_client",
+    "fields": [
+      {
+        "name": "StreamUrl",
+        "jsonName": "StreamUrl",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Filepath",
+        "jsonName": "Filepath",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "TorrentItemId",
+        "jsonName": "TorrentItemId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "FileId",
+        "jsonName": "FileId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " UserStreamShare is what the watch-room \"join stream\" path needs to let a peer (re)play the",
+      " host's stream. Preferred path: reuse the SELECTION (TorrentItemId + FileId) — already added",
+      " to the debrid account — and have the peer resolve its OWN fresh CDN link from it (cheap, no",
+      " createtorrent), so peers don't contend on one resolved link. StreamUrl is the host's link,",
+      " kept as a fallback for cases with no torrent item (e.g. a direct-StreamUrl release)."
+    ]
+  },
+  {
     "filepath": "../internal/debrid/client/stream.go",
     "filename": "stream.go",
     "name": "StreamManager",
@@ -35277,6 +35553,17 @@
         "typescriptType": "DebridClient_Repository",
         "usedTypescriptType": "DebridClient_Repository",
         "usedStructName": "debrid_client.Repository",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "stateMu",
+        "jsonName": "stateMu",
+        "goType": "sync.RWMutex",
+        "typescriptType": "RWMutex",
+        "usedTypescriptType": "RWMutex",
+        "usedStructName": "sync.RWMutex",
         "required": false,
         "public": false,
         "comments": []
@@ -35304,6 +35591,15 @@
       {
         "name": "currentStreamUrl",
         "jsonName": "currentStreamUrl",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "currentFileId",
+        "jsonName": "currentFileId",
         "goType": "string",
         "typescriptType": "string",
         "required": true,
@@ -35529,6 +35825,15 @@
         "comments": [
           " Index of the file to stream (Manual selection)"
         ]
+      },
+      {
+        "name": "SharedTorrentItemId",
+        "jsonName": "SharedTorrentItemId",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
       },
       {
         "name": "UserAgent",
@@ -36696,6 +37001,17 @@
         "goType": "time.Time",
         "typescriptType": "string",
         "usedStructName": "time.Time",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "fileIdCache",
+        "jsonName": "fileIdCache",
+        "goType": "sync.Map",
+        "typescriptType": "Map",
+        "usedTypescriptType": "Map",
+        "usedStructName": "sync.Map",
         "required": false,
         "public": false,
         "comments": []
@@ -40036,6 +40352,15 @@
       {
         "name": "hasHadConnection",
         "jsonName": "hasHadConnection",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "requireUserScoping",
+        "jsonName": "requireUserScoping",
         "goType": "bool",
         "typescriptType": "boolean",
         "required": true,
@@ -54903,6 +55228,16 @@
         "typescriptType": "CancelFunc",
         "usedTypescriptType": "CancelFunc",
         "usedStructName": "context.CancelFunc",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "lastLiveProgressSave",
+        "jsonName": "lastLiveProgressSave",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
         "required": false,
         "public": false,
         "comments": []
@@ -74463,6 +74798,64 @@
         "comments": []
       },
       {
+        "name": "PlaybackActive",
+        "jsonName": "playbackActive",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "paused",
+        "jsonName": "paused",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "position",
+        "jsonName": "position",
+        "goType": "float64",
+        "typescriptType": "number",
+        "required": true,
+        "public": false,
+        "comments": [
+          " seconds, as of positionAt"
+        ]
+      },
+      {
+        "name": "positionAt",
+        "jsonName": "positionAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "lastControllerClientID",
+        "jsonName": "lastControllerClientID",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "lastLiveAt",
+        "jsonName": "lastLiveAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
         "name": "passwordHash",
         "jsonName": "passwordHash",
         "goType": "string",
@@ -74568,6 +74961,24 @@
         "usedTypescriptType": "Nakama_WatchPartyStreamType",
         "usedStructName": "nakama.WatchPartyStreamType",
         "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Stopped",
+        "jsonName": "stopped",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Heartbeat",
+        "jsonName": "heartbeat",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": false,
         "public": true,
         "comments": []
       },
@@ -74743,10 +75154,99 @@
         "required": false,
         "public": false,
         "comments": []
+      },
+      {
+        "name": "stopOnce",
+        "jsonName": "stopOnce",
+        "goType": "sync.Once",
+        "typescriptType": "Once",
+        "usedTypescriptType": "Once",
+        "usedStructName": "sync.Once",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "stop",
+        "jsonName": "stop",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": false,
+        "comments": []
       }
     ],
     "comments": [
       " WatchRoomHub holds all same-instance rooms."
+    ]
+  },
+  {
+    "filepath": "../internal/nakama/watch_room.go",
+    "filename": "watch_room.go",
+    "name": "RoomStreamInfo",
+    "formattedName": "Nakama_RoomStreamInfo",
+    "package": "nakama",
+    "fields": [
+      {
+        "name": "Active",
+        "jsonName": "Active",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "MediaId",
+        "jsonName": "MediaId",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "EpisodeNumber",
+        "jsonName": "EpisodeNumber",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "AniDBEpisode",
+        "jsonName": "AniDBEpisode",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "StreamType",
+        "jsonName": "StreamType",
+        "goType": "WatchPartyStreamType",
+        "typescriptType": "Nakama_WatchPartyStreamType",
+        "usedTypescriptType": "Nakama_WatchPartyStreamType",
+        "usedStructName": "nakama.WatchPartyStreamType",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "ControllerUserID",
+        "jsonName": "ControllerUserID",
+        "goType": "uint",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " RoomStreamInfo is the active-stream summary the \"join stream\" path needs: what to play",
+      " (media identity) and whose resolved debrid link to reuse (the controller's user id)."
     ]
   },
   {
@@ -95076,27 +95576,6 @@
         "jsonName": "body",
         "goType": "string",
         "typescriptType": "string",
-        "required": true,
-        "public": true,
-        "comments": []
-      }
-    ],
-    "comments": []
-  },
-  {
-    "filepath": "../internal/updater/check.go",
-    "filename": "check.go",
-    "name": "DocsResponse",
-    "formattedName": "Updater_DocsResponse",
-    "package": "updater",
-    "fields": [
-      {
-        "name": "Release",
-        "jsonName": "release",
-        "goType": "Release",
-        "typescriptType": "Updater_Release",
-        "usedTypescriptType": "Updater_Release",
-        "usedStructName": "updater.Release",
         "required": true,
         "public": true,
         "comments": []

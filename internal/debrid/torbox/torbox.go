@@ -34,6 +34,11 @@ type (
 		mylistMu  sync.Mutex
 		mylist    []*Torrent
 		mylistAt  time.Time
+
+		// fileIdCache maps "torrentID|shortName" -> numeric TorBox file id, so repeat resolves
+		// of the same torrent+file (urlRefreshTTL refresh, replays, cross-consumer reuse) skip
+		// the extra mylist round-trip in GetTorrentDownloadUrl. The first resolve still fetches.
+		fileIdCache sync.Map
 	}
 
 	Response struct {
@@ -130,52 +135,111 @@ func (t *TorBox) doQuery(method, uri string, body io.Reader, contentType string)
 	return t.doQueryCtx(context.Background(), method, uri, body, contentType)
 }
 
+const (
+	torboxMaxRetries  = 4
+	torboxBackoffBase = 1 * time.Second
+	torboxBackoffCap  = 16 * time.Second
+)
+
+// torboxBackoff returns the exponential backoff for a retry attempt (1s, 2s, 4s, … capped).
+// No jitter: a single-keyed client has no thundering herd to de-synchronize, and scheduled
+// prewarms are serialized upstream, so there's no lockstep-retry case to spread.
+func torboxBackoff(attempt int) time.Duration {
+	d := torboxBackoffBase << attempt
+	if d > torboxBackoffCap || d <= 0 {
+		d = torboxBackoffCap
+	}
+	return d
+}
+
+// parseRetryAfter reads a Retry-After header (seconds form); falls back when absent/unparseable.
+func parseRetryAfter(resp *http.Response, fallback time.Duration) time.Duration {
+	if ra := strings.TrimSpace(resp.Header.Get("Retry-After")); ra != "" {
+		if secs, err := strconv.Atoi(ra); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return fallback
+}
+
 func (t *TorBox) doQueryCtx(ctx context.Context, method, uri string, body io.Reader, contentType string) (*Response, error) {
 	apiKey, found := t.apiKey.Get()
 	if !found {
 		return nil, debrid.ErrNotAuthenticated
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, uri, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("Content-Type", contentType)
-	req.Header.Add("Authorization", "Bearer "+apiKey)
-	req.Header.Add("User-Agent", "Seanime/"+constants.Version)
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		bodyB, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("request failed: code %d, body: %s", resp.StatusCode, string(bodyB))
-	}
-
-	bodyB, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.logger.Error().Err(err).Msg("torbox: Failed to read response body")
-		return nil, err
-	}
-
-	var ret Response
-	if err := json.Unmarshal(bodyB, &ret); err != nil {
-		trimmedBody := string(bodyB)
-		if len(trimmedBody) > 2000 {
-			trimmedBody = trimmedBody[:2000] + "..."
+	// Buffer the body so the request can be replayed on a 429 retry — a consumed io.Reader
+	// can't be re-sent (createtorrent's multipart body would go out empty on the retry).
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		if bodyBytes, err = io.ReadAll(body); err != nil {
+			return nil, err
 		}
-		t.logger.Error().Err(err).Msg("torbox: Failed to decode response, response body: " + trimmedBody)
-		return nil, err
 	}
 
-	if !ret.Success {
-		return nil, fmt.Errorf("request failed: %s", ret.Detail)
-	}
+	for attempt := 0; ; attempt++ {
+		var rdr io.Reader
+		if bodyBytes != nil {
+			rdr = bytes.NewReader(bodyBytes)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, uri, rdr)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Add("Content-Type", contentType)
+		req.Header.Add("Authorization", "Bearer "+apiKey)
+		req.Header.Add("User-Agent", "Seanime/"+constants.Version)
 
-	return &ret, nil
+		resp, err := t.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		// Rate limited — honor Retry-After (else exponential backoff) and retry instead of
+		// aborting the whole resolve, which is what a bare 429 used to do.
+		if resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			if attempt >= torboxMaxRetries {
+				return nil, fmt.Errorf("torbox: rate limited (429) after %d retries", torboxMaxRetries)
+			}
+			wait := parseRetryAfter(resp, torboxBackoff(attempt))
+			t.logger.Warn().Dur("wait", wait).Int("attempt", attempt+1).Msg("torbox: 429 rate limited, backing off")
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(wait):
+			}
+			continue
+		}
+
+		bodyB, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("request failed: code %d, body: %s", resp.StatusCode, string(bodyB))
+		}
+		if readErr != nil {
+			t.logger.Error().Err(readErr).Msg("torbox: Failed to read response body")
+			return nil, readErr
+		}
+
+		var ret Response
+		if err := json.Unmarshal(bodyB, &ret); err != nil {
+			trimmedBody := string(bodyB)
+			if len(trimmedBody) > 2000 {
+				trimmedBody = trimmedBody[:2000] + "..."
+			}
+			t.logger.Error().Err(err).Msg("torbox: Failed to decode response, response body: " + trimmedBody)
+			return nil, err
+		}
+
+		if !ret.Success {
+			return nil, fmt.Errorf("request failed: %s", ret.Detail)
+		}
+
+		return &ret, nil
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -341,7 +405,8 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 
 				// Check if the torrent is ready
 				if torrent.IsReady {
-					time.Sleep(1 * time.Second) // ponytail: settle hedge before requesting the URL; drop if the URL never 404s
+					// ponytail: dropped the 1s settle sleep — DownloadPresent=true means the file is
+					// available, so requestdl resolves immediately; the 429 backoff covers rate limits.
 					downloadUrl, err := t.GetTorrentDownloadUrl(debrid.DownloadTorrentOptions{
 						ID:     opts.ID,
 						FileId: opts.FileId, // Filename
@@ -378,20 +443,27 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 
 	url := t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&zip_link=true", apiKey, opts.ID)
 	if opts.FileId != "" {
-		// Get the actual file ID
-		torrent, err := t.getTorrent(opts.ID)
-		if err != nil {
-			return "", fmt.Errorf("torbox: Failed to get download URL: %w", err)
-		}
+		// Map the short-name FileId -> numeric TorBox file id. Cache it so repeat resolves of the
+		// same torrent+file (URL refresh, replays, cross-consumer reuse) skip this extra mylist call.
+		cacheKey := opts.ID + "|" + opts.FileId
 		var fId string
-		for _, f := range torrent.Files {
-			if f.ShortName == opts.FileId {
-				fId = strconv.Itoa(f.ID)
-				break
+		if v, ok := t.fileIdCache.Load(cacheKey); ok {
+			fId = v.(string)
+		} else {
+			torrent, err := t.getTorrent(opts.ID)
+			if err != nil {
+				return "", fmt.Errorf("torbox: Failed to get download URL: %w", err)
 			}
-		}
-		if fId == "" {
-			return "", fmt.Errorf("torbox: Failed to get download URL, file not found")
+			for _, f := range torrent.Files {
+				if f.ShortName == opts.FileId {
+					fId = strconv.Itoa(f.ID)
+					break
+				}
+			}
+			if fId == "" {
+				return "", fmt.Errorf("torbox: Failed to get download URL, file not found")
+			}
+			t.fileIdCache.Store(cacheKey, fId)
 		}
 		url = t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s", apiKey, opts.ID, fId)
 	}
