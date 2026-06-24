@@ -267,6 +267,10 @@ export function useVideoCorePlaylist() {
                 episodeNumber: episode.episodeNumber,
                 aniDBEpisode: episode.aniDBEpisode,
                 preload: true,
+                // The next episode is the highest-certainty prewarm target, so also warm its MKV
+                // metadata/CDN (font attachments + HEAD) for an instant first frame. Bounded by
+                // the server's cdnWarmLimiter. Bulk preloads (hover/entry) stay URL-only.
+                prewarmMetadata: true,
             })
             return
         }
@@ -292,6 +296,7 @@ export function useVideoCorePlaylist() {
                     currentAniDBEpisode: episode.aniDBEpisode,
                 } : undefined,
                 preload: true,
+                prewarmMetadata: true,
             })
         }
     }

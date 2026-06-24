@@ -176,6 +176,19 @@ func (m *Manager) PrewarmStreamMetadata(streamUrl string) {
 	go warmStreamStart(streamUrl, warmBytes)
 }
 
+// DropStreamMetadata evicts the cached MKV parser + HEAD info for a stream URL. Called when an
+// episode finishes (a different episode starts, or the stream is cancelled) so the font/attachment
+// bytes the parser holds in RAM are released immediately instead of lingering until the 2h TTL.
+// A re-press of the SAME episode just re-parses (~2-3s once); the common binge path (next episode)
+// never revisits the finished URL, so this is pure RAM hygiene. No-op on empty URL.
+func (m *Manager) DropStreamMetadata(streamUrl string) {
+	if streamUrl == "" {
+		return
+	}
+	m.parserCache.Delete(streamUrl)
+	m.streamInfoCache.Delete(streamUrl)
+}
+
 const (
 	// warmSeconds is how many seconds of video to warm at the start (bitrate-scaled, so a high-
 	// bitrate GB-sized episode warms proportionally more bytes than a small one).

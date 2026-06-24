@@ -378,6 +378,10 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		BatchEpisodeFiles *hibiketorrent.BatchEpisodeFiles `json:"batchEpisodeFiles"`
 		// Preload is true if the stream should only be resolved and cached, not played.
 		Preload bool `json:"preload,omitempty"`
+		// PrewarmMetadata, when set on a preload, also warms the MKV metadata/CDN (font
+		// attachments, HEAD) so the first frame is instant. Only the @3s next-episode trigger
+		// sets this — it's the highest-certainty target. CDN load is bounded by cdnWarmLimiter.
+		PrewarmMetadata bool `json:"prewarmMetadata,omitempty"`
 	}
 
 	var b body
@@ -426,12 +430,12 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		AutoSelect:        b.AutoSelect,
 		BatchEpisodeFiles: b.BatchEpisodeFiles,
 		Preload: b.Preload,
-		// Preloads resolve and cache the stream URL (instant torrent selection) but do NOT
-		// pre-parse MKV metadata: that downloads fonts/metadata from the debrid CDN, and the
-		// hover/entry/next-episode prewarm firing it on every card was bursting the CDN into
-		// HTTP 429 rate-limiting (which then breaks real playback). Metadata is parsed at play
-		// time instead (~2-3s once), which is the acceptable trade for not getting rate-limited.
-		PrewarmMetadata: false,
+		// Metadata warming (MKV font/attachment download + HEAD) is opt-in per request: only the
+		// @3s next-episode trigger sets prewarmMetadata, so the bulk preloads (hover / entry-mount)
+		// stay URL-only. Previously this was hardcoded false because firing it on every card burst
+		// the CDN into HTTP 429s; that's now bounded by cdnWarmLimiter (directstream), so the one
+		// high-certainty target can safely warm its first frame.
+		PrewarmMetadata: b.Preload && b.PrewarmMetadata,
 	}
 
 	if b.Preload {

@@ -1,4 +1,5 @@
 import { DebridStartStream_Variables } from "@/api/generated/endpoint.types"
+import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { HibikeTorrent_AnimeTorrent, HibikeTorrent_BatchEpisodeFiles } from "@/api/generated/types"
 import { useDebridStartStream } from "@/api/hooks/debrid.hooks"
 import {
@@ -28,6 +29,7 @@ type DebridStreamSelectionProps = {
     batchEpisodeFiles: HibikeTorrent_BatchEpisodeFiles | undefined
     forcePlaybackMethod?: ForcePlaybackMethod
     preload?: boolean
+    prewarmMetadata?: boolean
 }
 type DebridStreamAutoSelectProps = {
     mediaId: number
@@ -35,6 +37,7 @@ type DebridStreamAutoSelectProps = {
     aniDBEpisode: string
     forcePlaybackMethod?: ForcePlaybackMethod
     preload?: boolean
+    prewarmMetadata?: boolean
 }
 
 export function useHandleStartDebridStream() {
@@ -90,11 +93,17 @@ export function useHandleStartDebridStream() {
             autoSelect: false,
             batchEpisodeFiles: params.batchEpisodeFiles,
             preload: params.preload,
+            prewarmMetadata: params.prewarmMetadata,
         }
         // Remember the active stream so it can be re-issued if the server restarts mid-play.
         if (!params.preload) setLastDebridStreamStart(vars)
         mutate(vars, {
             onSuccess: () => {
+                // Refresh the prewarm badge set right after a successful preload (replaces the old
+                // 30s poll) so a co-mounted episode/library list shows the new warm episode promptly.
+                if (params.preload) {
+                    qc.invalidateQueries({ queryKey: [API_ENDPOINTS.DEBRID.DebridGetPrewarmStatus.key] })
+                }
             },
             onError: () => {
                 // A preload failure must not disturb the episode currently playing.
@@ -118,11 +127,17 @@ export function useHandleStartDebridStream() {
             clientId: clientId || "",
             autoSelect: true,
             preload: params.preload,
+            prewarmMetadata: params.prewarmMetadata,
         }
         // Remember the active stream so it can be re-issued if the server restarts mid-play.
         if (!params.preload) setLastDebridStreamStart(vars)
         mutate(vars, {
             onSuccess: () => {
+                // Refresh the prewarm badge set right after a successful preload (replaces the old
+                // 30s poll) so a co-mounted episode/library list shows the new warm episode promptly.
+                if (params.preload) {
+                    qc.invalidateQueries({ queryKey: [API_ENDPOINTS.DEBRID.DebridGetPrewarmStatus.key] })
+                }
             },
             onError: () => {
                 // A preload failure must not disturb the episode currently playing

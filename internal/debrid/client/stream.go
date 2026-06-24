@@ -285,6 +285,12 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		// A different episode is starting → the previously-consumed one has ended; drop its kept
 		// entry (replays of the SAME episode keep theirs, so this leaves a same-key hit intact).
 		if s.lastConsumedKey != "" && s.lastConsumedKey != key {
+			// Release the finished episode's MKV metadata (font attachments in RAM) too.
+			if prev, ok := s.preloads[s.lastConsumedKey]; ok {
+				if dm := s.ds(opts); dm != nil {
+					dm.DropStreamMetadata(prev.streamUrl)
+				}
+			}
 			delete(s.preloads, s.lastConsumedKey)
 			s.lastConsumedKey = ""
 		}
@@ -849,8 +855,12 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 	// The playing episode is ending → drop only ITS kept preload entry (the one held for instant
 	// replay). Other shows' continue-watching prewarms stay warm; stale entries self-evict via TTL.
 	// Full reset (provider change/shutdown) uses ClearAllPreloads.
+	var endedStreamUrl string
 	s.preloadMu.Lock()
 	if s.lastConsumedKey != "" {
+		if prev, ok := s.preloads[s.lastConsumedKey]; ok {
+			endedStreamUrl = prev.streamUrl
+		}
 		delete(s.preloads, s.lastConsumedKey)
 		s.lastConsumedKey = ""
 	}
@@ -864,6 +874,8 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 	}
 	if dm := s.ds(prevOpts); dm != nil {
 		dm.CloseOpen("")
+		// Release the finished episode's cached MKV metadata (font attachments in RAM).
+		dm.DropStreamMetadata(endedStreamUrl)
 	}
 
 	if s.downloadCtxCancelFunc != nil {

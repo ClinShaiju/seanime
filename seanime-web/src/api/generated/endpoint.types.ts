@@ -629,6 +629,16 @@ export type DebridStartStream_Variables = {
      *  Preload is true if the stream should only be resolved and cached, not played.
      */
     preload?: boolean
+    /**
+     *  PrewarmMetadata, when set on a preload, also warms the MKV metadata/CDN (font
+     *  attachments, HEAD) so the first frame is instant. Only the @3s next-episode trigger
+     *  sets this — it's the highest-certainty target. CDN load is bounded by cdnWarmLimiter.
+     *
+     *  PrewarmMetadata, when set on a preload, also warms the MKV metadata/CDN (font
+     *  attachments, HEAD) so the first frame is instant. Only the @3s next-episode trigger
+     *  sets this — it's the highest-certainty target. CDN load is bounded by cdnWarmLimiter.
+     */
+    prewarmMetadata?: boolean
 }
 
 /**
