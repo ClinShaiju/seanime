@@ -40,8 +40,15 @@ function nakamaStreamType(t: NativePlayer_StreamType | undefined): Nakama_WatchP
     }
 }
 
-const ECHO_GUARD_MS = 800
+const ECHO_GUARD_MS = 2000 // stop-echo guard (covers the ~700ms terminate)
 const SEEK_THRESHOLD = 0.75 // only seek when off by more than this (avoids jitter)
+// State-matched echo suppression for play/pause/seek: after applying a remote state, the
+// player fires play/pause/seeked events that would re-broadcast and loop. We suppress an
+// emit ONLY when the player still matches what we just applied (a real echo) within this
+// window. A genuine local action diverges from the applied state and emits immediately —
+// so it's robust to a late event (buffering) without swallowing real input like a timer would.
+const APPLY_ECHO_WINDOW_MS = 2500
+const APPLY_ECHO_SEEK_TOL = 1.5
 
 export function useWatchRoomPlayerSync() {
     const room = useAtomValue(currentWatchRoomAtom)
@@ -84,6 +91,9 @@ export function useWatchRoomPlayerSync() {
 
     // Suppress emits while we're applying a remote action (prevents feedback loops).
     const applyingRemoteUntil = React.useRef(0)
+    // The last play/pause/seek state we applied from the controller — used to recognize and
+    // drop the echo events the apply itself fires (state-matched, not a blind time window).
+    const lastAppliedRef = React.useRef<{ paused: boolean, currentTime: number, at: number } | null>(null)
 
     // ---- Follow the controller into the episode (auto-start) ----
     // The sync above only adjusts an EXISTING player. When the controller starts an episode
@@ -166,7 +176,15 @@ export function useWatchRoomPlayerSync() {
 
         function emit() {
             if (!canControl) return
-            if (Date.now() < applyingRemoteUntil.current) return
+            // Drop the echo of a state we were just told to be in. A genuine local action
+            // (different paused state, or a seek away from the applied position) diverges and
+            // passes through immediately.
+            const la = lastAppliedRef.current
+            if (la && (Date.now() - la.at) < APPLY_ECHO_WINDOW_MS
+                && la.paused === player.paused
+                && Math.abs(player.currentTime - la.currentTime) < APPLY_ECHO_SEEK_TOL) {
+                return
+            }
 
             const payload: RoomPlaybackSync = {
                 roomId: room!.id,
@@ -224,8 +242,9 @@ export function useWatchRoomPlayerSync() {
             maybeAutoStart(p)
             if (!videoElement) return
 
-            // Suppress the play/pause/seeked events our own changes are about to fire.
-            applyingRemoteUntil.current = Date.now() + ECHO_GUARD_MS
+            // Record the state we're applying so the play/pause/seeked events it fires are
+            // recognized as echoes and not re-broadcast (state-matched, robust to late events).
+            lastAppliedRef.current = { paused: p.paused, currentTime: p.currentTime, at: Date.now() }
 
             if (isFinite(p.currentTime) && Math.abs(videoElement.currentTime - p.currentTime) > SEEK_THRESHOLD) {
                 videoElement.currentTime = p.currentTime
