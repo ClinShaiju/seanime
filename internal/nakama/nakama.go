@@ -335,6 +335,12 @@ func NewManager(opts *NewManagerOptions) *Manager {
 				}
 				m.watchRoomHub.RelayPlaybackStatus(event.ClientID, &payload)
 			}
+
+			if event.Type == events.NakamaRoomDebug {
+				// Diagnostic line from a client (iOS has no devtools) — log it so the
+				// follower/host apply+emit decisions are visible server-side.
+				m.logger.Debug().Msgf("nakama/rooms CLIENT-DEBUG [%s] %v", event.ClientID, event.Payload)
+			}
 		}
 	}()
 

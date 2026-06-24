@@ -289,14 +289,24 @@ export function useWatchRoomPlayerSync() {
             // Heartbeats only correct large drift (steady playback naturally wanders a little);
             // discrete seeks apply precisely.
             const seekThreshold = p.heartbeat ? HEARTBEAT_DRIFT : SEEK_THRESHOLD
+            let action = "none"
             if (isFinite(p.currentTime) && Math.abs(videoElement.currentTime - p.currentTime) > seekThreshold) {
+                action = `seek->${p.currentTime.toFixed(1)}`
                 videoElement.currentTime = p.currentTime
             }
             if (p.paused && !videoElement.paused) {
+                action += " pause"
                 videoElement.pause()
             } else if (!p.paused && videoElement.paused) {
+                action += " play"
                 videoElement.play().catch(() => { })
             }
+            // DIAGNOSTIC (temporary): show what the follower received vs its local state + action.
+            sendMessage({
+                type: WSEvents.NAKAMA_ROOM_DEBUG,
+                payload: `apply recv{paused:${p.paused},t:${p.currentTime.toFixed(1)},hb:${!!p.heartbeat}} `
+                    + `local{paused:${videoElement.paused},t:${videoElement.currentTime.toFixed(1)}} action=[${action.trim()}]`,
+            })
 
             // Force-host-tracks: mirror the host's audio/subtitle selection.
             if (forceHostTracks) {

@@ -106,6 +106,7 @@ const (
 	NakamaWatchRoomClosed     = "nakama-watch-room-closed"     // server->client: the host closed the room; members stop playback
 	NakamaRoomPlaybackStatus  = "nakama-room-playback-status"  // client->server: a member reports a control action for relay
 	NakamaRoomPlaybackSync    = "nakama-room-playback-sync"    // server->client: apply a controller's action to follower players
+	NakamaRoomDebug           = "nakama-room-debug"            // client->server: a diagnostic line, logged server-side (no console on iOS)
 
 	NakamaOnlineStreamEvent = "nakama-online-stream-event"
 

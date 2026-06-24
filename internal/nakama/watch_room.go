@@ -219,10 +219,18 @@ func (h *WatchRoomHub) runBroadcastLoop() {
 			for _, room := range h.snapshotRooms() {
 				room.mu.RLock()
 				payload := room.playbackBroadcastLocked(true)
+				// The authoritative position is derived from the controller's reports, so the
+				// controller is the source — don't echo it back to itself (that's what caused
+				// the self-driven oscillation). Everyone else (incl. a non-driving host)
+				// reconciles to it.
+				var controllerClientID string
+				if ctrl, ok := room.Participants[room.ControllerKey]; ok {
+					controllerClientID = ctrl.ClientID
+				}
 				clientIDs := make([]string, 0, len(room.Participants))
 				if payload != nil {
 					for _, p := range room.Participants {
-						if p.ClientID != "" {
+						if p.ClientID != "" && p.ClientID != controllerClientID {
 							clientIDs = append(clientIDs, p.ClientID)
 						}
 					}
@@ -545,13 +553,6 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 
 	_ = targets // membership fan-out is computed below; resolveRelay is kept for its permission check
 
-	// Diagnostic: log discrete actions (not the periodic heartbeats) so the sync conversation
-	// is visible in the server log — who sent what paused/position.
-	if !p.Heartbeat {
-		h.logf("relay status sender=%s paused=%v t=%.1f stopped=%v hb=%v media=%d ep=%d",
-			senderClientID, p.Paused, p.CurrentTime, p.Stopped, p.Heartbeat, p.MediaId, p.EpisodeNumber)
-	}
-
 	// Update the AUTHORITATIVE room state from the controller's report. The server — not the
 	// controller's client — is now the source of truth: it holds {paused, position} and the
 	// broadcast loop fans the computed live position out to everyone.
@@ -580,20 +581,34 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	} else if !p.Heartbeat {
 		immediate = room.playbackBroadcastLocked(false)
 	}
-	clientIDs := make([]string, 0, len(room.Participants))
+	// Broadcast to every member EXCEPT the sender. Echoing a member's own action back to it
+	// and relying on a client-side "ignore my echo" guard is fragile — a missed guard makes
+	// the controller drive itself into a play/pause oscillation. Excluding the sender makes
+	// self-feedback impossible regardless of the client.
+	targetIDs := make([]string, 0, len(room.Participants))
 	for _, rp := range room.Participants {
-		if rp.ClientID != "" {
-			clientIDs = append(clientIDs, rp.ClientID)
+		if rp.ClientID != "" && rp.ClientID != senderClientID {
+			targetIDs = append(targetIDs, rp.ClientID)
 		}
 	}
+	isController := room.ControllerKey != "" && func() bool {
+		ctrl, ok := room.Participants[room.ControllerKey]
+		return ok && ctrl.ClientID == senderClientID
+	}()
 	room.mu.Unlock()
+
+	// Diagnostic: log discrete actions (not the periodic heartbeats) so the full sync
+	// conversation is visible — who sent it, whether they're the controller, the paused/
+	// position, and how many followers received it (0 = the relay isn't reaching anyone).
+	if !p.Heartbeat {
+		h.logf("relay sender=%s controller=%v paused=%v t=%.1f stopped=%v media=%d ep=%d -> %d follower(s)",
+			senderClientID, isController, p.Paused, p.CurrentTime, p.Stopped, p.MediaId, p.EpisodeNumber, len(targetIDs))
+	}
 
 	if immediate == nil || h.manager == nil || h.manager.wsEventManager == nil {
 		return
 	}
-	// Broadcast to ALL members (including the controller). The active controller ignores its
-	// own position client-side; a non-controller host reconciles to it.
-	for _, cid := range clientIDs {
+	for _, cid := range targetIDs {
 		h.manager.wsEventManager.SendEventTo(cid, events.NakamaRoomPlaybackSync, immediate, true)
 	}
 }
