@@ -25,6 +25,7 @@ jobs:
 
       - name: Build web interface
         run: |
+          export SEA_BUILD_VERSION=$(grep -oP 'Version\s*=\s*"\K[^"]+' internal/constants/constants.go | head -1)
           cd seanime-web
           npm install
           npm run build

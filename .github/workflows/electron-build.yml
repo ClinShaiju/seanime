@@ -36,6 +36,10 @@ jobs:
             id: 'seanime-denshi-windows-x64'
             go_binary_id: 'seanime-server-windows' # Artifact: go-seanime-server-windows (contains x86_64)
             electron_args: '--win --x64'
+            # Custom (codec-patched) Electron runtime. Asset lives on the
+            # `electron-runtime` release tag of this repo. Leave blank on a
+            # platform to use the stock Electron download instead.
+            custom_electron_asset: 'electron-dist-windows-x64.zip'
 
     runs-on: ${{ matrix.os }}
     outputs:
@@ -138,12 +142,35 @@ jobs:
       #          cp ./seanime-desktop/src-tauri/app-icon.png ./seanime-denshi/assets/
       #        shell: bash
 
+      # Fetch the custom (codec-patched) Electron runtime for platforms that have one.
+      # Upload it once per Electron version to the `electron-runtime` release tag:
+      #   gh release create electron-runtime --title "Electron runtime" --notes "" || true
+      #   gh release upload electron-runtime electron-dist-windows-x64.zip --clobber
+      # The zip must contain the unpacked Electron dist at its root (electron.exe, etc.).
+      - name: Download custom Electron runtime 🧩
+        id: custom-electron
+        if: matrix.custom_electron_asset != ''
+        run: |
+          mkdir -p custom-electron
+          gh release download electron-runtime --repo "${{ github.repository }}" \
+            --pattern "${{ matrix.custom_electron_asset }}" --output custom-electron.zip
+          unzip -q custom-electron.zip -d custom-electron
+          echo "dir=$(pwd)/custom-electron" >> "$GITHUB_OUTPUT"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # Install and build
       - name: Install and build 📦️
         run: |
           cd seanime-denshi
           npm install
-          npm run build -- ${{ matrix.electron_args }}
+          DIST_ARG=""
+          if [ -n "${{ steps.custom-electron.outputs.dir }}" ]; then
+            DIST_ARG="-c.electronDist=${{ steps.custom-electron.outputs.dir }}"
+            echo "Using custom Electron dist: $DIST_ARG"
+          fi
+          npm run build -- ${{ matrix.electron_args }} $DIST_ARG
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

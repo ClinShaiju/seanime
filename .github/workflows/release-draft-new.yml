@@ -29,6 +29,10 @@ jobs:
       # outputs in "seanime-web/out/" and "seanime-web/out-denshi/"
       - name: Install dependencies and build web app
         run: |
+          # Bake the server version into the bundle for the stale-tab "reload to
+          # update" popup (must match constants.Version).
+          export SEA_BUILD_VERSION=$(grep -oP 'Version\s*=\s*"\K[^"]+' internal/constants/constants.go | head -1)
+          echo "Building web with SEA_BUILD_VERSION=$SEA_BUILD_VERSION"
           cd seanime-web/
           npm install
           npm run build
