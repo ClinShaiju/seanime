@@ -97,7 +97,13 @@ func (s *AutoSelect) FindBestTorrent(
 	// 2. Filter & sort
 	s.log("Filtering and sorting candidates")
 	expectedSeason := s.ResolveExpectedSeason(media.GetID(), media.GetPossibleSeasonNumber())
-	torrents = s.filterAndSort(torrents, profile, expectedSeason, episodeNumber, postSearchSort)
+	mediaYear := 0
+	if sd := media.GetStartDate(); sd != nil {
+		if y := sd.GetYear(); y != nil {
+			mediaYear = *y
+		}
+	}
+	torrents = s.filterAndSort(torrents, profile, expectedSeason, episodeNumber, mediaYear, postSearchSort)
 
 	// 3. Select file (iterate top 3)
 	s.log("Selecting best file from top candidates")
@@ -112,6 +118,15 @@ func (s *AutoSelect) FindBestTorrent(
 // metadata is unavailable. titleSeason lets BaseAnime callers (the UI sort) reuse this without
 // a CompleteAnime. The metadata lookup is in-memory cached, so it's free for a viewed entry.
 func (s *AutoSelect) ResolveExpectedSeason(mediaId int, titleSeason int) int {
+	// Scene/Nyaa releases label by AniList cour ordinal (S04 = 4th cour), which the entry
+	// title/synonyms carry ("...Season 4"/"4th Season"). TMDB often lumps cours into one
+	// season (Honzuki: every part = TMDB S1) or hasn't mapped a brand-new cour yet (animap
+	// then defaults seasonNumber to 1), so the metadata season disagrees with what torrents
+	// declare. Trust the title for sequels; fall back to metadata only when the title has no
+	// number (subtitle-only sequels like Bunny Girl's "...Santa Claus no Yume" = S2).
+	if titleSeason >= 2 {
+		return titleSeason
+	}
 	if s.metadataProvider != nil {
 		if p := s.metadataProvider.Get(); p != nil {
 			if md, err := p.GetAnimeMetadata(metadata.AnilistPlatform, mediaId); err == nil && md != nil {

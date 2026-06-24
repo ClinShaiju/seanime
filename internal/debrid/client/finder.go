@@ -210,7 +210,13 @@ func (r *Repository) RankTorrentsForDisplay(
 	// Same season source as auto-select (metadata-derived, title fallback) so the UI "Auto"
 	// sort ranks sequels correctly — a subtitle-only S2 entry no longer floats S1 to the top.
 	expectedSeason := r.autoSelect.ResolveExpectedSeason(media.GetID(), media.GetPossibleSeasonNumber())
-	ordered = r.autoSelect.Rank(torrents, profile, expectedSeason, episodeNumber, postSearchSort)
+	mediaYear := 0
+	if sd := media.GetStartDate(); sd != nil {
+		if y := sd.GetYear(); y != nil {
+			mediaYear = *y
+		}
+	}
+	ordered = r.autoSelect.Rank(torrents, profile, expectedSeason, episodeNumber, mediaYear, postSearchSort)
 	return ordered, cachedHashes
 }
 

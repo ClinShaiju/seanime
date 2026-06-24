@@ -29,7 +29,7 @@ func TestLangFlag_SeaDexFormatterName(t *testing.T) {
 	t.Logf("LanguagesFromFlags(seadex) = %v", util.LanguagesFromFlags(seadexName))
 
 	s := &AutoSelect{}
-	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{{Name: seadexName}, {Name: emberName}}, 0, 0)
+	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{{Name: seadexName}, {Name: emberName}}, 0, 0, 0)
 	seadex, ember := cands[0], cands[1]
 	seadexScore := s.calculateScore(seadex, profile)
 	emberScore := s.calculateScore(ember, profile)
@@ -63,7 +63,7 @@ func TestPriority_RemuxWithinEnglish(t *testing.T) {
 	jpRemux := "Show 1080p BluRay REMUX HEVC Group " + jp
 
 	s := &AutoSelect{}
-	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{{Name: engRemux}, {Name: engNonRemux}, {Name: jpRemux}}, 0, 0)
+	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{{Name: engRemux}, {Name: engNonRemux}, {Name: jpRemux}}, 0, 0, 0)
 	er, enr, jr := s.calculateScore(cands[0], profile), s.calculateScore(cands[1], profile), s.calculateScore(cands[2], profile)
 	t.Logf("engRemux=%d engNonRemux=%d jpRemux=%d", er, enr, jr)
 

@@ -73,6 +73,7 @@ type candidate struct {
 	flagLanguages   []string // languages decoded from flag emoji in the raw name (aggregators)
 	expectedSeason  int      // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
 	expectedEpisode int      // Requested episode number, <=0 = unknown (skip episode scoring)
+	mediaYear       int      // Requested media's start year, 0 = unknown (skip year scoring)
 	priority        int
 	bonus          int
 	score          int
@@ -84,7 +85,7 @@ type TorrentWithCacheStatus struct {
 }
 
 // filterAndSort filters and sorts the torrents based on the profile or defaults.
-func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile, expectedSeason int, expectedEpisode int, postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus) []*hibiketorrent.AnimeTorrent {
+func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile, expectedSeason int, expectedEpisode int, mediaYear int, postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus) []*hibiketorrent.AnimeTorrent {
 	s.log("Filtering and sorting torrents")
 	s.logger.Debug().Int("count", len(torrents)).Msg("autoselect: Filtering and sorting torrents")
 
@@ -93,7 +94,7 @@ func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profi
 	}
 
 	// Optimize: Parse metadata once
-	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode)
+	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode, mediaYear)
 
 	// Filter
 	candidates = s.filterCandidates(candidates, profile)
@@ -122,7 +123,7 @@ func (s *AutoSelect) filterAndSort(torrents []*hibiketorrent.AnimeTorrent, profi
 }
 
 // buildCandidates parses metadata once for each torrent.
-func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int, expectedEpisode int) []*candidate {
+func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int, expectedEpisode int, mediaYear int) []*candidate {
 	candidates := make([]*candidate, len(torrents))
 	for i, t := range torrents {
 		candidates[i] = &candidate{
@@ -135,6 +136,7 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 			flagLanguages:   util.LanguagesFromFlags(t.Name),
 			expectedSeason:  expectedSeason,
 			expectedEpisode: expectedEpisode,
+			mediaYear:       mediaYear,
 		}
 	}
 	return candidates
@@ -200,13 +202,14 @@ func (s *AutoSelect) Rank(
 	profile *anime.AutoSelectProfile,
 	expectedSeason int,
 	expectedEpisode int,
+	mediaYear int,
 	postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus,
 ) []*hibiketorrent.AnimeTorrent {
 	if len(torrents) == 0 {
 		return torrents
 	}
 
-	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode)
+	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode, mediaYear)
 	s.sortCandidates(candidates, profile)
 
 	sorted := make([]*hibiketorrent.AnimeTorrent, len(candidates))
@@ -832,6 +835,23 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	// releases have no parsed episodes and are left untouched.
 	if c.expectedEpisode > 0 && !episodeCovered(parsed.EpisodeNumber, c.expectedEpisode) {
 		priority -= scoreEpisodeMismatch
+	}
+
+	// Wrong-cour guard: a release whose enclosed year is far from the entry's start year is a
+	// different cour, even when the season label is missing or numbered in a foreign convention
+	// (Honzuki "Adopted Daughter" airs 2026; the wrongly-picked "S02" batch is the 2020 Part 2).
+	// Convention-free, so it complements the season gate. ±1 tolerance covers post-air BD lag;
+	// releases with no parseable year are left untouched.
+	if c.mediaYear > 0 && parsed.Year != "" {
+		if ty, ok := util.StringToInt(parsed.Year); ok && ty > 0 {
+			diff := ty - c.mediaYear
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > 1 {
+				priority -= scoreSeasonMismatch
+			}
+		}
 	}
 
 	// Best release preference (prefer/avoid)
