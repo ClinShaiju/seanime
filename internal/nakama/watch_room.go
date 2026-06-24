@@ -100,6 +100,14 @@ type WatchRoom struct {
 	// i.e. whoever is actually driving right now (may be a granted member, not ControllerKey).
 	// The broadcast ticker excludes it so the driver isn't echoed its own position.
 	lastControllerClientID string
+	// lastDiscreteAt / lastDiscreteBy track the most recent GENUINE discrete action (who, when),
+	// used to reject echoes: when a follower applies a control action its player re-fires
+	// play/pause/seek, which the client re-emits — and MPV's delayed paused state can make that
+	// echo arrive INVERTED. A discrete action from a different client within echoDebounce of the
+	// last genuine change is treated as such an echo and dropped (so it can't flip state or steal
+	// control). Same-client rapid actions are kept (a real user mashing play/pause).
+	lastDiscreteAt time.Time
+	lastDiscreteBy string
 	// lastLiveAt is the last time the room had at least one connected client. The reaper closes
 	// a room that has had no live client for longer than roomIdleTTL, so a room whose members all
 	// vanish (tab close / network loss, no explicit leave) doesn't linger as a joinable ghost.
@@ -197,6 +205,13 @@ type WatchRoomHub struct {
 // broadcastTickMs is how often the server fans out each active room's authoritative position
 // to all members, so followers stay within ~1s of the controller during steady playback.
 const broadcastTickMs = 500
+
+// echo-rejection tuning. A discrete action that doesn't change the authoritative state (same
+// paused, position within echoPosTol, same media) is a no-op echo; and a discrete action from a
+// DIFFERENT client within echoDebounce of the last genuine change is the apply-echo of that change
+// (the follower's player re-firing play/pause/seek, possibly inverted on MPV) — both are dropped.
+const echoPosTol = 0.75
+const echoDebounce = 600 * time.Millisecond
 
 // roomIdleTTL is how long a room may have zero connected clients before the reaper closes it.
 // Generous enough to survive reconnects (tab reload, brief network loss) without dropping a room
@@ -589,6 +604,25 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	if p.Heartbeat && driverClientID != "" && senderClientID != driverClientID {
 		room.mu.Unlock()
 		return
+	}
+	// Echo rejection (discrete actions only): drop an action that doesn't actually change the
+	// authoritative state (no-op echo), or that comes from a DIFFERENT client right after a genuine
+	// change (the apply-echo — a follower's player re-firing the action, often INVERTED on MPV).
+	// This is what stops the play/pause oscillation, the inverted pause, and the control flapping.
+	if !p.Heartbeat && !p.Stopped {
+		posDelta := p.CurrentTime - room.currentPositionLocked()
+		if posDelta < 0 {
+			posDelta = -posDelta
+		}
+		sameMedia := room.CurrentMediaInfo != nil && room.CurrentMediaInfo.MediaId == p.MediaId && room.CurrentMediaInfo.EpisodeNumber == p.EpisodeNumber
+		noop := room.PlaybackActive && sameMedia && p.Paused == room.paused && posDelta <= echoPosTol
+		crossEcho := room.lastDiscreteBy != "" && senderClientID != room.lastDiscreteBy && time.Since(room.lastDiscreteAt) < echoDebounce
+		if noop || crossEcho {
+			room.mu.Unlock()
+			return
+		}
+		room.lastDiscreteAt = time.Now()
+		room.lastDiscreteBy = senderClientID
 	}
 	// Control handoff (shared-remote model): a DISCRETE action from a controlling member who is
 	// not the current controller hands control to them — everyone else, including the previous
