@@ -3,7 +3,8 @@ import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { useHandleCurrentMediaContinuity } from "@/api/hooks/continuity.hooks"
 import { useDirectstreamConvertSubs } from "@/api/hooks/directstream.hooks"
 import { useCancelDiscordActivity } from "@/api/hooks/discord.hooks"
-import { useNakamaWatchParty } from "@/app/(main)/_features/nakama/nakama-manager"
+import { currentWatchRoomAtom, useNakamaWatchParty } from "@/app/(main)/_features/nakama/nakama-manager"
+import { clientIdAtom } from "@/app/websocket-provider"
 import { nativePlayer_initialState, nativePlayer_stateAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
 import { type NormalizedSkipData } from "@/app/(main)/_features/video-core/_lib/aniskip.utils"
 import { vc_anime4kOption, VideoCoreAnime4K } from "@/app/(main)/_features/video-core/video-core-anime-4k"
@@ -781,6 +782,20 @@ export function VideoCore(props: VideoCoreProps) {
 
     const { isParticipant: isWatchPartyParticipant } = useNakamaWatchParty()
 
+    // In a watch ROOM, a follower (any member who isn't the active driver) must NOT restore
+    // its own continuity position — the room's position sync (heartbeat) drives it to the
+    // controller's spot instead. Restoring would fight that and flash the wrong frame.
+    const currentWatchRoom = useAtomValue(currentWatchRoomAtom)
+    const myWatchRoomClientId = useAtomValue(clientIdAtom)
+    const isWatchRoomFollower = useMemo(() => {
+        if (!currentWatchRoom?.participants || !currentWatchRoom.controllerKey) return false
+        const myEntry = Object.entries(currentWatchRoom.participants).find(([, p]) => p.clientId === myWatchRoomClientId)
+        if (!myEntry) return false
+        const [myKey, me] = myEntry
+        const amDriver = (!!me.isHost || !!me.canControl) && myKey === currentWatchRoom.controllerKey
+        return !amDriver
+    }, [currentWatchRoom, myWatchRoomClientId])
+
     const videoCompletedRef = useRef(false)
     const preloadFiredRef = useRef(false)
     const currentPlaybackRef = useRef<string | null>(null)
@@ -1544,6 +1559,8 @@ export function VideoCore(props: VideoCoreProps) {
 
             // Do nothing if the stream is not seekable
             if (isWatchPartyParticipant) return
+            // Watch-room followers let the room's position sync place them (no self-restore).
+            if (isWatchRoomFollower) return
 
             dispatchCanPlayEvent()
 

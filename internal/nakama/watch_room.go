@@ -106,6 +106,10 @@ type RoomPlaybackStatusPayload struct {
 	// Stopped marks the controller ending the episode (closing the player). Followers stop
 	// theirs too — the mirror of auto-start. When true the media fields are meaningless.
 	Stopped bool `json:"stopped,omitempty"`
+	// Heartbeat marks a periodic position broadcast from the controller (not a discrete
+	// play/pause/seek action). Followers use it to reconcile position (catch up on drift)
+	// using a looser threshold, so they stay in sync during continuous playback.
+	Heartbeat bool `json:"heartbeat,omitempty"`
 	// AudioTrack/SubtitleTrack are only set by the host when ForceHostTracks is on, so
 	// members can mirror the host's selection. nil otherwise (per-user tracks).
 	AudioTrack    *int `json:"audioTrack,omitempty"`
@@ -447,6 +451,13 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	if !allowed {
 		h.logf("dropping playback status from client %s (not allowed to control room %s)", senderClientID, p.RoomId)
 		return
+	}
+
+	// Diagnostic: log discrete actions (not the 2s heartbeats) so the sync conversation is
+	// visible in the server log — who sent what paused/position and how many followers got it.
+	if !p.Heartbeat {
+		h.logf("relay status sender=%s paused=%v t=%.1f stopped=%v media=%d ep=%d targets=%d",
+			senderClientID, p.Paused, p.CurrentTime, p.Stopped, p.MediaId, p.EpisodeNumber, len(targets))
 	}
 
 	// Snapshot the latest action so late joiners can catch up.

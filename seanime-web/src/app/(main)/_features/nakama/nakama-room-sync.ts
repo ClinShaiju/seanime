@@ -49,6 +49,8 @@ const SEEK_THRESHOLD = 0.75 // only seek when off by more than this (avoids jitt
 // so it's robust to a late event (buffering) without swallowing real input like a timer would.
 const APPLY_ECHO_WINDOW_MS = 2500
 const APPLY_ECHO_SEEK_TOL = 1.5
+const HEARTBEAT_MS = 2000 // how often the active driver re-broadcasts its position
+const HEARTBEAT_DRIFT = 2.0 // a follower only re-seeks on a heartbeat when off by more than this (avoids constant micro-jumps)
 
 export function useWatchRoomPlayerSync() {
     const room = useAtomValue(currentWatchRoomAtom)
@@ -109,9 +111,11 @@ export function useWatchRoomPlayerSync() {
 
     const maybeAutoStart = React.useCallback((p: RoomPlaybackSync) => {
         if (!p || p.stopped || !p.mediaId || !p.episodeNumber) return
-        // The controller drives — it must never follow its own action (would restart its
-        // own stream and hammer the CDN).
-        if (amController) return
+        // Only the ACTIVE DRIVER (can control AND is the controller) skips following — it
+        // started the stream itself. A member who merely got promoted to controllerKey but
+        // can't actually control (e.g. after a host blip) still has no stream, so it must
+        // follow; guarding on amController alone would wrongly freeze it out.
+        if (canControl && amController) return
         // Already playing/loading this exact media+episode? Let the position sync handle it.
         // Check the active player's TARGET (playbackInfo) — true even while the stream is still
         // loading/stalled, unlike lastProgress which needs playback to have progressed.
@@ -140,7 +144,7 @@ export function useWatchRoomPlayerSync() {
         } else {
             debridStart.handleAutoSelectStream(args)
         }
-    }, [amController, videoElement, lastProgress, playbackInfo, debridStart, torrentStart])
+    }, [canControl, amController, videoElement, lastProgress, playbackInfo, debridStart, torrentStart])
 
     // Late join / room state refresh: if the room already has a playback action, follow it.
     React.useEffect(() => {
@@ -174,6 +178,21 @@ export function useWatchRoomPlayerSync() {
         if (!videoElement || !room) return
         const player = videoElement
 
+        function buildPayload(heartbeat: boolean): RoomPlaybackSync {
+            return {
+                roomId: room!.id,
+                paused: player.paused,
+                currentTime: player.currentTime,
+                duration: isFinite(player.duration) ? player.duration : 0,
+                mediaId: lastProgress?.mediaId ?? 0,
+                episodeNumber: lastProgress?.progressNumber ?? 0,
+                // Source identity so a follower can start the SAME stream (debrid/torrent).
+                aniDbEpisode: playbackInfo?.episode?.aniDBEpisode ?? "",
+                streamType: nakamaStreamType(playbackInfo?.streamType),
+                heartbeat: heartbeat || undefined,
+            }
+        }
+
         function emit() {
             if (!canControl) return
             // Drop the echo of a state we were just told to be in. A genuine local action
@@ -186,17 +205,7 @@ export function useWatchRoomPlayerSync() {
                 return
             }
 
-            const payload: RoomPlaybackSync = {
-                roomId: room!.id,
-                paused: player.paused,
-                currentTime: player.currentTime,
-                duration: isFinite(player.duration) ? player.duration : 0,
-                mediaId: lastProgress?.mediaId ?? 0,
-                episodeNumber: lastProgress?.progressNumber ?? 0,
-                // Source identity so a follower can start the SAME stream (debrid/torrent).
-                aniDbEpisode: playbackInfo?.episode?.aniDBEpisode ?? "",
-                streamType: nakamaStreamType(playbackInfo?.streamType),
-            }
+            const payload = buildPayload(false)
 
             // When the host forces tracks, the host (and only the host) carries their
             // current audio/subtitle selection so members can mirror it.
@@ -213,13 +222,26 @@ export function useWatchRoomPlayerSync() {
         player.addEventListener("play", emit)
         player.addEventListener("pause", emit)
         player.addEventListener("seeked", emit)
+
+        // Heartbeat: the active driver broadcasts its position every couple seconds so
+        // followers reconcile drift and late/desynced players catch up — discrete play/pause/
+        // seek events alone never correct steady-playback drift. Tracks omitted (event-only).
+        let hb: ReturnType<typeof setInterval> | undefined
+        if (canControl && amController) {
+            hb = setInterval(() => {
+                if (!room) return
+                sendMessage({ type: WSEvents.NAKAMA_ROOM_PLAYBACK_STATUS, payload: buildPayload(true) })
+            }, HEARTBEAT_MS)
+        }
+
         return () => {
+            if (hb) clearInterval(hb)
             player.removeEventListener("play", emit)
             player.removeEventListener("pause", emit)
             player.removeEventListener("seeked", emit)
         }
-    }, [videoElement, room, canControl, amHost, forceHostTracks, lastProgress, audioManager, subtitleManager, mediaCaptionsManager,
-        playbackInfo, sendMessage])
+    }, [videoElement, room, canControl, amController, amHost, forceHostTracks, lastProgress, audioManager, subtitleManager,
+        mediaCaptionsManager, playbackInfo, sendMessage])
 
     // ---- Apply incoming sync ----
     useWebsocketMessageListener({
@@ -246,7 +268,10 @@ export function useWatchRoomPlayerSync() {
             // recognized as echoes and not re-broadcast (state-matched, robust to late events).
             lastAppliedRef.current = { paused: p.paused, currentTime: p.currentTime, at: Date.now() }
 
-            if (isFinite(p.currentTime) && Math.abs(videoElement.currentTime - p.currentTime) > SEEK_THRESHOLD) {
+            // Heartbeats only correct large drift (steady playback naturally wanders a little);
+            // discrete seeks apply precisely.
+            const seekThreshold = p.heartbeat ? HEARTBEAT_DRIFT : SEEK_THRESHOLD
+            if (isFinite(p.currentTime) && Math.abs(videoElement.currentTime - p.currentTime) > seekThreshold) {
                 videoElement.currentTime = p.currentTime
             }
             if (p.paused && !videoElement.paused) {
