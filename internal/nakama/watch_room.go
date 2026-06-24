@@ -572,6 +572,7 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	// driver may be a granted member, not ControllerKey).
 	room.lastControllerClientID = senderClientID
 	room.LastPlayback = p
+	prevActive := room.PlaybackActive
 	// Whether the room's advertised media (the discovery card) changed, so we can refresh the
 	// card list — but only on an actual start/episode change, never on every heartbeat.
 	cardMediaChanged := false
@@ -615,6 +616,7 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 		ctrl, ok := room.Participants[room.ControllerKey]
 		return ok && ctrl.ClientID == senderClientID
 	}()
+	playbackToggled := prevActive != room.PlaybackActive
 	room.mu.Unlock()
 
 	// The discovery cards surface mediaId/episode; refresh them when a room starts or switches
@@ -622,6 +624,15 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	// broadcastRoomsUpdated takes its own locks.
 	if cardMediaChanged {
 		h.broadcastRoomsUpdated()
+	}
+
+	// Push the full room state to members when playback STARTS, STOPS, or switches episode (not on
+	// every heartbeat). The in-room atom that drives the "Join room stream" button reads
+	// PlaybackActive/CurrentMediaInfo from this NakamaWatchRoomState push — without it a member who
+	// was present when the stream started never learns PlaybackActive flipped true, so the button
+	// only appears after a manual rejoin (which is the only other thing that broadcasts room state).
+	if cardMediaChanged || playbackToggled {
+		h.broadcastRoomState(room)
 	}
 
 	// Diagnostic: log discrete actions (not the periodic heartbeats) so the full sync

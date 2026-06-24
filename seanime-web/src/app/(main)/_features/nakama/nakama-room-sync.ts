@@ -98,6 +98,19 @@ export function useWatchRoomPlayerSync() {
     // drop the echo events the apply itself fires (state-matched, not a blind time window).
     const lastAppliedRef = React.useRef<{ paused: boolean, currentTime: number, at: number } | null>(null)
 
+    // DIAGNOSTIC (temporary): report the hook's view of the player whenever it changes, so we can
+    // see if/when this hook actually observes vc_videoElement become non-null during room playback
+    // (the server log shows when videocore mounts; this shows whether THIS hook sees it).
+    React.useEffect(() => {
+        if (!room) return
+        sendMessage({
+            type: WSEvents.NAKAMA_ROOM_DEBUG,
+            payload: `hook-state video=${!!videoElement} active=${playerActive} playingMedia=${playbackInfo?.media?.id ?? 0} `
+                + `canCtrl=${canControl} amCtrl=${amController}`,
+        })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [videoElement, playerActive, room?.id, canControl, amController])
+
     // ---- Follow the controller into the episode (auto-start) ----
     // The sync above only adjusts an EXISTING player. When the controller starts an episode
     // a follower isn't watching yet, the follower has no player to adjust — so we kick off
@@ -275,6 +288,18 @@ export function useWatchRoomPlayerSync() {
         deps: [videoElement, canControl, amController, forceHostTracks, audioManager, subtitleManager, mediaCaptionsManager, maybeAutoStart, requestTerminate],
         onMessage: (p: RoomPlaybackSync | null) => {
             if (!p) return
+
+            // DIAGNOSTIC (temporary): log the GATE state on every discrete sync, BEFORE the
+            // videoElement early-return — the regular "apply recv" line only fires AFTER that gate,
+            // so a follower whose videoElement is null is otherwise invisible. video:false here while
+            // the server shows videocore running = the hook isn't seeing the player's video element.
+            if (!p.heartbeat) {
+                sendMessage({
+                    type: WSEvents.NAKAMA_ROOM_DEBUG,
+                    payload: `recv-gate{video:${!!videoElement},active:${playerActive},canCtrl:${canControl},amCtrl:${amController},`
+                        + `playingMedia:${playbackInfo?.media?.id ?? 0}} p{paused:${p.paused},t:${(p.currentTime ?? 0).toFixed(1)},stop:${!!p.stopped}}`,
+                })
+            }
 
             // Controller ended the episode: stop ours too (mirror of auto-start). Guard the
             // emit side for the duration of our terminate (>700ms) so it doesn't echo back.
