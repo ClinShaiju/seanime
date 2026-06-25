@@ -242,13 +242,22 @@ export function useWatchRoomPlayerSync() {
         const player = videoElement
 
         function buildPayload(heartbeat: boolean): RoomPlaybackSync {
+            // Buffering hold: a driver whose player has STALLED (mid-rebuffer / seeking, not user-
+            // paused) must not keep anchoring the room to its frozen position with paused=false —
+            // that drags every follower backward once per heartbeat (the "constant pull-back": the
+            // driver sticks at t=250.9 while a follower plays to 251.5 and gets seek->250.9 every
+            // second). Report the stall as a transient pause so followers HOLD instead of rewind;
+            // when the buffer fills, paused flips back false and everyone resumes together. Only on
+            // the heartbeat — discrete play/pause/seek emits must carry the player's true state.
+            const stalled = heartbeat && !player.paused && (player.seeking || player.readyState < 3)
+            const effectivePaused = player.paused || stalled
             return {
                 roomId: room!.id,
-                paused: player.paused,
+                paused: effectivePaused,
                 // Lead by our own uplink latency while playing, so by the time this reaches the
                 // server and is fanned to followers (who add their own downlink) everyone lands on
-                // our true current frame. No lead while paused — position isn't advancing.
-                currentTime: player.currentTime + (player.paused ? 0 : getHalfRttSeconds()),
+                // our true current frame. No lead while paused/stalled — position isn't advancing.
+                currentTime: player.currentTime + (effectivePaused ? 0 : getHalfRttSeconds()),
                 duration: isFinite(player.duration) ? player.duration : 0,
                 // Prefer the global nativePlayer playbackInfo: lastProgress comes from
                 // vc_lastKnownProgress which (like vc_videoElement) is bridged from the scoped
@@ -354,10 +363,14 @@ export function useWatchRoomPlayerSync() {
             maybeAutoStart(p)
             if (!videoElement) return
 
-            // The active driver is the SOURCE of truth — it feeds the server and must not
-            // reconcile to its own echoed-back state (that would suppress its next emit and
-            // could yank its position).
-            if (canControl && amController) return
+            // NO local-controller guard here. The server already excludes the sender from every
+            // discrete relay AND excludes the live driver from the position ticker, so a sync only
+            // ever arrives from ANOTHER member who is the current driver — never our own echo.
+            // Gating on the local amController atom was the Issue-A bug: control handoff broadcasts
+            // room-state only ONCE (on the transition), so a missed/raced push left this client's
+            // amController stale-true after a peer took control, and it then ignored every sync from
+            // the new driver ("Tenji to Denshi did nothing"). Apply unconditionally; the source is
+            // guaranteed not to be us.
 
             // Record the state we're applying so the play/pause/seeked events it fires are
             // recognized as echoes and not re-broadcast (state-matched, robust to late events).
