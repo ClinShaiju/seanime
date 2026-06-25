@@ -67,6 +67,10 @@ const SYNC_DEADBAND = 0.08
 const HARD_SEEK_DRIFT = 0.6
 const NUDGE_GAIN = 0.12
 const NUDGE_MAX = 0.05
+// After a heartbeat-driven hard seek, suppress the next one this long and let the nudge converge —
+// a directstream follower (debrid/torrent http) resets its server connection on every seek, so
+// back-to-back seeks thrash the stream. ponytail: fixed cooldown, not adaptive to drift magnitude.
+const SEEK_COOLDOWN_MS = 2500
 
 export function useWatchRoomPlayerSync() {
     const room = useAtomValue(currentWatchRoomAtom)
@@ -112,6 +116,14 @@ export function useWatchRoomPlayerSync() {
     // The last play/pause/seek state we applied from the controller — used to recognize and
     // drop the echo events the apply itself fires (state-matched, not a blind time window).
     const lastAppliedRef = React.useRef<{ paused: boolean, currentTime: number, at: number } | null>(null)
+    // When this client follows via directstream (debrid/torrent http), the server serves ONE
+    // byte-range at a time and a SEEK cancels the in-flight range -> the server's write fails with
+    // "connection reset by peer" and the player rebuffers. A follower that hard-seeks on every
+    // heartbeat drift thus thrashes its own stream: seek -> reset -> rebuffer -> fall behind -> seek.
+    // So after a hard seek we hold off on the NEXT heartbeat-driven seek for a cooldown and let the
+    // playbackRate nudge close the gap instead, giving the directstream time to re-establish. A
+    // discrete (user-initiated) seek always applies — the user explicitly jumped.
+    const lastHardSeekRef = React.useRef(0)
 
     // DIAGNOSTIC (temporary): report the hook's view of the player whenever it changes, so we can
     // see if/when this hook actually observes vc_videoElement become non-null during room playback
@@ -388,12 +400,16 @@ export function useWatchRoomPlayerSync() {
                 if (ad > SEEK_THRESHOLD) {
                     action = `seek->${target.toFixed(1)}`
                     videoElement.currentTime = target
+                    lastHardSeekRef.current = Date.now() // a heartbeat right after must not re-seek
                 }
                 videoElement.playbackRate = 1 // a real action -> normal speed
-            } else if (ad > HARD_SEEK_DRIFT) {
+            } else if (ad > HARD_SEEK_DRIFT && (Date.now() - lastHardSeekRef.current) > SEEK_COOLDOWN_MS) {
+                // Big drift AND not within the post-seek cooldown: snap once, then nudge-only until the
+                // cooldown elapses (prevents the directstream reset->rebuffer->reseek churn on Denshi).
                 action = `seek->${target.toFixed(1)}`
                 videoElement.currentTime = target
                 videoElement.playbackRate = 1
+                lastHardSeekRef.current = Date.now()
             } else if (ad > SYNC_DEADBAND) {
                 const off = Math.max(-NUDGE_MAX, Math.min(NUDGE_MAX, drift * NUDGE_GAIN))
                 videoElement.playbackRate = 1 + off // glide toward the controller (no log: continuous)
