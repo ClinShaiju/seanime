@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.8.10
+
+### Same-instance watch rooms
+
+Synchronized playback (position + play/pause/seek) across your own clients — Denshi desktop and Tenji iOS — against a single server, each member in their own player.
+
+- ✨ Server-authoritative play/pause/seek sync with a shared debrid link, opt-in stream join, and "everyone can control" handoff
+- ✨ Per-room auto-skip voting and optional "force host tracks" (push the host's audio/subtitle selection to everyone)
+- ⚡️ Smooth convergence: followers glide into sync via playback-rate nudging instead of constant hard seeks
+- ⚡️ Network-latency compensation: each client leads by its measured half-RTT so everyone lands on the controller's true frame
+- 🦺 Buffering hold: a buffering controller no longer drags followers backward — everyone holds and resumes together
+- 🦺 Fixed control flapping, play/pause inversion, echo loops, and self-driven oscillation; faster heartbeat re-anchoring after a seek
+
+### Debrid streaming
+
+- ✨ Read-ahead prefetch for debrid/HTTP directstreams: the server now buffers ahead of the player into its cache, so streams ride through CDN dips and survive seeks instead of dropping the connection and re-pulling cold
+- ✨ Stream prewarm/preload: continue-watching prewarm, metadata-warm the next episode, shared prewarm DB, request rate-safety, and a UI "fire" badge marking warmed entries
+- 🦺 Fixed debrid race conditions and improved CDN throttling/back-off handling
+
+### Fixes
+
+- 🦺 Auto-select: season matching via title-number + year guard (e.g. Honzuki); franchise and event audit fixes
+- 🦺 Web: clearer stale-client "reload to update" prompt handling
+
 ## v3.8.7
 
 - ⚡️ VideoCore: Improved hls.js error handling
