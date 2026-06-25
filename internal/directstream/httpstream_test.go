@@ -8,9 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"seanime/internal/mkvparser"
 	"seanime/internal/nativeplayer"
@@ -99,7 +97,6 @@ func TestNakamaGetStreamHandlerPreservesHeadResponseToken(t *testing.T) {
 func TestNakamaGetStreamHandlerProxiesWithSharedRequestHeaders(t *testing.T) {
 	const token = "nakama-secret"
 	payload := []byte("abcdef")
-	var cdnGets int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, token, r.Header.Get("X-Seanime-Nakama-Token"))
 
@@ -109,20 +106,12 @@ func TestNakamaGetStreamHandlerProxiesWithSharedRequestHeaders(t *testing.T) {
 			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
-			atomic.AddInt32(&cdnGets, 1)
-			// The read-ahead prefetch issues an OPEN-ENDED range (bytes=N-) and fills the cache
-			// forward, decoupled from the client's specific range request.
-			start := 0
-			if rng := r.Header.Get("Range"); rng != "" {
-				s := strings.TrimSuffix(strings.TrimPrefix(rng, "bytes="), "-")
-				var err error
-				start, err = strconv.Atoi(s)
-				require.NoError(t, err)
-			}
+			require.Equal(t, "bytes=0-3", r.Header.Get("Range"))
 			w.Header().Set("Content-Type", "video/mp4")
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(payload)-1, len(payload)))
+			w.Header().Set("Content-Length", "4")
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-3/%d", len(payload)))
 			w.WriteHeader(http.StatusPartialContent)
-			_, _ = w.Write(payload[start:])
+			_, _ = w.Write(payload[:4])
 		default:
 			t.Fatalf("unexpected method: %s", r.Method)
 		}
@@ -135,31 +124,15 @@ func TestNakamaGetStreamHandlerProxiesWithSharedRequestHeaders(t *testing.T) {
 
 	require.Equal(t, "video/mp4", stream.LoadContentType())
 
-	// First request: a small range. The client is served from the cache the prefetch fills.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/directstream/stream", nil)
 	req.Header.Set("Range", "bytes=0-3")
 	rec := httptest.NewRecorder()
+
 	stream.GetStreamHandler().ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusPartialContent, rec.Code)
 	require.Equal(t, "abcd", rec.Body.String())
 	require.Equal(t, "video/mp4", rec.Header().Get("Content-Type"))
-
-	// Read-ahead: the single open-ended prefetch should have filled the WHOLE file into the cache.
-	// Wait for it, then a request for a later range must be served from cache WITHOUT a new CDN GET.
-	require.Eventually(t, func() bool {
-		return stream.httpStream != nil && stream.httpStream.IsRangeAvailable(4, 5)
-	}, 2*time.Second, 10*time.Millisecond, "prefetch should fill ahead of the requested range")
-
-	getsBefore := atomic.LoadInt32(&cdnGets)
-	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/directstream/stream", nil)
-	req2.Header.Set("Range", "bytes=4-5")
-	rec2 := httptest.NewRecorder()
-	stream.GetStreamHandler().ServeHTTP(rec2, req2)
-
-	require.Equal(t, http.StatusPartialContent, rec2.Code)
-	require.Equal(t, "ef", rec2.Body.String())
-	require.Equal(t, getsBefore, atomic.LoadInt32(&cdnGets), "later range should be served from cache, no new CDN GET")
 }
 
 func TestNakamaMetadataReaderCarriesHeadersAcrossRangeRequests(t *testing.T) {
