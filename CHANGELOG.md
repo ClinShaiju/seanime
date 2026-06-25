@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.8.11
+
+### Debrid streaming
+
+- 🦺 Fixed a regression in v3.8.10 where the always-on directstream read-ahead broke debrid playback (the player would load but never start, and audio/subtitle tracks failed to appear). The read-ahead is now **opt-in and off by default**, so v3.8.11 streams exactly like the known-good behavior unless you enable it.
+- ✨ Reworked read-ahead as a safe, single-connection design: it reuses the player's own CDN request (no extra connection), only engages on proper `206` range responses, and always falls back to direct streaming — so it can't corrupt offsets or starve the player. Enable with `SEANIME_DIRECTSTREAM_READAHEAD=1` to let streams ride through CDN dips.
+
 ## v3.8.10
 
 ### Same-instance watch rooms
