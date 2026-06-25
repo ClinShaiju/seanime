@@ -209,6 +209,43 @@ func (fs *FileStream) isRangeAvailable(start, end int64) bool {
 	return false
 }
 
+// IsRangeAvailable reports whether [start,end] is fully downloaded (exported; locks).
+func (fs *FileStream) IsRangeAvailable(start, end int64) bool {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.isRangeAvailable(start, end)
+}
+
+// ContiguousEnd returns the last byte of the downloaded piece covering offset, or offset-1 if the
+// offset isn't cached. Lets the prefetcher skip already-downloaded regions (e.g. after a backward
+// seek into watched territory) instead of re-pulling them from the CDN.
+func (fs *FileStream) ContiguousEnd(offset int64) int64 {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	for _, p := range fs.pieces {
+		if p.start <= offset && p.end >= offset {
+			return p.end
+		}
+	}
+	return offset - 1
+}
+
+// WriteCacheAt writes downloaded bytes into the cache file at offset WITHOUT teeing to any client —
+// used by the read-ahead prefetcher to fill ahead of the player. Updates the piece map so blocked
+// readers wake. (WriteAndFlush remains for the live-tee path; this is the cache-only half.)
+func (fs *FileStream) WriteCacheAt(p []byte, offset int64) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.closed {
+		return io.ErrClosedPipe
+	}
+	if _, err := fs.file.WriteAt(p, offset); err != nil {
+		return err
+	}
+	fs.updatePieces(offset, offset+int64(len(p))-1)
+	return nil
+}
+
 // NewReader creates a new FileStreamReader for concurrent reading
 func (fs *FileStream) NewReader() (FileStreamReader, error) {
 	fs.mu.Lock()
@@ -219,9 +256,10 @@ func (fs *FileStream) NewReader() (FileStreamReader, error) {
 	}
 
 	reader := &fileStreamReader{
-		fs:     fs,
-		file:   fs.file,
-		offset: 0,
+		fs:      fs,
+		file:    fs.file,
+		offset:  0,
+		closeCh: make(chan struct{}),
 	}
 
 	fs.readersMu.Lock()
@@ -266,11 +304,12 @@ func (fs *FileStream) Length() int64 {
 
 // fileStreamReader implements FileStreamReader interface
 type fileStreamReader struct {
-	fs     *FileStream
-	file   *os.File
-	offset int64
-	closed bool
-	mu     sync.Mutex
+	fs      *FileStream
+	file    *os.File
+	offset  int64
+	closed  bool
+	closeCh chan struct{} // closed by Close() to wake a Read blocked waiting for pieces
+	mu      sync.Mutex
 }
 
 // Read reads data from the file stream, blocking if data is not yet available
@@ -297,6 +336,8 @@ func (r *fileStreamReader) Read(p []byte) (int, error) {
 		select {
 		case <-r.fs.ctx.Done():
 			return 0, r.fs.ctx.Err()
+		case <-r.closeCh:
+			return 0, io.ErrClosedPipe
 		default:
 		}
 
@@ -364,6 +405,9 @@ func (r *fileStreamReader) Read(p []byte) (int, error) {
 		case <-r.fs.ctx.Done():
 			r.mu.Lock()
 			return 0, r.fs.ctx.Err()
+		case <-r.closeCh:
+			r.mu.Lock()
+			return 0, io.ErrClosedPipe
 		case <-time.After(10 * time.Millisecond):
 			r.mu.Lock()
 		}
@@ -409,6 +453,7 @@ func (r *fileStreamReader) Close() error {
 	}
 
 	r.closed = true
+	close(r.closeCh) // wake a Read blocked waiting for pieces
 
 	r.fs.readersMu.Lock()
 	for i, reader := range r.fs.readers {

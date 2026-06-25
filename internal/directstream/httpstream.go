@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,17 @@ type httpBaseStream struct {
 	headResponseHeaders http.Header
 	httpStream          *httputil.FileStream // Shared file-backed cache for multiple readers
 	cacheMu             sync.RWMutex         // Protects httpStream access
+
+	// Read-ahead prefetch (see httpstream_prefetch.go). A single CDN->cache fill goroutine per stream
+	// runs ahead of the player into httpStream's cache, DECOUPLED from any client request — so a seek
+	// (which cancels the client request) no longer aborts the download, and a CDN dip is absorbed by
+	// the buffered-ahead window instead of stalling the player. The client is served from the cache.
+	fillMu     sync.Mutex
+	fillActive bool               // a fill goroutine is running
+	fillFrom   int64              // offset the current fill started at
+	fillOff    atomic.Int64       // offset the current fill has written up to
+	serveOff   atomic.Int64       // furthest byte the player has consumed (drives the ahead window)
+	fillCancel context.CancelFunc // cancels the current fill (reposition / Close)
 }
 
 var videoProxyClient = &http.Client{
@@ -87,23 +99,6 @@ func cdnRetryWait(ctx context.Context, attempt int, retryAfter string) bool {
 	}
 }
 
-// Headers that should not be forwarded to the CDN
-var proxyHopHeaders = map[string]bool{
-	"Host":                true,
-	"Accept":              true,
-	"Accept-Encoding":     true,
-	"Range":               true,
-	"Connection":          true,
-	"Proxy-Connection":    true,
-	"Keep-Alive":          true,
-	"Proxy-Authenticate":  true,
-	"Proxy-Authorization": true,
-	"Te":                  true,
-	"Trailer":             true,
-	"Transfer-Encoding":   true,
-	"Upgrade":             true,
-}
-
 func (s *httpBaseStream) applyReqHeaders(dst http.Header) {
 	overrideHeaders(dst, s.requestHeaders)
 }
@@ -144,6 +139,15 @@ func (s *httpBaseStream) LoadContentType() string {
 
 // Close cleans up the HTTP cache and other resources
 func (s *httpBaseStream) Close() error {
+	// Stop the read-ahead prefetch first so it can't write into a cache we're about to close.
+	s.fillMu.Lock()
+	if s.fillCancel != nil {
+		s.fillCancel()
+		s.fillCancel = nil
+	}
+	s.fillActive = false
+	s.fillMu.Unlock()
+
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 
@@ -284,8 +288,6 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 			return
 		}
 
-		rangeHeader := r.Header.Get("Range")
-
 		if err := s.initializeStream(); err != nil {
 			s.logger.Error().Err(err).Msg("directstream(http): Failed to initialize FileStream")
 			http.Error(w, "Failed to initialize FileStream", http.StatusInternalServerError)
@@ -314,6 +316,11 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 			return
 		}
 
+		// Start (or reposition) the read-ahead prefetch for this position. It fills the cache forward
+		// from ra.Start decoupled from this request — both the video response below AND the subtitle
+		// goroutine read from that cache. A seek cancels only this request, not the prefetch.
+		s.ensureFill(ra.Start)
+
 		if _, ok := s.playbackInfo.MkvMetadataParser.Get(); ok {
 			subReader, err := s.getReader()
 			if err != nil {
@@ -329,86 +336,11 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 			}
 		}
 
-		// Fetch the CDN range, retrying transient throttling (429) / gateway errors with
-		// capped backoff. The server re-pulls ranges as the user watches, so without this a
-		// single momentary CDN rate-limit would fail the whole stream mid-episode.
-		var resp *http.Response
-		for attempt := 0; ; attempt++ {
-			// Use the client's request context so the CDN request is cancelled when the client disconnects
-			req, reqErr := http.NewRequestWithContext(r.Context(), http.MethodGet, s.streamUrl, nil)
-			if reqErr != nil {
-				http.Error(w, "Failed to create request", http.StatusInternalServerError)
-				return
-			}
-
-			req.Header.Set("Accept", "*/*")
-			req.Header.Set("Range", rangeHeader)
-
-			// Only forward safe headers to avoid conflicts with the CDN
-			for key, values := range r.Header {
-				if proxyHopHeaders[http.CanonicalHeaderKey(key)] {
-					continue
-				}
-				for _, value := range values {
-					req.Header.Add(key, value)
-				}
-			}
-			s.applyReqHeaders(req.Header)
-
-			var doErr error
-			resp, doErr = videoProxyClient.Do(req)
-
-			// Success or a permanent non-2xx (handled just below) → stop retrying.
-			if doErr == nil && !isCDNTransientStatus(resp.StatusCode) {
-				break
-			}
-
-			status, retryAfter := 0, ""
-			if doErr == nil {
-				status = resp.StatusCode
-				retryAfter = resp.Header.Get("Retry-After")
-				resp.Body.Close()
-			}
-
-			// Give up if retries are exhausted or the client has disconnected.
-			if attempt >= maxCDNRetries-1 || r.Context().Err() != nil {
-				if doErr != nil {
-					s.logger.Error().Err(doErr).Str("range", rangeHeader).Msg("directstream(http): CDN proxy request failed")
-					http.Error(w, "Failed to proxy request", http.StatusBadGateway)
-				} else {
-					s.logger.Error().Int("status", status).Int("attempts", attempt+1).Str("range", rangeHeader).Msg("directstream(http): CDN throttled, retries exhausted")
-					http.Error(w, fmt.Sprintf("CDN error: %d", status), status)
-				}
-				return
-			}
-
-			s.logger.Warn().Int("status", status).Int("attempt", attempt+1).Str("range", rangeHeader).Msg("directstream(http): CDN throttled, backing off")
-			if !cdnRetryWait(r.Context(), attempt, retryAfter) {
-				return // client disconnected during backoff
-			}
-		}
-		defer resp.Body.Close()
-
-		// Reject permanent non-2xx CDN responses to avoid corrupting the file cache
-		if resp.StatusCode >= 300 {
-			s.logger.Error().Int("status", resp.StatusCode).Str("range", rangeHeader).Msg("directstream(http): CDN returned non-2xx status")
-			http.Error(w, fmt.Sprintf("CDN error: %d", resp.StatusCode), resp.StatusCode)
-			return
-		}
-
-		// Copy response headers
-		for key, values := range resp.Header {
-			for _, value := range values {
-				w.Header().Set(key, value)
-			}
-		}
-
-		w.Header().Set("Content-Type", s.LoadContentType()) // overwrite the type
-		w.WriteHeader(resp.StatusCode)
-
-		if err := s.httpStream.WriteAndFlush(resp.Body, w, ra.Start); err != nil {
-			s.logger.Warn().Err(err).Str("range", rangeHeader).Msg("directstream(http): WriteAndFlush error")
-		}
+		// Serve this range from the cache the prefetcher is filling. The cache reader blocks until the
+		// prefetch has the bytes, so the player is fed from a buffered-ahead window: a CDN dip drains
+		// the window instead of stalling playback, and a seek cancels only this read (the prefetch is
+		// repositioned by ensureFill above), never the underlying download.
+		s.serveFromCache(w, r.Context(), reader, ra)
 	})
 }
 
