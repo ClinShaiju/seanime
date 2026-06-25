@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,13 @@ type httpBaseStream struct {
 	headResponseHeaders http.Header
 	httpStream          *httputil.FileStream // Shared file-backed cache for multiple readers
 	cacheMu             sync.RWMutex         // Protects httpStream access
+
+	// Read-ahead window bookkeeping (opt-in path, see httpstream_readahead.go). fillOff = how far the
+	// producer has written into the cache; serveOff = how far the player has consumed. The producer
+	// pauses when it gets readAheadWindowBytes ahead of serveOff. Per-stream (one active main request
+	// at a time); reset at the start of each buffered serve.
+	fillOff  atomic.Int64
+	serveOff atomic.Int64
 }
 
 var videoProxyClient = &http.Client{
@@ -393,6 +401,14 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 		if resp.StatusCode >= 300 {
 			s.logger.Error().Int("status", resp.StatusCode).Str("range", rangeHeader).Msg("directstream(http): CDN returned non-2xx status")
 			http.Error(w, fmt.Sprintf("CDN error: %d", resp.StatusCode), resp.StatusCode)
+			return
+		}
+
+		// Opt-in read-ahead (SEANIME_DIRECTSTREAM_READAHEAD=1): serve from the cache while a producer
+		// fills it ahead of the player from THIS same CDN response — one connection, the cache rides
+		// CDN dips. Default OFF → the proven live-tee path below, byte-for-byte unchanged.
+		if readAheadEnabled() && resp.StatusCode == http.StatusPartialContent {
+			s.serveReadAhead(w, r, reader, resp, ra, rangeHeader)
 			return
 		}
 

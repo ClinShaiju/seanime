@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"seanime/internal/mkvparser"
 	"seanime/internal/nativeplayer"
@@ -133,6 +134,55 @@ func TestNakamaGetStreamHandlerProxiesWithSharedRequestHeaders(t *testing.T) {
 	require.Equal(t, http.StatusPartialContent, rec.Code)
 	require.Equal(t, "abcd", rec.Body.String())
 	require.Equal(t, "video/mp4", rec.Header().Get("Content-Type"))
+}
+
+func TestNakamaReadAheadServesFromCacheAndFillsAhead(t *testing.T) {
+	// Force the opt-in read-ahead path on for this test (bypassing the env-gated sync.Once).
+	readAheadOnce.Do(func() {})
+	readAheadOn = true
+	defer func() { readAheadOn = false }()
+
+	const token = "nakama-secret"
+	payload := []byte("abcdef")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, token, r.Header.Get("X-Seanime-Nakama-Token"))
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// Open-ended range from N → 206 with payload[N:]. The producer fills the cache from this body.
+		start := 0
+		if rng := r.Header.Get("Range"); rng != "" {
+			s := strings.TrimSuffix(strings.TrimPrefix(rng, "bytes="), "-")
+			var err error
+			start, err = strconv.Atoi(s)
+			require.NoError(t, err)
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(payload)-1, len(payload)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(payload[start:])
+	}))
+	defer server.Close()
+
+	manager := newHTTPStreamTestManager()
+	stream := newTestNakamaStream(manager, server.URL+"/video.mp4", token)
+	stream.playbackInfo = &nativeplayer.PlaybackInfo{MkvMetadataParser: mo.None[*mkvparser.MetadataParser]()}
+	require.Equal(t, "video/mp4", stream.LoadContentType())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/directstream/stream", nil)
+	req.Header.Set("Range", "bytes=0-")
+	rec := httptest.NewRecorder()
+	stream.GetStreamHandler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusPartialContent, rec.Code)
+	require.Equal(t, "abcdef", rec.Body.String(), "client is served the full range from the cache")
+	// The producer filled the cache (read-ahead infrastructure) while serving.
+	require.Eventually(t, func() bool {
+		return stream.httpStream != nil && stream.httpStream.IsRangeAvailable(0, int64(len(payload)-1))
+	}, 2*time.Second, 10*time.Millisecond, "producer should fill the cache")
 }
 
 func TestNakamaMetadataReaderCarriesHeadersAcrossRangeRequests(t *testing.T) {
