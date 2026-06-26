@@ -231,8 +231,11 @@ export function useWatchRoomPlayerSync() {
         // Open failed/aborted before showing any video => not a user close. Don't opt out (so
         // auto-follow can recover and the Join button still works), don't emit a stop.
         if (!hadVideo) return
-        if (canControl && amController) {
-            // The driver closed the episode => stop for everyone (mirror of auto-start).
+        if (amHost) {
+            // Only the HOST closing stops the episode for everyone (mirror of auto-start). A non-host
+            // closing — even one currently driving — just opts itself out below; the rest of the room
+            // keeps watching. (Previously the active driver stopped everyone, so a non-host controller
+            // closing tore down the host's stream.)
             sendMessage({
                 type: WSEvents.NAKAMA_ROOM_PLAYBACK_STATUS,
                 payload: {
@@ -403,13 +406,21 @@ export function useWatchRoomPlayerSync() {
                     lastHardSeekRef.current = Date.now() // a heartbeat right after must not re-seek
                 }
                 videoElement.playbackRate = 1 // a real action -> normal speed
-            } else if (ad > HARD_SEEK_DRIFT && (Date.now() - lastHardSeekRef.current) > SEEK_COOLDOWN_MS) {
-                // Big drift AND not within the post-seek cooldown: snap once, then nudge-only until the
-                // cooldown elapses (prevents the directstream reset->rebuffer->reseek churn on Denshi).
+            } else if (drift > HARD_SEEK_DRIFT && (Date.now() - lastHardSeekRef.current) > SEEK_COOLDOWN_MS) {
+                // We fell BEHIND the driver -> snap forward once, then nudge-only until the cooldown
+                // elapses (prevents the directstream reset->rebuffer->reseek churn on Denshi).
                 action = `seek->${target.toFixed(1)}`
                 videoElement.currentTime = target
                 videoElement.playbackRate = 1
                 lastHardSeekRef.current = Date.now()
+            } else if (drift < -HARD_SEEK_DRIFT) {
+                // The driver is far BEHIND us: it's frozen/rebuffering but still heartbeating
+                // paused:false (the iOS "stopped playback" case). NEVER rewind the room to a stalled
+                // driver — that's the rubber-band (driver stuck at 675.6 yanks every follower back
+                // once per heartbeat). Keep playing at normal speed; we resync if it catches up. A
+                // deliberate controller rewind arrives as a DISCRETE seek (not a heartbeat) and still
+                // snaps both ways above.
+                if (videoElement.playbackRate !== 1) videoElement.playbackRate = 1
             } else if (ad > SYNC_DEADBAND) {
                 const off = Math.max(-NUDGE_MAX, Math.min(NUDGE_MAX, drift * NUDGE_GAIN))
                 videoElement.playbackRate = 1 + off // glide toward the controller (no log: continuous)

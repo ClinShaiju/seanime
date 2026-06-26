@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## v3.8.11
+## v3.8.12
+
+### Same-instance watch rooms
+
+- 🦺 Fixed the "rubber-band": a follower no longer rewinds to a controller that's frozen/buffering but still reporting itself as playing (the iOS "stopped playback" case). Heartbeats now only snap a follower *forward* when it falls behind; a driver that's stalled behind you is ignored so you keep playing. Deliberate controller seeks still snap both ways. Also clears the stuck `0.95x` slow-motion a follower fell into while nudging toward an absent driver.
+- 🦺 Only the **host** closing the player now stops the episode for everyone. A non-host closing — even one currently driving — just leaves; the rest of the room keeps watching. (Server-side guard drops a stop from any non-host.)
+
+### Tenji (iOS)
+
+- 🦺 Fixed watch-progress not saving on close: the on-close continuity flush used a stale first-render closure and silently no-op'd, so the resume position was lost and short watches never reached Continue Watching. Resume now saves reliably, on a tighter cadence.
 
 ### Debrid streaming
 

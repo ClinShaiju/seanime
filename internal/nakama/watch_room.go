@@ -604,6 +604,14 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	if ctrl, ok := room.Participants[room.ControllerKey]; ok {
 		driverClientID = ctrl.ClientID
 	}
+	// Only the HOST may stop the room for everyone. A non-host closing their player must not tear
+	// down the host's (or anyone else's) stream — that's a local opt-out, handled client-side. Drop
+	// a stop from a non-host (defense-in-depth; the clients are also fixed to only emit a stop when
+	// the host closes).
+	if p.Stopped && senderKey != room.HostKey {
+		room.mu.Unlock()
+		return
+	}
 	// Heartbeat arbitration: only the CURRENT driver's heartbeat may move the authoritative
 	// state. With shared control ("everyone can control") a non-driving controller is following;
 	// its heartbeat reports its own (followed/echoed) position and must not yank the room away
