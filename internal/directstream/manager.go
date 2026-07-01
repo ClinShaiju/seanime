@@ -158,7 +158,11 @@ func (m *Manager) PrewarmStreamMetadata(streamUrl string) {
 		return
 	}
 	parser := mkvparser.NewMetadataParser(reader, m.Logger)
-	md := parser.GetMetadata(context.Background())
+	// Bounded like the play-time parse — a stalled CDN read must not hang the prewarm
+	// goroutine (and its gate slot) forever.
+	prewarmCtx, cancelPrewarm := context.WithTimeout(context.Background(), metadataParseTimeout)
+	md := parser.GetMetadata(prewarmCtx)
+	cancelPrewarm()
 	_ = reader.Close() // metadata (incl. attachment bytes) is now in RAM; mirrors loadPlaybackInfo
 	// A real video file always has ≥1 track; 0 tracks means a garbage/short parse — never
 	// cache it, or every replay reuses the poisoned (track-less) parser until the TTL.
@@ -201,6 +205,11 @@ const (
 	warmMaxBytes      = 48 * 1024 * 1024
 	warmFallbackBytes = 16 * 1024 * 1024
 )
+
+// metadataParseTimeout bounds a single MKV metadata parse (incl. font-attachment downloads).
+// A CDN that stalls mid-body (without erroring) would otherwise hang GetMetadata — and with it
+// the "watch" handshake — indefinitely. Generous: normal parses finish in a few seconds.
+const metadataParseTimeout = 45 * time.Second
 
 // metadataCacheTTL bounds how long a URL-keyed MKV parser / HEAD result is cached. Metadata is
 // immutable for a given stream URL and a TorBox link stays valid ~3h, so cache for ~the link

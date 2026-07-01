@@ -21,25 +21,12 @@ func TestUpdater_getReleaseName(t *testing.T) {
 func TestUpdater_FetchLatestRelease(t *testing.T) {
 	fixture := newUpdaterTestFixture(t)
 
-	websiteUrl = fixture.deadAPIURL
-
 	updater := fixture.newUpdater(constants.Version, events.NewMockWSEventManager(util.NewLogger()))
 	release, err := updater.fetchLatestRelease("github")
 	require.NoError(t, err)
 	require.NotNil(t, release)
 	assert.Equal(t, fixture.release.TagName, release.TagName)
 	assert.Len(t, release.Assets, len(fixture.release.Assets))
-}
-
-func TestUpdater_FetchLatestReleaseFromApi(t *testing.T) {
-	fixture := newUpdaterTestFixture(t)
-
-	updater := fixture.newUpdater(constants.Version, events.NewMockWSEventManager(util.NewLogger()))
-	release, err := updater.fetchLatestReleaseFromApi(seanimeStableUrl)
-	require.NoError(t, err)
-	require.NotNil(t, release)
-	assert.Equal(t, "v3.5.2", release.TagName)
-	assert.Len(t, release.Assets, 2)
 }
 
 func TestUpdater_FetchLatestReleaseFromGitHub(t *testing.T) {
@@ -129,12 +116,6 @@ func TestUpdater(t *testing.T) {
 	assert.True(t, isOlder)
 	assert.True(t, shouldUpdate)
 	assert.Equal(t, -3, updateTypeI)
-}
-
-func TestUpdater_FetchLatestReleaseFromApiRejectsInsecureURL(t *testing.T) {
-	updater := New(constants.Version, util.NewLogger(), events.NewMockWSEventManager(util.NewLogger()))
-	_, err := updater.fetchLatestReleaseFromApi("http://example.com/release.json")
-	require.ErrorIs(t, err, ErrInsecureUpdateURL)
 }
 
 func TestUpdater_FetchLatestReleaseFromGitHubRejectsInsecureURL(t *testing.T) {

@@ -272,11 +272,17 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 			s.logger.Trace().Msgf("directstream(http): Loading metadata for stream url: %s", s.streamUrl)
 
 			parser := mkvparser.NewMetadataParser(reader, s.logger)
-			metadataCtx := s.manager.playbackCtx
-			if metadataCtx == nil {
-				metadataCtx = context.Background()
+			baseCtx := s.manager.playbackCtx
+			if baseCtx == nil {
+				baseCtx = context.Background()
 			}
+			// Bound the parse: a CDN that STALLS mid-body (not erroring) would otherwise hang
+			// GetMetadata forever — "watch" never fires and the player sits on "Loading
+			// metadata…" indefinitely. Generous bound: a normal parse (incl. font downloads
+			// over the chunked reader) finishes in a few seconds.
+			metadataCtx, cancelMetadata := context.WithTimeout(baseCtx, metadataParseTimeout)
 			metadata := parser.GetMetadata(metadataCtx)
+			cancelMetadata()
 			if metadata.Error != nil {
 				err = fmt.Errorf("failed to get metadata: %w", metadata.Error)
 				s.logger.Error().Err(metadata.Error).Msg("directstream(http): Failed to get metadata")

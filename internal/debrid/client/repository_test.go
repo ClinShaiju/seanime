@@ -85,6 +85,7 @@ func TestAddAndQueueTorrentUsesHookOverrideAndQueuesItem(t *testing.T) {
 
 	addCalls := 0
 	repo := &Repository{
+		queuedDownloadFailures: result.NewMap[string, int](),
 		provider: mo.Some[debrid.Provider](&fakeDebridProvider{addTorrent: func(opts debrid.AddTorrentOptions) (string, error) {
 			addCalls++
 			return "provider-id", nil
@@ -139,8 +140,9 @@ func TestDownloadLifecycleHooksTrigger(t *testing.T) {
 	logger := util.NewLogger()
 	ws := events.NewMockWSEventManager(logger)
 	repo := &Repository{
-		logger:         logger,
-		wsEventManager: ws,
+		queuedDownloadFailures: result.NewMap[string, int](),
+		logger:                 logger,
+		wsEventManager:         ws,
 	}
 
 	oldManager := hook.GlobalHookManager
@@ -194,6 +196,7 @@ func TestDownlaoded_KeepItemOnDownloadUrlFailure(t *testing.T) {
 	}))
 
 	repo := &Repository{
+		queuedDownloadFailures: result.NewMap[string, int](),
 		provider: mo.Some[debrid.Provider](&fakeDebridProvider{
 			getTorrent: func(id string) (*debrid.TorrentItem, error) {
 				return &debrid.TorrentItem{ID: id, Name: "test", Hash: "ABC", IsReady: true}, nil
@@ -248,6 +251,7 @@ func TestDownload_removeItemAfterDownloadCompletes(t *testing.T) {
 	}))
 
 	repo := &Repository{
+		queuedDownloadFailures: result.NewMap[string, int](),
 		provider: mo.Some[debrid.Provider](&fakeDebridProvider{
 			getTorrent: func(id string) (*debrid.TorrentItem, error) {
 				return &debrid.TorrentItem{ID: id, Name: "test", Hash: "ABC", IsReady: true}, nil
@@ -308,6 +312,7 @@ func TestDownloadedItemsAreRemovedFromQueue(t *testing.T) {
 	}))
 
 	repo := &Repository{
+		queuedDownloadFailures: result.NewMap[string, int](),
 		provider: mo.Some[debrid.Provider](&fakeDebridProvider{
 			getTorrent: func(id string) (*debrid.TorrentItem, error) {
 				return &debrid.TorrentItem{ID: id, Name: "test", Hash: "ABC", IsReady: true}, nil

@@ -63,18 +63,8 @@ func newUpdaterTestFixture(t *testing.T) *updaterTestFixture {
 		},
 	}
 
-	mux.HandleFunc("/api/release", func(w http.ResponseWriter, r *http.Request) {
-		writeTestJSON(t, w, DocsResponse{Release: *release})
-	})
-	mux.HandleFunc("/api/updates/stable/stable_server.json", func(w http.ResponseWriter, r *http.Request) {
-		writeTestJSON(t, w, DocsResponse{Release: *release})
-	})
-	mux.HandleFunc("/api/updates/nightly/nightly_server.json", func(w http.ResponseWriter, r *http.Request) {
-		writeTestJSON(t, w, DocsResponse{Release: *release})
-	})
-	mux.HandleFunc("/api/github-status", func(w http.ResponseWriter, r *http.Request) {
-		writeTestJSON(t, w, map[string]string{"status": "up"})
-	})
+	// Fork: only the GitHub releases endpoint exists — the upstream seanime.app channels
+	// (website/stable/nightly/github-status) and their DocsResponse type were removed.
 	mux.HandleFunc("/api/404", func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	})
@@ -142,24 +132,12 @@ func (f *updaterTestFixture) newUpdater(currVersion string, wsEventManager event
 func (f *updaterTestFixture) apply(t *testing.T) {
 	t.Helper()
 
-	oldWebsiteURL := websiteUrl
+	// Fork: every channel resolves to the fork's GitHub releases — the upstream seanime.app
+	// URL vars (website/stable/nightly/github-status) no longer exist.
 	oldFallbackGithubURL := fallbackGithubUrl
-	oldGithubCheckURL := githubCheckUrl
-	oldSeanimeStableURL := seanimeStableUrl
-	oldSeanimeNightlyURL := seanimeNightlyUrl
-
-	websiteUrl = f.server.URL + "/api/release"
 	fallbackGithubUrl = f.server.URL + "/github/releases/latest"
-	githubCheckUrl = f.server.URL + "/api/github-status"
-	seanimeStableUrl = f.server.URL + "/api/updates/stable/stable_server.json"
-	seanimeNightlyUrl = f.server.URL + "/api/updates/nightly/nightly_server.json"
-
 	t.Cleanup(func() {
-		websiteUrl = oldWebsiteURL
 		fallbackGithubUrl = oldFallbackGithubURL
-		githubCheckUrl = oldGithubCheckURL
-		seanimeStableUrl = oldSeanimeStableURL
-		seanimeNightlyUrl = oldSeanimeNightlyURL
 	})
 }
 

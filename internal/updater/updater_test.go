@@ -9,7 +9,6 @@ import (
 
 func TestUpdater_GetLatestUpdateShouldFallback(t *testing.T) {
 	fixture := newUpdaterTestFixture(t)
-	websiteUrl = fixture.deadAPIURL
 
 	u := fixture.newUpdater("2.0.2", nil)
 	// update channel is "github"

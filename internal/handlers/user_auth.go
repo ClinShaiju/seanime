@@ -7,9 +7,53 @@ import (
 	"seanime/internal/database/models"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
+
+// loginThrottle is a small in-memory brute-force gate for /user/login: after
+// loginMaxFailures consecutive failures for a username, further attempts are rejected for
+// loginLockout. bcrypt alone only slows a single-threaded guesser; this bounds parallel ones.
+// Success clears the counter. Keyed by username (not IP — the server sits behind a proxy).
+var loginThrottle = struct {
+	sync.Mutex
+	failures map[string]int
+	lockedAt map[string]time.Time
+}{failures: map[string]int{}, lockedAt: map[string]time.Time{}}
+
+const (
+	loginMaxFailures = 5
+	loginLockout     = 30 * time.Second
+)
+
+func loginThrottleCheck(username string) bool {
+	loginThrottle.Lock()
+	defer loginThrottle.Unlock()
+	if at, ok := loginThrottle.lockedAt[username]; ok {
+		if time.Since(at) < loginLockout {
+			return false
+		}
+		delete(loginThrottle.lockedAt, username)
+		loginThrottle.failures[username] = 0
+	}
+	return true
+}
+
+func loginThrottleRecord(username string, success bool) {
+	loginThrottle.Lock()
+	defer loginThrottle.Unlock()
+	if success {
+		delete(loginThrottle.failures, username)
+		delete(loginThrottle.lockedAt, username)
+		return
+	}
+	loginThrottle.failures[username]++
+	if loginThrottle.failures[username] >= loginMaxFailures {
+		loginThrottle.lockedAt[username] = time.Now()
+	}
+}
 
 // UserLoginResponse is returned on a successful user login.
 type UserLoginResponse struct {
@@ -34,8 +78,14 @@ func (h *Handler) HandleUserLogin(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
+	if !loginThrottleCheck(b.Username) {
+		return h.RespondWithStatusError(c, http.StatusTooManyRequests, errors.New("too many failed attempts, try again shortly"))
+	}
+
 	u, err := h.App.Database.GetUserByUsername(b.Username)
-	if err != nil || u == nil || !db.CheckUserPassword(u, b.Password) {
+	ok := err == nil && u != nil && db.CheckUserPassword(u, b.Password)
+	loginThrottleRecord(b.Username, ok)
+	if !ok {
 		return h.RespondWithStatusError(c, http.StatusUnauthorized, errors.New("invalid username or password"))
 	}
 
@@ -108,6 +158,15 @@ func (h *Handler) HandleUserRegister(c echo.Context) error {
 	}
 	if strings.TrimSpace(b.Password) == "" {
 		return h.RespondWithStatusError(c, http.StatusBadRequest, errors.New("password is required"))
+	}
+	// Whitelist the role — a typo'd/arbitrary string would silently create a user that is
+	// neither admin nor regular. Empty defaults to a regular user.
+	switch b.Role {
+	case "":
+		b.Role = models.UserRoleUser
+	case models.UserRoleAdmin, models.UserRoleUser:
+	default:
+		return h.RespondWithStatusError(c, http.StatusBadRequest, errors.New("invalid role"))
 	}
 	u, err := h.App.Database.CreateUser(b.Username, b.Password, b.Role)
 	if err != nil {
