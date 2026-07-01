@@ -842,7 +842,14 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	// (Honzuki "Adopted Daughter" airs 2026; the wrongly-picked "S02" batch is the 2020 Part 2).
 	// Convention-free, so it complements the season gate. ±1 tolerance covers post-air BD lag;
 	// releases with no parseable year are left untouched.
-	if c.mediaYear > 0 && parsed.Year != "" {
+	//
+	// Multi-episode packs are EXEMPT: complete-series batches are commonly labeled with the
+	// PREMIERE year ("Show (2019) S1-S4 Complete"), so the guard buried exactly the curated
+	// batches the user prefers whenever a later cour was streamed. Wrong-season batches are
+	// already policed by the season gate (labeled: the Honzuki 2020 "S02" case) and the
+	// ambiguous-batch demotion (unlabeled); the year guard is for mislabeled/foreign-convention
+	// SINGLES, where the year is the only cour signal.
+	if c.mediaYear > 0 && parsed.Year != "" && !isUnlabeledSeasonPack(c) {
 		if ty, ok := util.StringToInt(parsed.Year); ok && ty > 0 {
 			diff := ty - c.mediaYear
 			if diff < 0 {

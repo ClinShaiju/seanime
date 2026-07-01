@@ -829,3 +829,26 @@ func TestAutoSelect_YearMismatchGuard(t *testing.T) {
 	assert.Equal(t, a2026.Name, ranked[0].Name, "matching-year release wins")
 	assert.Equal(t, a2020.Name, ranked[1].Name, "2020 release buried for a 2026 entry despite far more seeders")
 }
+
+// Multi-episode packs are EXEMPT from the year guard: complete-series batches are commonly
+// labeled with the premiere year ("Show (2019) S1-S4 Complete"), and the penalty buried exactly
+// the curated batches the user prefers when streaming a later cour. Wrong-season batches are
+// still policed by the season gate (see the Honzuki test above) + the ambiguous-batch demotion.
+func TestAutoSelect_YearGuard_PremiereYearBatchSurvives(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}, PreferredLanguages: []string{"english"}}
+
+	// A curated premiere-year COMPLETE batch with strong signals (dual audio = eng-dub tier).
+	completeBatch := &hibiketorrent.AnimeTorrent{
+		Name: "[Curated] Some Show (2019) S1-S4 Complete 1080p BluRay Dual-Audio", InfoHash: "batch", Seeders: 500, IsBatch: true,
+	}
+	// A correct-year single with no language signal.
+	plainSingle := &hibiketorrent.AnimeTorrent{
+		Name: "[Grp] Some Show (2023) - 02 [1080p]", InfoHash: "single", Seeders: 5,
+	}
+
+	// Season logic off (expectedSeason=0) isolates the year guard; entry starts 2023.
+	ranked := s.Rank([]*hibiketorrent.AnimeTorrent{completeBatch, plainSingle}, profile, 0, 2, 2023, nil)
+	assert.Equal(t, completeBatch.Name, ranked[0].Name,
+		"a premiere-year complete batch with a dub must not be buried below a plain correct-year single")
+}
