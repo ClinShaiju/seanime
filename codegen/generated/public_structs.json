@@ -74846,6 +74846,25 @@
         "comments": []
       },
       {
+        "name": "lastDiscreteAt",
+        "jsonName": "lastDiscreteAt",
+        "goType": "time.Time",
+        "typescriptType": "string",
+        "usedStructName": "time.Time",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "lastDiscreteBy",
+        "jsonName": "lastDiscreteBy",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
         "name": "lastLiveAt",
         "jsonName": "lastLiveAt",
         "goType": "time.Time",

@@ -140,6 +140,9 @@ func (m *Manager) PrewarmStreamMetadata(streamUrl string) {
 	if streamUrl == "" {
 		return
 	}
+	if _, ok := m.parserCache.Get(streamUrl); ok {
+		return // already parsed — free; don't burn the CDN-warm budget or a HEAD on a hit
+	}
 	// CDN-warm budget: the parse (downloads fonts) + warmStreamStart hit the debrid CDN directly,
 	// not the rate-limited TorBox API. Shed bursts so re-enabled metadata prewarm can't 429 the CDN
 	// like before. Skipping is graceful — the stream just parses metadata at play time instead.
@@ -150,18 +153,16 @@ func (m *Manager) PrewarmStreamMetadata(streamUrl string) {
 	// Prewarm the content-type/length HEAD too — otherwise the play still pays a ~1-2s CDN
 	// round-trip in LoadContentType even when the metadata parse is cached.
 	info, _ := m.FetchStreamInfoWithHeaders(streamUrl, nil)
-
-	if _, ok := m.parserCache.Get(streamUrl); ok {
-		return // already parsed
-	}
-	reader, err := httputil.NewHttpReadSeekerFromURLWithHeaders(streamUrl, nil)
+	reader, err := fetchMetadataReader(context.Background(), m.Logger, streamUrl, nil)
 	if err != nil {
 		return
 	}
 	parser := mkvparser.NewMetadataParser(reader, m.Logger)
 	md := parser.GetMetadata(context.Background())
 	_ = reader.Close() // metadata (incl. attachment bytes) is now in RAM; mirrors loadPlaybackInfo
-	if md == nil || md.Error != nil {
+	// A real video file always has ≥1 track; 0 tracks means a garbage/short parse — never
+	// cache it, or every replay reuses the poisoned (track-less) parser until the TTL.
+	if md == nil || md.Error != nil || len(md.Tracks) == 0 {
 		return
 	}
 	m.parserCache.SetT(streamUrl, parser, metadataCacheTTL)
@@ -238,6 +239,13 @@ func warmStreamStart(streamUrl string, warmBytes int64) {
 	if warmBytes <= 0 {
 		return
 	}
+	// Non-blocking: if the token is busy, someone is actively streaming this very link — warming
+	// it is pointless, and a parked goroutine would later steal the freed slot from a real seek.
+	release, ok := cdnTokenGateInst.tryAcquire(cdnTokenKey(streamUrl))
+	if !ok {
+		return
+	}
+	defer release()
 	req, err := http.NewRequest(http.MethodGet, streamUrl, nil)
 	if err != nil {
 		return

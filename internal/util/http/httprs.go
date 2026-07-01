@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // HttpReadSeeker implements io.ReadSeeker for HTTP responses
@@ -87,6 +88,18 @@ func overrideHeaders(dst http.Header, src http.Header) {
 	}
 }
 
+// StatusError is returned by the URL reader constructor when the server responds with a
+// non-2xx status. It carries the code (and any Retry-After) so callers can decide whether
+// to retry — e.g. backing off on a 429 — instead of reading the error body as content.
+type StatusError struct {
+	Code       int
+	RetryAfter string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("httprs: unexpected status %d", e.Code)
+}
+
 func NewHttpReadSeekerFromURLWithHeaders(url string, headers http.Header) (*HttpReadSeeker, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -97,6 +110,14 @@ func NewHttpReadSeekerFromURLWithHeaders(url string, headers http.Header) (*Http
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("httprs: failed to get URL %s: %w", url, err)
+	}
+
+	// Reject non-2xx so a throttled (429) or error response body is never handed to the
+	// caller as if it were the file — that path silently produced 0-track MKV parses.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		retryAfter := resp.Header.Get("Retry-After")
+		resp.Body.Close()
+		return nil, &StatusError{Code: resp.StatusCode, RetryAfter: retryAfter}
 	}
 
 	return NewHttpReadSeeker(resp), nil
@@ -192,29 +213,97 @@ func (hrs *HttpReadSeeker) Close() error {
 	return nil
 }
 
-// makeRangeRequest makes a new HTTP request with the Range header
+// httprsTransientStatus reports whether a status is worth retrying (CDN rate-limit / transient
+// gateway). Mirrors the directstream serve-path policy so a metadata/subtitle read survives the
+// same momentary throttles the video path already rides out.
+func httprsTransientStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// httprsBackoff returns the wait before a retry: a numeric Retry-After (capped 5s) when present,
+// else exponential 300ms·2^attempt capped at 3s.
+func httprsBackoff(attempt int, retryAfter string) time.Duration {
+	wait := time.Duration(300*(1<<uint(attempt))) * time.Millisecond
+	if wait > 3*time.Second {
+		wait = 3 * time.Second
+	}
+	if retryAfter != "" {
+		if secs, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && secs > 0 {
+			wait = time.Duration(secs) * time.Second
+			if wait > 5*time.Second {
+				wait = 5 * time.Second
+			}
+		}
+	}
+	return wait
+}
+
+const httprsMaxRetries = 4
+
+// makeRangeRequest makes a new HTTP request with the Range header, retrying transient CDN throttling
+// (429) / gateway errors with capped backoff. A non-2xx response is NEVER handed back as content —
+// previously a 429 error body fed straight into the MKV parser and produced a 0-track parse.
+//
+// ponytail: the backoff Sleeps run under hrs.mu (the Read lock) and are uncancellable — worst case
+// a caller waits out ~2.1s (exponential path) or up to 3×5s (Retry-After path) before the final
+// error. Bounded; thread hrs through a context if that ever bites a teardown.
 func (hrs *HttpReadSeeker) makeRangeRequest() error {
-	req, err := http.NewRequest("GET", hrs.url, nil)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 0; attempt < httprsMaxRetries; attempt++ {
+		req, err := http.NewRequest("GET", hrs.url, nil)
+		if err != nil {
+			return err
+		}
+		overrideHeaders(req.Header, hrs.headers)
+		// Set Range header from current offset
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", hrs.offset))
+
+		resp, err := hrs.client.Do(req)
+		if err != nil {
+			lastErr = err
+			if attempt == httprsMaxRetries-1 {
+				return err
+			}
+			time.Sleep(httprsBackoff(attempt, ""))
+			continue
+		}
+
+		// Transient throttle/gateway — close and retry instead of poisoning the parse.
+		if httprsTransientStatus(resp.StatusCode) {
+			retryAfter := resp.Header.Get("Retry-After")
+			resp.Body.Close()
+			lastErr = &StatusError{Code: resp.StatusCode, RetryAfter: retryAfter}
+			if attempt == httprsMaxRetries-1 {
+				return lastErr
+			}
+			time.Sleep(httprsBackoff(attempt, retryAfter))
+			continue
+		}
+
+		// Permanent non-2xx — surface as an error, never as file content.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			retryAfter := resp.Header.Get("Retry-After")
+			resp.Body.Close()
+			return &StatusError{Code: resp.StatusCode, RetryAfter: retryAfter}
+		}
+
+		// Check if the server supports range requests
+		if resp.StatusCode != http.StatusPartialContent && hrs.offset > 0 {
+			resp.Body.Close()
+			return fmt.Errorf("httprs: server does not support range requests")
+		}
+
+		return hrs.adoptResponse(resp)
 	}
+	return lastErr
+}
 
-	overrideHeaders(req.Header, hrs.headers)
-	// Set Range header from current offset
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", hrs.offset))
-
-	// Make the request
-	resp, err := hrs.client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	// Check if the server supports range requests
-	if resp.StatusCode != http.StatusPartialContent && hrs.offset > 0 {
-		resp.Body.Close()
-		return fmt.Errorf("httprs: server does not support range requests")
-	}
-
+// adoptResponse installs a fresh response as the current read source and refreshes the known size.
+func (hrs *HttpReadSeeker) adoptResponse(resp *http.Response) error {
 	// Update our response and offset
 	if hrs.resp != nil {
 		hrs.resp.Body.Close()

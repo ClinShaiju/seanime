@@ -2,6 +2,7 @@ package directstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"github.com/samber/mo"
 )
 
@@ -121,7 +123,48 @@ func (s *httpBaseStream) applyHeadRespHeaders(dst http.Header) {
 }
 
 func (s *httpBaseStream) newMetadataReader() (io.ReadSeekCloser, error) {
-	return httputil.NewHttpReadSeekerFromURLWithHeaders(s.streamUrl, s.requestHeaders)
+	return fetchMetadataReader(s.manager.playbackCtx, s.logger, s.streamUrl, s.requestHeaders)
+}
+
+// fetchMetadataReader opens a CDN reader for MKV metadata, retrying transient throttling
+// (429) / gateway errors with the same capped backoff as the video-serve path. Without this
+// a momentary CDN rate-limit on the metadata GET would otherwise surface as a 0-track parse.
+//
+// The reader holds a per-token gate slot for its whole lifetime (released on Close) so the metadata
+// read counts against the same per-link connection budget as the serve path — a metadata parse and
+// the player's head fetch can't both burst the same TorBox token.
+func fetchMetadataReader(ctx context.Context, logger *zerolog.Logger, url string, headers http.Header) (io.ReadSeekCloser, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	release, err := cdnTokenGateInst.acquire(ctx, cdnTokenKey(url))
+	if err != nil {
+		return nil, err // context cancelled while queued for a slot
+	}
+	var lastErr error
+	for attempt := 0; attempt < maxCDNRetries; attempt++ {
+		reader, rErr := httputil.NewHttpReadSeekerFromURLWithHeaders(url, headers)
+		if rErr == nil {
+			return &gatedReadSeekCloser{ReadSeekCloser: reader, release: release}, nil
+		}
+		lastErr = rErr
+
+		var se *httputil.StatusError
+		if !errors.As(rErr, &se) || !isCDNTransientStatus(se.Code) {
+			release()
+			return nil, rErr // permanent (403/404/…) or network error — don't retry
+		}
+		if attempt == maxCDNRetries-1 {
+			break
+		}
+		logger.Warn().Int("status", se.Code).Int("attempt", attempt+1).Msg("directstream(http): CDN throttled metadata fetch, backing off")
+		if !cdnRetryWait(ctx, attempt, se.RetryAfter) {
+			release()
+			return nil, lastErr // context cancelled during backoff
+		}
+	}
+	release()
+	return nil, lastErr
 }
 
 func (s *httpBaseStream) LoadContentType() string {
@@ -224,13 +267,13 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 			if cached, ok := s.manager.parserCache.Get(s.streamUrl); ok {
 				s.logger.Debug().Msgf("directstream(http): Reusing prewarmed metadata parser for: %s", s.streamUrl)
 				metadata := cached.GetMetadata(context.Background())
-				if metadata != nil && metadata.Error == nil {
+				if metadata != nil && metadata.Error == nil && len(metadata.Tracks) > 0 {
 					playbackInfo.MkvMetadata = metadata
 					playbackInfo.MkvMetadataParser = mo.Some(cached)
 					s.playbackInfo = &playbackInfo
 					return
 				}
-				// Cached parser was bad — fall through to a fresh parse.
+				// Cached parser was bad (errored or track-less) — fall through to a fresh parse.
 			}
 
 			reader, readErr := s.newMetadataReader()
@@ -255,6 +298,18 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 				err = fmt.Errorf("failed to get metadata: %w", metadata.Error)
 				s.logger.Error().Err(metadata.Error).Msg("directstream(http): Failed to get metadata")
 				s.playbackInfoErr = err
+				return
+			}
+			// 0 tracks usually means a transient CDN throttle (429) mid-parse, NOT a bad file.
+			// Don't block playback — the player decodes the raw container itself; only server-side
+			// subtitle/track features degrade. Just skip caching so a poisoned (track-less) parser
+			// isn't reused for the 2h TTL. (ponytail: degrade, don't hard-fail; the real fix is
+			// retrying 429s on the metadata read path so the parse completes.)
+			if len(metadata.Tracks) == 0 {
+				s.logger.Warn().Str("url", s.streamUrl).Msg("directstream(http): Metadata parse produced 0 tracks (likely CDN throttle); playing without server-parsed tracks")
+				playbackInfo.MkvMetadata = metadata
+				playbackInfo.MkvMetadataParser = mo.Some(parser)
+				s.playbackInfo = &playbackInfo
 				return
 			}
 
@@ -336,6 +391,16 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 				_ = subReader.Close()
 			}
 		}
+
+		// Bound simultaneous CDN connections to this single debrid link (token): the player's
+		// head (bytes=0-) + tail-index probe + any seek all hit the same token at stream-start, and
+		// that burst is what trips TorBox's per-link 429. Per-token, so other streams/users are
+		// unaffected. Held until this range finishes serving (defer).
+		releaseSlot, gateErr := cdnTokenGateInst.acquire(r.Context(), cdnTokenKey(s.streamUrl))
+		if gateErr != nil {
+			return // client disconnected while queued for a slot
+		}
+		defer releaseSlot()
 
 		// Fetch the CDN range, retrying transient throttling (429) / gateway errors with
 		// capped backoff. The server re-pulls ranges as the user watches, so without this a

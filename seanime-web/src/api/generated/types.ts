@@ -4688,6 +4688,8 @@ export type Nakama_WatchRoom = {
     position: number
     positionAt?: string
     lastControllerClientID: string
+    lastDiscreteAt?: string
+    lastDiscreteBy: string
     lastLiveAt?: string
     /**
      * sha256 hex of the password; empty = open room

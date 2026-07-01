@@ -192,7 +192,17 @@ func probeStreamURL(ctx context.Context, url string, timeout time.Duration) bool
 	}
 	defer resp.Body.Close()
 	_, _ = io.CopyN(io.Discard, resp.Body, 1)
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return true
+	}
+	// A throttled (429) or transiently-erroring link is ALIVE, not dead — treating it as dead
+	// triggered a needless requestdl re-resolve exactly when the CDN was telling us to back off,
+	// amplifying the rate-limit. Only permanent errors (403/404/410…) mean the link is gone.
+	switch resp.StatusCode {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
 }
 
 // SweepExpiredPrewarms drops shared prewarm rows past their TTL. Cheap (small table); runs on the
