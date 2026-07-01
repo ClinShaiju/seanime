@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.8.13
+
+Stability release from a full-fork audit (`fable-audit.md`) — every change is code-reviewed,
+built, and unit/race-tested; live verification is the next step.
+
+### Debrid / directstream (the missing-tracks & CDN-429 family)
+
+- 🦺 **Root cause of "audio/subtitle tracks missing" and "Media format not supported" fixed**: a CDN 429 error body was silently handed to the MKV parser as if it were the video file, producing a track-less parse that was then cached (poisoned) for 2 hours. Non-2xx responses are now rejected and retried, and a track-less parse is never cached — playback degrades gracefully instead of losing tracks or hard-failing.
+- 🦺 Per-link CDN connection gate: the stream-start burst (player head + tail probe + metadata + warm reads all hitting one debrid link at once) is what tripped TorBox's per-link throttle. Connections to a single link are now bounded (default 2, `SEANIME_DIRECTSTREAM_PER_TOKEN_CONNS`); other links/users unaffected.
+- ⚡️ Metadata reads are now chunked + cached: one "Loading metadata" step used to fire ~5–15 rapid CDN requests (a new request per parser seek); it's now a handful of spaced 8MiB range fetches with revisited regions served from memory.
+- 🦺 `requestdl` is paced (~15/min) — TorBox throttles this endpoint far below its documented budget, and every play/URL-refresh/room-join lands on it. Waiting a few seconds beats a 429 + backoff cycle.
+- 🦺 The scheduled prewarm now resolves strictly one target at a time (the old "queue" only staggered kickoffs; resolves still overlapped and clustered their TorBox calls).
+- 🦺 429 logs now say where the throttle came from (`api:<endpoint>` vs `cdn:<host>`), so future rate-limit blame is read off the logs.
+- 🦺 A link probe that hits a 429 no longer counts as "dead link" (which used to trigger a pointless re-resolve exactly when the CDN said to back off).
+- 🦺 Bounded the metadata parse (45s): a CDN that stalled mid-body could hang "Loading metadata…" forever.
+- 🦺 Fixed a cross-stream cancellation race: starting a new episode while the previous stream's goroutine was still winding down could silently kill the NEW stream's download ("second episode never starts").
+- 🦺 A stale direct-URL preload is now probed before playing; dead links fail with a clear retryable error instead of a dead player.
+
+### Stability (race-detector pass)
+
+- 🦺 Fixed a data race in the global log buffer — every goroutine's log line wrote to an unsynchronized buffer (corruption/crash risk, confirmed by `go test -race`).
+- 🦺 Fixed shared-pointer mutation races in torrent search aggregation (parallel batch+single searches) and the provider search-cache swap.
+
+### Same-instance watch rooms
+
+- 🦺 A bare **pause** can no longer steal room control: a stalled player's pause is indistinguishable from a user pause, and a stall taking the controller anchored the room to a frozen player. Pauses still apply; only deliberate acts (play/seek) transfer control.
+- 🦺 "Join room stream" now retries the host's stream share briefly and errors retryably instead of silently running its own selection — which could put a follower on a *different release* than the host (a desync no sync logic can fix).
+- 🦺 The Join button no longer disappears for a non-host driver who closed their own player.
+- 🦺 Host reconnects no longer get ~1s of stale-position echo.
+- 🦺 Room discovery cards are no longer broadcast to pre-login connections on networked servers.
+
+### Auto-select
+
+- 🦺 The wrong-cour year guard no longer buries premiere-year **complete batches** ("Show (2019) S1–S4 Complete") when streaming a later cour — wrong-season batches are still policed by the season gate (Honzuki case unchanged, test-pinned).
+
+### Multi-user
+
+- 🦺 `/user/login` now has a brute-force lockout (5 failures → 30s); user registration validates the role.
+
+### Housekeeping
+
+- 🦺 The updater package's tests compile again (broken since the GitHub-only update rework in 3.8.9); fixed a long-standing debrid test panic; vet is clean.
+
 ## v3.8.12
 
 ### Same-instance watch rooms

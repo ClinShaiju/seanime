@@ -474,16 +474,15 @@ export function useRoomStreamJoin() {
     const playbackInfo = useAtomValue(nativePlayer_stateAtom).playbackInfo
 
     const mi = room?.currentMediaInfo
-    const amController = React.useMemo(() => {
-        if (!room?.participants || !room.controllerKey) return false
-        const e = Object.entries(room.participants).find(([, pp]) => pp.clientId === clientId)
-        return !!e && e[0] === room.controllerKey && (!!e[1].isHost || !!e[1].canControl)
-    }, [room, clientId])
 
     const watchingThis = !!playbackInfo && playbackInfo.media?.id === mi?.mediaId
         && playbackInfo.episode?.episodeNumber === mi?.episodeNumber
 
-    const canJoin = !!room?.playbackActive && !!mi && !watchingThis && !amController
+    // No controller exclusion: an ACTIVELY-driving controller is already watching the room's
+    // media, so watchingThis hides the button for them anyway. Excluding amController wedged a
+    // NON-HOST DRIVER who closed their player — they kept controllerKey (nothing hands it back
+    // on close) so the Join button never appeared until someone else's discrete action.
+    const canJoin = !!room?.playbackActive && !!mi && !watchingThis
 
     const join = React.useCallback(() => {
         if (!room?.id || !mi) return
