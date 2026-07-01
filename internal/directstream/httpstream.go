@@ -2,7 +2,6 @@ package directstream
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -126,9 +125,13 @@ func (s *httpBaseStream) newMetadataReader() (io.ReadSeekCloser, error) {
 	return fetchMetadataReader(s.manager.playbackCtx, s.logger, s.streamUrl, s.requestHeaders)
 }
 
-// fetchMetadataReader opens a CDN reader for MKV metadata, retrying transient throttling
-// (429) / gateway errors with the same capped backoff as the video-serve path. Without this
-// a momentary CDN rate-limit on the metadata GET would otherwise surface as a 0-track parse.
+// fetchMetadataReader opens a CDN reader for MKV metadata.
+//
+// Chunked + cached: the parser seeks through header → tracks → attachments → cues-at-tail, and a
+// plain reader opened a NEW range request per seek (~5-15 rapid GETs on one link — the burst that
+// trips the CDN's per-link throttling, surfacing as 0-track parses). The chunked reader fetches
+// 8MiB-aligned ranges, caches them, and retries transient 429s internally, collapsing the parse to
+// a handful of spaced requests.
 //
 // The reader holds a per-token gate slot for its whole lifetime (released on Close) so the metadata
 // read counts against the same per-link connection budget as the serve path — a metadata parse and
@@ -141,30 +144,10 @@ func fetchMetadataReader(ctx context.Context, logger *zerolog.Logger, url string
 	if err != nil {
 		return nil, err // context cancelled while queued for a slot
 	}
-	var lastErr error
-	for attempt := 0; attempt < maxCDNRetries; attempt++ {
-		reader, rErr := httputil.NewHttpReadSeekerFromURLWithHeaders(url, headers)
-		if rErr == nil {
-			return &gatedReadSeekCloser{ReadSeekCloser: reader, release: release}, nil
-		}
-		lastErr = rErr
-
-		var se *httputil.StatusError
-		if !errors.As(rErr, &se) || !isCDNTransientStatus(se.Code) {
-			release()
-			return nil, rErr // permanent (403/404/…) or network error — don't retry
-		}
-		if attempt == maxCDNRetries-1 {
-			break
-		}
-		logger.Warn().Int("status", se.Code).Int("attempt", attempt+1).Msg("directstream(http): CDN throttled metadata fetch, backing off")
-		if !cdnRetryWait(ctx, attempt, se.RetryAfter) {
-			release()
-			return nil, lastErr // context cancelled during backoff
-		}
-	}
-	release()
-	return nil, lastErr
+	// No I/O here — the chunked reader fetches lazily (with its own transient-429 retry), so the
+	// gate slot is held only while the parse actually reads.
+	reader := httputil.NewChunkedHttpReadSeeker(url, headers)
+	return &gatedReadSeekCloser{ReadSeekCloser: reader, release: release}, nil
 }
 
 func (s *httpBaseStream) LoadContentType() string {

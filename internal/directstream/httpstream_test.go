@@ -204,15 +204,23 @@ func TestNakamaMetadataReaderCarriesHeadersAcrossRangeRequests(t *testing.T) {
 			return
 		}
 
-		startStr := strings.TrimPrefix(rangeHeader, "bytes=")
-		startStr = strings.TrimSuffix(startStr, "-")
+		// Accept both open-ended ("bytes=N-") and bounded ("bytes=N-M") ranges — the chunked
+		// metadata reader sends bounded ones.
+		spec := strings.TrimPrefix(rangeHeader, "bytes=")
+		startStr, endStr, _ := strings.Cut(spec, "-")
 		start, err := strconv.Atoi(startStr)
 		require.NoError(t, err)
+		end := len(payload) - 1
+		if endStr != "" {
+			if e, eerr := strconv.Atoi(endStr); eerr == nil && e < end {
+				end = e
+			}
+		}
 
-		w.Header().Set("Content-Length", strconv.Itoa(len(payload)-start))
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(payload)-1, len(payload)))
+		w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(payload)))
 		w.WriteHeader(http.StatusPartialContent)
-		_, _ = w.Write(payload[start:])
+		_, _ = w.Write(payload[start : end+1])
 	}))
 	defer server.Close()
 
