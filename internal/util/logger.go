@@ -36,6 +36,18 @@ const (
 var logBuffer bytes.Buffer
 var logBufferMutex = &sync.Mutex{}
 
+// lockedLogBuffer serializes writes into logBuffer under the SAME mutex the flush uses.
+// Every goroutine's log line lands here (the file-output ConsoleWriter), and a bare
+// bytes.Buffer is not safe for concurrent writers — `go test -race` flagged real races
+// as soon as searches ran concurrently. One mutex for writers + flush keeps it correct.
+type lockedLogBuffer struct{}
+
+func (lockedLogBuffer) Write(p []byte) (int, error) {
+	logBufferMutex.Lock()
+	defer logBufferMutex.Unlock()
+	return logBuffer.Write(p)
+}
+
 func NewLogger() *zerolog.Logger {
 
 	timeFormat := fmt.Sprintf("%s", time.DateTime)
@@ -63,7 +75,7 @@ func NewLogger() *zerolog.Logger {
 	}
 
 	fileOutput := zerolog.ConsoleWriter{
-		Out:           &logBuffer,
+		Out:           lockedLogBuffer{},
 		TimeFormat:    timeFormat,
 		FormatMessage: ZerologFormatMessageSimple,
 		FormatLevel:   ZerologFormatLevelSimple,

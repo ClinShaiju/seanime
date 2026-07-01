@@ -559,7 +559,7 @@ func TestSearchAnimeEmptyTypeNoCacheCollision(t *testing.T) {
 	require.NoError(t, err)
 
 	// verify that nothing was cached under the empty key ""
-	cache := getAnimeSearchCache(repo.animeProviderSearchCaches, "main")
+	cache := getAnimeSearchCache(repo.animeProviderSearchCaches.Load(), "main")
 	_, found := cache.Get("")
 	require.False(t, found)
 }

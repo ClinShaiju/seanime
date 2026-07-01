@@ -158,7 +158,7 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 
 	var cacheHit bool
 	if searchCacheKey != "" {
-		cache := getAnimeSearchCache(r.animeProviderSearchCaches, providerCacheKey)
+		cache := getAnimeSearchCache(r.animeProviderSearchCaches.Load(), providerCacheKey)
 		ret, cacheHit = cache.Get(searchCacheKey)
 	}
 
@@ -174,7 +174,7 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 			ret = new(*ret)
 			ret.Previews = previews
 			if searchCacheKey != "" {
-				cache := getAnimeSearchCache(r.animeProviderSearchCaches, providerCacheKey)
+				cache := getAnimeSearchCache(r.animeProviderSearchCaches.Load(), providerCacheKey)
 				cache.Set(searchCacheKey, ret)
 			}
 		}
@@ -289,10 +289,15 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 			if t == nil {
 				continue
 			}
-			if t.Provider == "" {
-				t.Provider = providers[i].GetID()
+			// Own our results: providers/caches can hand the SAME torrent pointers to two
+			// concurrent searches (autoselect runs batch+single in parallel), and this function
+			// mutates them in place below (Provider, InfoHash) — a data race on shared structs.
+			// One shallow copy at the aggregation boundary makes every downstream write safe.
+			tc := *t
+			if tc.Provider == "" {
+				tc.Provider = providers[i].GetID()
 			}
-			torrents = append(torrents, t)
+			torrents = append(torrents, &tc)
 		}
 	}
 
@@ -390,7 +395,7 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 	}
 
 	if searchCacheKey != "" {
-		cache := getAnimeSearchCache(r.animeProviderSearchCaches, providerCacheKey)
+		cache := getAnimeSearchCache(r.animeProviderSearchCaches.Load(), providerCacheKey)
 		cache.Set(searchCacheKey, ret)
 	}
 
