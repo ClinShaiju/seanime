@@ -432,13 +432,13 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 					s.logger.Error().Err(doErr).Str("range", rangeHeader).Msg("directstream(http): CDN proxy request failed")
 					http.Error(w, "Failed to proxy request", http.StatusBadGateway)
 				} else {
-					s.logger.Error().Int("status", status).Int("attempts", attempt+1).Str("range", rangeHeader).Msg("directstream(http): CDN throttled, retries exhausted")
+					s.logger.Error().Str("origin", "cdn:"+cdnHost(s.streamUrl)).Int("status", status).Int("attempts", attempt+1).Str("range", rangeHeader).Msg("directstream(http): CDN throttled, retries exhausted")
 					http.Error(w, fmt.Sprintf("CDN error: %d", status), status)
 				}
 				return
 			}
 
-			s.logger.Warn().Int("status", status).Int("attempt", attempt+1).Str("range", rangeHeader).Msg("directstream(http): CDN throttled, backing off")
+			s.logger.Warn().Str("origin", "cdn:"+cdnHost(s.streamUrl)).Int("status", status).Int("attempt", attempt+1).Str("range", rangeHeader).Msg("directstream(http): CDN throttled, backing off")
 			if !cdnRetryWait(r.Context(), attempt, retryAfter) {
 				return // client disconnected during backoff
 			}

@@ -43,6 +43,19 @@ func cdnTokenKey(url string) string {
 	return url
 }
 
+// cdnHost extracts the host portion of a stream URL for 429-origin log tags ("cdn:<host>" vs the
+// TorBox client's "api:<endpoint>") — so throttle blame is read off the logs, not guessed.
+func cdnHost(url string) string {
+	s := url
+	if i := strings.Index(s, "://"); i != -1 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexByte(s, '/'); i != -1 {
+		s = s[:i]
+	}
+	return s
+}
+
 func (g *cdnTokenGate) semFor(token string) chan struct{} {
 	g.mu.Lock()
 	defer g.mu.Unlock()

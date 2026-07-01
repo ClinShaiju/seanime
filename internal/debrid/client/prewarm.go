@@ -19,10 +19,12 @@ func (r *Repository) PrewarmStreams(ctx context.Context, targets []*StartStreamO
 		return
 	}
 
-	// Serialize the scheduled fan-out: drain in ONE background goroutine, spacing each kickoff via
-	// prewarmLimiter, so the continue-watching tick no longer hits TorBox simultaneously (the
-	// concurrent N_users×N burst was a prime 429 source). Returns immediately so the tick isn't
-	// blocked; client-triggered preloads (play @3s, hover) stay direct and unthrottled.
+	// Serialize the scheduled fan-out: drain in ONE background goroutine, each resolve run
+	// SYNCHRONOUSLY (preloadStreamBlocking) with the limiter spacing between them — so at most
+	// one scheduled resolve is in flight at a time. (The old async kickoff made this a mere
+	// 1.5s stagger: with ~10s aggregator searches, resolves still overlapped and their TorBox
+	// call clusters landed together.) Returns immediately so the tick isn't blocked;
+	// client-triggered preloads (play @3s, hover) stay direct and unthrottled.
 	go func() {
 		defer util.HandlePanicInModuleThen("debrid/client/PrewarmStreams/drain", func() {})
 		for _, opts := range targets {
@@ -37,7 +39,7 @@ func (r *Repository) PrewarmStreams(ctx context.Context, targets []*StartStreamO
 			opts.Preload = true
 			// Per-user: prewarm into the target user's own StreamManager so each user's preload
 			// cache is theirs and is consumed when THEY play.
-			_ = r.smFor(opts.UserID).preloadStream(ctx, opts)
+			_ = r.smFor(opts.UserID).preloadStreamBlocking(ctx, opts)
 		}
 	}()
 }

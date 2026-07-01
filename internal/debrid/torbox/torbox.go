@@ -20,6 +20,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/samber/mo"
+	"golang.org/x/time/rate"
 )
 
 type (
@@ -39,6 +40,12 @@ type (
 		// of the same torrent+file (urlRefreshTTL refresh, replays, cross-consumer reuse) skip
 		// the extra mylist round-trip in GetTorrentDownloadUrl. The first resolve still fetches.
 		fileIdCache sync.Map
+
+		// requestdlLimiter paces /requestdl calls. TorBox's documented per-endpoint budget is
+		// 300/min, but the endpoint is community-observed to throttle at roughly ~20/min (429s
+		// even at 1/s pacing) — every play, URL refresh, dead-probe re-resolve and watch-room
+		// peer join lands here, so pace to ~15/min with a small burst instead of eating 429s.
+		requestdlLimiter *rate.Limiter
 	}
 
 	Response struct {
@@ -121,6 +128,9 @@ func NewTorBox(logger *zerolog.Logger) debrid.Provider {
 			},
 		},
 		logger: logger,
+		// ~15/min with burst 3: real plays are far below this, so the limiter only ever bites
+		// pathological bursts (prewarm storms, retry loops) that would have 429'd anyway.
+		requestdlLimiter: rate.NewLimiter(rate.Every(4*time.Second), 3),
 	}
 }
 
@@ -140,6 +150,18 @@ const (
 	torboxBackoffBase = 1 * time.Second
 	torboxBackoffCap  = 16 * time.Second
 )
+
+// uriEndpoint reduces a full request URI to its path for logging (never the query — requestdl
+// carries the API key as a query param).
+func uriEndpoint(uri string) string {
+	if i := strings.IndexByte(uri, '?'); i != -1 {
+		uri = uri[:i]
+	}
+	if i := strings.Index(uri, "/api"); i != -1 {
+		uri = uri[i+len("/api"):]
+	}
+	return uri
+}
 
 // torboxBackoff returns the exponential backoff for a retry attempt (1s, 2s, 4s, … capped).
 // No jitter: a single-keyed client has no thundering herd to de-synchronize, and scheduled
@@ -204,7 +226,9 @@ func (t *TorBox) doQueryCtx(ctx context.Context, method, uri string, body io.Rea
 				return nil, fmt.Errorf("torbox: rate limited (429) after %d retries", torboxMaxRetries)
 			}
 			wait := parseRetryAfter(resp, torboxBackoff(attempt))
-			t.logger.Warn().Dur("wait", wait).Int("attempt", attempt+1).Msg("torbox: 429 rate limited, backing off")
+			// origin tag ("api:<endpoint>") distinguishes API-budget 429s from CDN-edge 429s
+			// (logged as cdn:<host> in directstream) so throttle blame is data, not guesswork.
+			t.logger.Warn().Str("origin", "api:"+uriEndpoint(uri)).Dur("wait", wait).Int("attempt", attempt+1).Msg("torbox: 429 rate limited, backing off")
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -466,6 +490,11 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 			t.fileIdCache.Store(cacheKey, fId)
 		}
 		url = t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s", apiKey, opts.ID, fId)
+	}
+
+	// Pace requestdl (see requestdlLimiter) — waiting a few seconds beats a 429 + backoff cycle.
+	if t.requestdlLimiter != nil {
+		_ = t.requestdlLimiter.Wait(context.Background())
 	}
 
 	resp, err := t.doQuery("GET", url, nil, "application/json")

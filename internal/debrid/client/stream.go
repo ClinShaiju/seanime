@@ -1024,7 +1024,19 @@ func (s *StreamManager) evictIfNeededLocked(priority bool) {
 
 // preloadStream resolves the next episode's debrid stream URL ahead of time and caches it.
 // It runs silently (no overlay events) so it doesn't disturb the episode still playing.
-func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOptions) (err error) {
+// The resolve itself runs on a goroutine (client-triggered preloads must not block playback).
+func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOptions) error {
+	return s.preloadStreamWith(ctx, opts, true)
+}
+
+// preloadStreamBlocking is preloadStream but the resolve runs SYNCHRONOUSLY. Used by the scheduled
+// prewarm drain, which exists to serialize TorBox/aggregator pressure — the async variant made the
+// "queue" a mere 1.5s kickoff stagger with all resolves still overlapping.
+func (s *StreamManager) preloadStreamBlocking(ctx context.Context, opts *StartStreamOptions) error {
+	return s.preloadStreamWith(ctx, opts, false)
+}
+
+func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStreamOptions, async bool) (err error) {
 	defer util.HandlePanicInModuleWithError("debrid/client/preloadStream", &err)
 
 	if s.repository.settings == nil || !s.repository.settings.PreloadNextStream {
@@ -1062,7 +1074,7 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 		Int("episodeNumber", opts.EpisodeNumber).
 		Msg("debridstream: Preloading stream")
 
-	go func() {
+	run := func() {
 		defer util.HandlePanicInModuleThen("debrid/client/preloadStream", func() {})
 		defer func() {
 			s.preloadMu.Lock()
@@ -1185,7 +1197,13 @@ func (s *StreamManager) preloadStream(ctx context.Context, opts *StartStreamOpti
 		if opts.PrewarmMetadata && streamUrl != "" && preloadCtx.Err() == nil && s.ds(opts) != nil {
 			s.ds(opts).PrewarmStreamMetadata(streamUrl)
 		}
-	}()
+	}
+
+	if async {
+		go run()
+	} else {
+		run()
+	}
 
 	return nil
 }
