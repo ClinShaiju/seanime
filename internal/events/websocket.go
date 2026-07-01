@@ -14,6 +14,10 @@ import (
 
 type WSEventManagerInterface interface {
 	SendEvent(t string, payload interface{})
+	// SendEventToLoggedIn broadcasts like SendEvent, but on a networked (user-scoped) server it
+	// skips anonymous (pre-login, UserID==0) connections — for pool-visible-but-not-public data
+	// like watch-room discovery cards. Identical to SendEvent on local installs.
+	SendEventToLoggedIn(t string, payload interface{})
 	SendEventTo(clientId string, t string, payload interface{}, noLog ...bool)
 	GetClientIds() []string
 	GetClientPlatform(clientId string) string
@@ -303,6 +307,20 @@ func (m *WSEventManager) SendEvent(t string, payload interface{}) {
 	//	m.Logger.Err(err).Msg("ws: Failed to send message")
 	//}
 	//m.Logger.Trace().Str("type", t).Msg("ws: Sent message")
+}
+
+// SendEventToLoggedIn broadcasts to every connection except, on a networked (user-scoped)
+// server, anonymous pre-login ones (UserID==0). Local installs (no server password) tag no
+// connections, so there it behaves exactly like SendEvent.
+func (m *WSEventManager) SendEventToLoggedIn(t string, payload interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, conn := range m.Conns {
+		if m.requireUserScoping && conn.UserID == 0 {
+			continue
+		}
+		_ = conn.Conn.WriteJSON(WSEvent{Type: t, Payload: payload})
+	}
 }
 
 // SendEventTo sends a websocket event to the specified client.

@@ -6,6 +6,7 @@ import (
 	debrid_client "seanime/internal/debrid/client"
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
 	"seanime/internal/nakama"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -202,8 +203,9 @@ func (h *Handler) HandleNakamaWatchRoomAutoSkip(c echo.Context) error {
 // HandleNakamaWatchRoomJoinStream
 //
 //	@summary starts (or rejoins) the room's active debrid stream for the caller.
-//	@desc Reuses the host's already-resolved debrid link directly — no second torrent
-//	@desc selection or CDN resolution. Falls back to auto-select if the host link isn't ready.
+//	@desc Reuses the host's already-resolved debrid SELECTION — no second torrent selection.
+//	@desc Retries briefly while the host is still resolving; errors (retryable) rather than
+//	@desc auto-selecting independently, which could put this peer on a different release.
 //	@route /api/v1/nakama/watch-room/join-stream [POST]
 //	@returns bool
 func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
@@ -240,23 +242,37 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 	// resolve its OWN fresh CDN link from it — cheap (no re-search, no createtorrent) and, unlike
 	// sharing the host's single resolved link verbatim, peers don't contend on one link (that
 	// contention is why a follower's player would open but never load). Falls back to the raw
-	// link when there's no torrent item (e.g. a direct-StreamUrl release), then to auto-select.
+	// link when there's no torrent item (e.g. a direct-StreamUrl release).
 	if info.StreamType == nakama.WatchPartyStreamTypeDebrid {
-		if share, ok := h.App.DebridClientRepository.GetUserStreamShare(info.ControllerUserID); ok {
-			fp := share.Filepath
-			if fp == "" {
-				fp = "stream.mkv"
+		// The controller's share is captured at the END of its resolve; a follower reacting to
+		// the very first sync can race ahead of it. Retry briefly instead of silently falling
+		// back to our own auto-select — an independent selection can pick a DIFFERENT release
+		// than the host (different intro timings/duration), which no position sync can fix.
+		share, ok := h.App.DebridClientRepository.GetUserStreamShare(info.ControllerUserID)
+		for attempt := 0; !ok && attempt < 8; attempt++ {
+			select {
+			case <-c.Request().Context().Done():
+				return h.RespondWithError(c, c.Request().Context().Err())
+			case <-time.After(750 * time.Millisecond):
 			}
-			opts.AutoSelect = false
-			opts.Torrent = &hibiketorrent.AnimeTorrent{Name: fp}
-			if share.TorrentItemId != "" && share.FileId != "" {
-				opts.SharedTorrentItemId = share.TorrentItemId
-				opts.FileId = share.FileId
-			} else {
-				opts.Torrent.StreamUrl = share.StreamUrl // no shared item — reuse the raw link
-			}
+			share, ok = h.App.DebridClientRepository.GetUserStreamShare(info.ControllerUserID)
+		}
+		if !ok {
+			// Still resolving (or the controller's stream is gone) — tell the client to retry
+			// via the Join button rather than diverge onto a different release.
+			return h.RespondWithError(c, errors.New("the room's stream is not ready yet, try again in a moment"))
+		}
+		fp := share.Filepath
+		if fp == "" {
+			fp = "stream.mkv"
+		}
+		opts.AutoSelect = false
+		opts.Torrent = &hibiketorrent.AnimeTorrent{Name: fp}
+		if share.TorrentItemId != "" && share.FileId != "" {
+			opts.SharedTorrentItemId = share.TorrentItemId
+			opts.FileId = share.FileId
 		} else {
-			opts.AutoSelect = true
+			opts.Torrent.StreamUrl = share.StreamUrl // no shared item — reuse the raw link
 		}
 	} else {
 		opts.AutoSelect = true

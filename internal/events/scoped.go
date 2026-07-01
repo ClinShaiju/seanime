@@ -19,6 +19,12 @@ func (s *ScopedWSEventManager) SendEvent(t string, payload interface{}) {
 	s.inner.SendEventToUserOrUnscoped(s.userID, t, payload)
 }
 
+// SendEventToLoggedIn on a user-scoped manager stays scoped to the owner — the "all logged-in
+// users" semantic only exists on the global manager (pool-wide broadcasts go through it).
+func (s *ScopedWSEventManager) SendEventToLoggedIn(t string, payload interface{}) {
+	s.SendEvent(t, payload)
+}
+
 func (s *ScopedWSEventManager) SendEventTo(clientId string, t string, payload interface{}, noLog ...bool) {
 	s.inner.SendEventToIfOwner(clientId, s.userID, t, payload, noLog...)
 }

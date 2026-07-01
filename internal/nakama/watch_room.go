@@ -355,9 +355,12 @@ func (h *WatchRoomHub) JoinRoom(roomID string, user PoolUser, clientID, password
 		// Reconnect / new tab: refresh the driving client, keep host/control/joinedAt.
 		// No password re-check — they're already a member (and a reconnect carries none).
 		p.ClientID = clientID
-		// If this is the original host returning, control reverts to them (§2.6).
+		// If this is the original host returning, control reverts to them (§2.6). Point the
+		// ticker's exclusion at their new client too — leaving it on the previous driver echoed
+		// stale position back to the reclaiming host for up to a heartbeat (~1s twitch).
 		if p.IsHost {
 			room.ControllerKey = key
+			room.lastControllerClientID = clientID
 		}
 		room.mu.Unlock()
 		h.broadcastRoomState(room)
@@ -653,8 +656,21 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	// not the current controller hands control to them — everyone else, including the previous
 	// controller, then follows (their clients recompute amController from the new ControllerKey,
 	// stop heartbeating, and start applying). resolveRelay already verified the sender may control.
+	//
+	// A bare PAUSE never transfers control: the client-side buffering guards are heuristics, and
+	// a stalled player (MPV rebuffering) emitting a pause >echoDebounce after the last change is
+	// indistinguishable from a user pause — letting it steal the controller anchored the room to
+	// a frozen player (the rubber-band). The pause still APPLIES (room pauses); only the
+	// controller transfer requires a play or a seek — deliberate acts a stall can't fake.
+	isBarePause := p.Paused && func() bool {
+		posDelta := p.CurrentTime - room.currentPositionLocked()
+		if posDelta < 0 {
+			posDelta = -posDelta
+		}
+		return posDelta <= echoPosTol
+	}()
 	controlHandedOff := false
-	if !p.Heartbeat && !p.Stopped && senderKey != "" && senderKey != room.ControllerKey {
+	if !p.Heartbeat && !p.Stopped && senderKey != "" && senderKey != room.ControllerKey && !isBarePause {
 		room.ControllerKey = senderKey
 		controlHandedOff = true
 	}
@@ -891,12 +907,14 @@ func (h *WatchRoomHub) logf(format string, args ...interface{}) {
 }
 
 // broadcastRoomsUpdated pushes the room list to all connected UI clients (rooms are
-// pool-visible). Guarded so the hub is usable without a manager (unit tests).
+// pool-visible). Logged-in only: room cards carry usernames + what media is being watched,
+// which a pre-login (server-password-only) socket on a networked server shouldn't see.
+// Guarded so the hub is usable without a manager (unit tests).
 func (h *WatchRoomHub) broadcastRoomsUpdated() {
 	if h.manager == nil || h.manager.wsEventManager == nil {
 		return
 	}
-	h.manager.wsEventManager.SendEvent(events.NakamaRoomsUpdated, h.ListRooms())
+	h.manager.wsEventManager.SendEventToLoggedIn(events.NakamaRoomsUpdated, h.ListRooms())
 }
 
 // snapshotLocked returns a copy of the room that is safe to JSON-marshal/send OUTSIDE room.mu:

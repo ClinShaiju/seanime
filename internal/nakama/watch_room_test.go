@@ -398,3 +398,56 @@ func TestWatchRoom_ReapIdleRooms(t *testing.T) {
 		t.Fatal("room idle past the TTL should be reaped")
 	}
 }
+
+// A bare pause from a controlling member must apply (room pauses) but must NOT transfer the
+// controller: a stalled player emitting a pause is indistinguishable from a user pause, and a
+// stall stealing control anchored the room to a frozen player (the rubber-band). A seek or a
+// play from the same member still hands control over.
+func TestWatchRoom_BarePauseDoesNotStealControl(t *testing.T) {
+	h := newTestHub()
+	host := localUser("alice")
+	room, _ := h.CreateRoom(host, "c1", "Room", "")
+	h.JoinRoom(room.ID, localUser("bob"), "c2", "")
+	_ = h.SetControl(room.ID, host.Key(), localUser("bob").Key(), true, false)
+
+	// Host starts playback at t=100.
+	h.RelayPlaybackStatus("c1", &RoomPlaybackStatusPayload{
+		RoomId: room.ID, Paused: false, CurrentTime: 100, MediaId: 1, EpisodeNumber: 1, StreamType: WatchPartyStreamTypeDebrid,
+	})
+	if room.ControllerKey != host.Key() {
+		t.Fatalf("host should be controller, got %s", room.ControllerKey)
+	}
+
+	// Wait out the cross-echo debounce so bob's action counts as genuine.
+	time.Sleep(echoDebounce + 50*time.Millisecond)
+
+	// Bob PAUSES at (about) the current position: applies, but control stays with the host.
+	room.mu.RLock()
+	pos := room.currentPositionLocked()
+	room.mu.RUnlock()
+	h.RelayPlaybackStatus("c2", &RoomPlaybackStatusPayload{
+		RoomId: room.ID, Paused: true, CurrentTime: pos, MediaId: 1, EpisodeNumber: 1, StreamType: WatchPartyStreamTypeDebrid,
+	})
+	room.mu.RLock()
+	paused, ctrl := room.paused, room.ControllerKey
+	room.mu.RUnlock()
+	if !paused {
+		t.Fatal("bob's pause should apply to the room state")
+	}
+	if ctrl != host.Key() {
+		t.Fatalf("a bare pause must not transfer control, got %s", ctrl)
+	}
+
+	time.Sleep(echoDebounce + 50*time.Millisecond)
+
+	// Bob SEEKS: a deliberate act — control hands over.
+	h.RelayPlaybackStatus("c2", &RoomPlaybackStatusPayload{
+		RoomId: room.ID, Paused: true, CurrentTime: pos + 300, MediaId: 1, EpisodeNumber: 1, StreamType: WatchPartyStreamTypeDebrid,
+	})
+	room.mu.RLock()
+	ctrl = room.ControllerKey
+	room.mu.RUnlock()
+	if ctrl != localUser("bob").Key() {
+		t.Fatalf("a seek should hand control to bob, got %s", ctrl)
+	}
+}

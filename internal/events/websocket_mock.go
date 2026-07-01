@@ -37,6 +37,10 @@ func (m *MockWSEventManager) SendEvent(t string, payload interface{}) {
 	m.Logger.Trace().Any("payload", payload).Str("type", t).Msg("ws: Sent message")
 }
 
+func (m *MockWSEventManager) SendEventToLoggedIn(t string, payload interface{}) {
+	m.SendEvent(t, payload)
+}
+
 func (m *MockWSEventManager) SendEventTo(clientId string, t string, payload interface{}, noLog ...bool) {
 	m.mu.Lock()
 	m.sentEvents = append(m.sentEvents, MockWSEvent{Type: t, Payload: payload})
