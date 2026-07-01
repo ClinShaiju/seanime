@@ -31,9 +31,11 @@ type (
 		// from other goroutines (Repository.GetStreamURL / GetUserStreamShare) — without this
 		// a peer could read a torn selection (URL refreshed but file id not, or vice-versa).
 		// Always go through the get*/set* helpers below, never the fields directly.
-		// ponytail: the two ctx cancel funcs are NOT under this lock — context.CancelFunc is
-		// idempotent and safe to call concurrently, so their worst case is a benign double-cancel
-		// or a brief ctx leak; guard them here too if a -race test for this package is ever wired up.
+		// The two ctx cancel funcs are under this lock too (swap/cancel helpers below): the old
+		// unlocked pattern had every goroutine cancel-and-nil the FIELD, so a previous stream's
+		// goroutine exiting late (its poll backoff is up to 4s) cancelled the NEXT stream's
+		// context — a silent "second episode never starts". Goroutines now cancel their own
+		// captured cancel func; the field is only for cancelling the CURRENT stream.
 		stateMu               sync.RWMutex
 		currentTorrentItemId  string
 		downloadCtxCancelFunc context.CancelFunc
@@ -192,6 +194,40 @@ func (s *StreamManager) setPreviousStreamOptions(opts *StartStreamOptions) {
 	s.stateMu.Unlock()
 }
 
+// setDownloadCancel installs the CURRENT stream's download cancel func (nil to clear).
+func (s *StreamManager) setDownloadCancel(c context.CancelFunc) {
+	s.stateMu.Lock()
+	s.downloadCtxCancelFunc = c
+	s.stateMu.Unlock()
+}
+
+// cancelDownloadCtx cancels the current stream's download context (if any) and clears the slot.
+func (s *StreamManager) cancelDownloadCtx() {
+	s.stateMu.Lock()
+	c := s.downloadCtxCancelFunc
+	s.downloadCtxCancelFunc = nil
+	s.stateMu.Unlock()
+	if c != nil {
+		c()
+	}
+}
+
+func (s *StreamManager) setPlaybackSubscriberCancel(c context.CancelFunc) {
+	s.stateMu.Lock()
+	s.playbackSubscriberCtxCancelFunc = c
+	s.stateMu.Unlock()
+}
+
+func (s *StreamManager) cancelPlaybackSubscriberCtx() {
+	s.stateMu.Lock()
+	c := s.playbackSubscriberCtxCancelFunc
+	s.playbackSubscriberCtxCancelFunc = nil
+	s.stateMu.Unlock()
+	if c != nil {
+		c()
+	}
+}
+
 func (s *StreamManager) getPreviousStreamOptions() (*StartStreamOptions, bool) {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
@@ -333,16 +369,9 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		Any("playbackType", opts.PlaybackType).
 		Int("mediaId", opts.MediaId).Msgf("debridstream: Starting stream for episode %s", opts.AniDBEpisode)
 
-	// Cancel the download context if it's running
-	if s.downloadCtxCancelFunc != nil {
-		s.downloadCtxCancelFunc()
-		s.downloadCtxCancelFunc = nil
-	}
-
-	if s.playbackSubscriberCtxCancelFunc != nil {
-		s.playbackSubscriberCtxCancelFunc()
-		s.playbackSubscriberCtxCancelFunc = nil
-	}
+	// Cancel the previous stream's download/subscriber contexts if they're running
+	s.cancelDownloadCtx()
+	s.cancelPlaybackSubscriberCtx()
 
 	provider, err := s.repository.GetProvider()
 	if err != nil {
@@ -510,7 +539,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 	// Save the current torrent item id
 	s.setCurrentTorrentItemId(torrentItemId)
 	ctx, cancelCtx := context.WithCancel(context.Background())
-	s.downloadCtxCancelFunc = cancelCtx
+	s.setDownloadCancel(cancelCtx)
 
 	readyCh := make(chan struct{})
 	readyOnce := sync.Once{}
@@ -527,13 +556,10 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			s.ev(opts).SendEvent(events.HideIndefiniteLoader, "debridstream")
 		}()
 
-		defer func() {
-			// Cancel the context
-			if s.downloadCtxCancelFunc != nil {
-				s.downloadCtxCancelFunc()
-				s.downloadCtxCancelFunc = nil
-			}
-		}()
+		// Cancel OUR OWN context on exit — never the shared field: a previous stream's goroutine
+		// exiting late (poll backoff up to 4s) used to cancel the NEXT stream's context through
+		// the field, silently killing the new download ("second episode never starts").
+		defer cancelCtx()
 
 		s.repository.logger.Debug().Msg("debridstream: Listening to torrent status")
 
@@ -730,8 +756,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			s.ev(opts).SendEvent(events.InfoToast, "Sending stream to media player...")
 			s.ev(opts).SendEvent(events.ShowIndefiniteLoader, "debridstream")
 
-			var playbackSubscriberCtx context.Context
-			playbackSubscriberCtx, s.playbackSubscriberCtxCancelFunc = context.WithCancel(context.Background())
+			playbackSubscriberCtx, playbackSubscriberCancel := context.WithCancel(context.Background())
+			s.setPlaybackSubscriberCancel(playbackSubscriberCancel)
 			playbackSubscriber := s.pb(opts).SubscribeToPlaybackStatus("debridstream")
 
 			// Sends the stream to the media player
@@ -743,10 +769,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			}, media, aniDbEpisode)
 			if err != nil {
 				go s.pb(opts).UnsubscribeFromPlaybackStatus("debridstream")
-				if s.playbackSubscriberCtxCancelFunc != nil {
-					s.playbackSubscriberCtxCancelFunc()
-					s.playbackSubscriberCtxCancelFunc = nil
-				}
+				playbackSubscriberCancel()
 				// Failed to start the stream, we'll drop the torrents and stop the server
 				s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
 					Status:      StreamStatusFailed,
@@ -760,12 +783,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			// Reset the current stream url when playback is stopped
 			go func() {
 				defer util.HandlePanicInModuleThen("debridstream/PlaybackSubscriber", func() {})
-				defer func() {
-					if s.playbackSubscriberCtxCancelFunc != nil {
-						s.playbackSubscriberCtxCancelFunc()
-						s.playbackSubscriberCtxCancelFunc = nil
-					}
-				}()
+				// Cancel our OWN context on exit, never the shared field (see download goroutine).
+				defer playbackSubscriberCancel()
 				select {
 				case <-playbackSubscriberCtx.Done():
 					s.ev(opts).SendEvent(events.HideIndefiniteLoader, "debridstream")
@@ -875,13 +894,14 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 	if dm := s.ds(prevOpts); dm != nil {
 		dm.CloseOpen("")
 		// Release the finished episode's cached MKV metadata (font attachments in RAM).
+		// Both URLs: the preload entry's (binge path) AND the live stream's — a COLD-started
+		// episode has no preload entry, so without the second call its parser (fonts, tens of
+		// MB) lingered in RAM for the full 2h cache TTL.
 		dm.DropStreamMetadata(endedStreamUrl)
+		dm.DropStreamMetadata(s.getCurrentStreamUrl())
 	}
 
-	if s.downloadCtxCancelFunc != nil {
-		s.downloadCtxCancelFunc()
-		s.downloadCtxCancelFunc = nil
-	}
+	s.cancelDownloadCtx()
 
 	s.ev(prevOpts).SendEvent(events.HideIndefiniteLoader, "debridstream")
 
@@ -902,6 +922,11 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 			s.repository.logger.Err(err).Msg("debridstream: Failed to remove torrent")
 		}
 	}
+
+	// Clear the whole share triple together — leaving a stale itemId/fileId with an empty URL
+	// hands a torn selection to anything reading shareSnapshot after a cancel.
+	s.setCurrentTorrentItemId("")
+	s.setCurrentFileId("")
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1262,14 +1287,8 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		Str("playbackType", string(opts.PlaybackType)).
 		Msgf("debridstream: Using preloaded stream for episode %s", opts.AniDBEpisode)
 
-	if s.downloadCtxCancelFunc != nil {
-		s.downloadCtxCancelFunc()
-		s.downloadCtxCancelFunc = nil
-	}
-	if s.playbackSubscriberCtxCancelFunc != nil {
-		s.playbackSubscriberCtxCancelFunc()
-		s.playbackSubscriberCtxCancelFunc = nil
-	}
+	s.cancelDownloadCtx()
+	s.cancelPlaybackSubscriberCtx()
 
 	// The native player needs an open session before we hand it the stream.
 	if opts.PlaybackType == PlaybackTypeNativePlayer {
@@ -1285,13 +1304,32 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	s.setCurrentTorrentItemId(cached.torrentItemId)
 
 	streamCtx, cancelCtx := context.WithCancel(context.Background())
-	s.downloadCtxCancelFunc = cancelCtx
+	s.setDownloadCancel(cancelCtx)
 
 	streamUrl := cached.streamUrl
 	// Debrid stream URLs (CDN tokens) expire far sooner than the torrent. If this cached URL
 	// is stale, re-resolve it from the already-added torrentItemId — cheap, and crucially it
 	// does NOT call createtorrent (the 60/hour-limited endpoint), so the SELECTION stays cached
 	// for a day while the URL is kept valid.
+	if cached.torrentItemId == "" && time.Since(cached.urlResolvedAt) > urlRefreshTTL {
+		// Direct-URL entry (no torrent item to re-resolve from): the only thing we can do with a
+		// stale link is check it's alive. Dead → drop the entry and fail distinctly so the user's
+		// retry runs a cold resolve instead of handing the player a dead URL.
+		if !probeStreamURL(ctx, streamUrl, prewarmProbeTimeoutPlay) {
+			s.preloadMu.Lock()
+			delete(s.preloads, preloadKey(opts))
+			if s.lastConsumedKey == preloadKey(opts) {
+				s.lastConsumedKey = ""
+			}
+			s.preloadMu.Unlock()
+			cancelCtx()
+			s.setDownloadCancel(nil)
+			if opts.PlaybackType == PlaybackTypeNativePlayer {
+				s.ds(opts).AbortOpen(opts.ClientId, fmt.Errorf("preloaded stream link expired"))
+			}
+			return fmt.Errorf("debridstream: Preloaded direct stream link expired, retry to re-resolve")
+		}
+	}
 	if cached.torrentItemId != "" && time.Since(cached.urlResolvedAt) > urlRefreshTTL {
 		if provider, perr := s.repository.GetProvider(); perr == nil {
 			itemCh := make(chan debrid.TorrentItem, 1)
@@ -1335,7 +1373,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	if event.DefaultPrevented {
 		s.repository.logger.Debug().Msg("debridstream: Preloaded stream prevented by hook")
 		cancelCtx()
-		s.downloadCtxCancelFunc = nil
+		s.setDownloadCancel(nil)
 		return nil
 	}
 
@@ -1388,7 +1426,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		// Reuse is gated to the two types above; this is unreachable.
 		s.repository.logger.Warn().Str("playbackType", string(opts.PlaybackType)).Msg("debridstream: Preloaded stream for unsupported playback type, ignoring")
 		cancelCtx()
-		s.downloadCtxCancelFunc = nil
+		s.setDownloadCancel(nil)
 		return nil
 	}
 
