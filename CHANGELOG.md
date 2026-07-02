@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.8.17
+
+### Media page
+
+- ✨ **Banner trailers are now a toggle** — "Play trailer in banner" in Settings → UI → Media page (off by default, per-user). Muted looping trailer behind the anime page banner when AniList has one.
+- 🦺 **Fixed: banner trailer faded to a white screen on every show.** Plain YouTube iframes render a blank document in Denshi (Electron) and Chromium's storage-access error page in browsers; the banner now uses the discover header's embed paths (Denshi webview / credentialless iframe) and hides itself on error instead of covering the banner.
+
+### Player
+
+- ✨ **Stremio-style loading screen.** While a stream is prepared, the player now shows the show's fanart backdrop with a slowly breathing clearlogo (TVDB art via ani.zip, keyless) instead of a black screen — the status line ("Loading metadata…", "Loading preloaded stream…") stays visible underneath. Falls back to pulsing title text without a logo, and to the previous gradient when no artwork exists.
+
 ## v3.8.16
 
 Fixes from the first live direct-CDN session (log-verified root causes).
