@@ -3,16 +3,23 @@ import { AddUnknownMedia_Variables } from "@/api/generated/endpoint.types"
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { AL_AnimeCollection, Anime_LibraryCollection, Anime_ScheduleItem } from "@/api/generated/types"
 import { useRefreshAnimeCollection } from "@/api/hooks/anilist.hooks"
+import { useQuerySnapshot, useSnapshotPlaceholder } from "@/lib/query-snapshot"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
 export function useGetLibraryCollection({ enabled }: { enabled?: boolean } = { enabled: true }) {
-    return useServerQuery<Anime_LibraryCollection>({
+    // SWR across page loads: paint the last snapshot instantly on cold start (Denshi
+    // launch / F5) while the real fetch runs in the background.
+    const placeholderData = useSnapshotPlaceholder<Anime_LibraryCollection>("library-collection")
+    const query = useServerQuery<Anime_LibraryCollection>({
         endpoint: API_ENDPOINTS.ANIME_COLLECTION.GetLibraryCollection.endpoint,
         method: API_ENDPOINTS.ANIME_COLLECTION.GetLibraryCollection.methods[0],
         queryKey: [API_ENDPOINTS.ANIME_COLLECTION.GetLibraryCollection.key],
         enabled: enabled,
+        placeholderData,
     })
+    useQuerySnapshot("library-collection", query)
+    return query
 }
 
 export function useAddUnknownMedia() {

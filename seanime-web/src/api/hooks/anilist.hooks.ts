@@ -17,6 +17,7 @@ import {
     Nullish,
 } from "@/api/generated/types"
 import { getEntryPreloadStaleTime } from "@/lib/entry-preloader"
+import { useQuerySnapshot, useSnapshotPlaceholder } from "@/lib/query-snapshot"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
@@ -29,12 +30,17 @@ export function useGetAnimeCollection() {
     })
 }
 export function useGetRawAnimeCollection() {
-    return useServerQuery<AL_AnimeCollection>({
+    // SWR across page loads — see useGetLibraryCollection.
+    const placeholderData = useSnapshotPlaceholder<AL_AnimeCollection>("raw-anime-collection")
+    const query = useServerQuery<AL_AnimeCollection>({
         endpoint: API_ENDPOINTS.ANILIST.GetRawAnimeCollection.endpoint,
         method: API_ENDPOINTS.ANILIST.GetRawAnimeCollection.methods[0],
         queryKey: [API_ENDPOINTS.ANILIST.GetRawAnimeCollection.key],
         enabled: true,
+        placeholderData,
     })
+    useQuerySnapshot("raw-anime-collection", query)
+    return query
 }
 export function useGetRawAnimeCollectionTags() {
     return useServerQuery<Record<number, Array<string>>>({
