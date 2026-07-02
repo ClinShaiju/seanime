@@ -14,6 +14,7 @@ import (
 	"seanime/internal/platforms/platform"
 	"seanime/internal/util"
 	"seanime/internal/util/result"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -456,6 +457,24 @@ func (vc *VideoCore) setPlaybackState(state *PlaybackState) {
 	vc.playbackStateMu.Lock()
 	defer vc.playbackStateMu.Unlock()
 	vc.playbackState = state
+}
+
+// rebindClient re-points the bound playback at a live client id after the original
+// connection disappeared mid-playback (#814), so playback events keep flowing and
+// server->client sends (subs, skip, progress prompts) reach the live connection.
+func (vc *VideoCore) rebindClient(clientId string) {
+	vc.playbackStateMu.Lock()
+	if vc.playbackState != nil && vc.playbackState.ClientId != clientId {
+		vc.logger.Warn().Str("old", vc.playbackState.ClientId).Str("new", clientId).
+			Msg("videocore: Rebinding playback to live client (previous connection gone)")
+		vc.playbackState.ClientId = clientId
+	}
+	vc.playbackStateMu.Unlock()
+	vc.playbackStatusMu.Lock()
+	if vc.playbackStatus != nil {
+		vc.playbackStatus.ClientId = clientId
+	}
+	vc.playbackStatusMu.Unlock()
 }
 
 func (vc *VideoCore) setPlaybackStatus(status *PlaybackStatus) {
@@ -911,7 +930,18 @@ func (vc *VideoCore) listenToClientEvents() {
 				// Validate that the event is from the current client
 				currentState, hasState := vc.GetPlaybackState()
 				if hasState && eventClientID != "" && eventClientID != currentState.ClientId {
-					continue
+					// #814: a mid-playback disconnect leaves a dead ClientId bound here, and
+					// this filter then drops EVERY future player event — including the video
+					// load that would rebind — until server restart. A new video load always
+					// takes over ("one player at a time"); other events pass only when the
+					// bound connection no longer exists, in which case we adopt the live one.
+					if playerEvent.Type == PlayerEventVideoLoaded {
+						// fall through — the handler below sets the new state
+					} else if slices.Contains(vc.wsEventManager.GetClientIds(), currentState.ClientId) {
+						continue // bound client is alive — ignore the stranger
+					} else {
+						vc.rebindClient(eventClientID)
+					}
 				}
 
 				// Handle events

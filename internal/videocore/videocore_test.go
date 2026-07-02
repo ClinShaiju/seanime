@@ -30,6 +30,8 @@ func newRecordingWSEventManager() *recordingWSEventManager {
 
 func (m *recordingWSEventManager) SendEvent(string, interface{}) {}
 
+func (m *recordingWSEventManager) SendEventToLoggedIn(string, interface{}) {}
+
 func (m *recordingWSEventManager) SendEventTo(clientId string, eventType string, payload interface{}, _ ...bool) {
 	m.sent = append(m.sent, recordedWSEvent{clientId: clientId, eventType: eventType, payload: payload})
 }
