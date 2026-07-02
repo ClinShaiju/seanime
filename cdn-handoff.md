@@ -9,8 +9,23 @@ Server (T1–T6b) + web client (T7 resilience, T9 capability flag) + Denshi CORS
 done, unit tests added (T10 code part), build/vet/tests green.
 Tenji needs nothing: its debrid playback is `playbackType: "externalPlayerLink"`
 (raw CDN into mpv, no CORS constraints) — direct mode only affects `nativeplayer`.
+**First live session (2026-07-02, v3.8.15) findings → fixed in v3.8.16:**
+- **The dual-link premise is void on TorBox**: `requestdl` is idempotent per (torrent, file)
+  — both resolves returned byte-identical URLs, so client video and server subtitle reads
+  always shared ONE link. The duplicate resolve is removed (one `requestdl` per stream
+  start); instead the server behaves on the shared link: the subtitle cluster walk is paced
+  (6 MiB/s, was line speed — the cause of mid-episode 429s → video errors → buffering), and
+  a walk that still dies on a sustained throttle retries after a cooldown, resuming from the
+  last delivered cluster. Note this also voids the "N room members, N links" premise —
+  same-account room members share the file's one link.
+- The "Tenji won't start playback" seen that session was NOT direct-CDN related: the server
+  restart rotated the per-boot client-identity secret, orphaning Tenji's websocket from its
+  client id, so `external-player-open-url` went nowhere. Fixed: secret persisted
+  (`server_values` table), proof TTL 30d, and Tenji reconnects its socket when its identity
+  diverges from the socket's registration.
+
 Remaining:
-- **T11/T12**: live VPS validation + egress measurement (Denshi 3.8.15 direct + web
+- **T11/T12**: live VPS validation + egress measurement (Denshi direct + web
   tab proxied + two-account watch room).
 - Cast caveat accepted for now: video-core-cast would hand the raw CDN URL to Chromecast in
   direct mode — verify or force-proxy during T11.
