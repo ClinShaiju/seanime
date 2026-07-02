@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, ipcMain, shell, dialog, remote, net, protocol, nativeImage, screen } = require("electron")
+const { app, BrowserWindow, Menu, Tray, ipcMain, shell, dialog, remote, net, protocol, nativeImage, screen, session } = require("electron")
 const path = require("path")
 const { spawn } = require("child_process")
 const fs = require("fs")
@@ -1282,6 +1282,31 @@ function cleanupAndExit() {
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Direct CDN playback — CORS injection
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Debrid CDNs send no CORS headers, so <video crossOrigin="anonymous"> pointed at a raw
+// CDN URL (direct CDN playback mode) fails the CORS check and never plays. Inject
+// Access-Control-Allow-Origin on media responses that lack one. Scoped to
+// resourceType "media" (only media element loads from our own windows), never
+// overriding a header the origin server set itself. "*" is valid here because
+// crossOrigin="anonymous" requests are uncredentialed.
+function setupCdnCorsInjection() {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+        if (details.resourceType === "media") {
+            const responseHeaders = details.responseHeaders || {}
+            const hasAcao = Object.keys(responseHeaders).some(name => name.toLowerCase() === "access-control-allow-origin")
+            if (!hasAcao) {
+                responseHeaders["Access-Control-Allow-Origin"] = ["*"]
+                callback({ responseHeaders })
+                return
+            }
+        }
+        callback({})
+    })
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Initialization
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1408,6 +1433,7 @@ app.whenReady().then(async () => {
         return false
     })
 
+    setupCdnCorsInjection()
     setupAppProtocol()
     startLocalServer()
 
