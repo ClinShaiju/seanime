@@ -87,6 +87,7 @@ import {
     vc_playlistState,
     VideoCorePlaylistControl,
 } from "@/app/(main)/_features/video-core/video-core-playlist"
+import { VideoCoreLoadingScreen } from "@/app/(main)/_features/video-core/video-core-loading-screen"
 import { VideoCoreKeybindingController, VideoCorePreferencesModal } from "@/app/(main)/_features/video-core/video-core-preferences"
 import { VideoCorePreviewManager } from "@/app/(main)/_features/video-core/video-core-preview"
 import { VideoCoreResolutionMenu } from "@/app/(main)/_features/video-core/video-core-resolution-menu"
@@ -127,11 +128,9 @@ import {
     __torrentSearch_selectionEpisodeAtom,
 } from "@/app/(main)/entry/_containers/torrent-search/torrent-search-drawer"
 import { TorrentStreamOverlay } from "@/app/(main)/entry/_containers/torrent-stream/torrent-stream-overlay"
-import { GradientBackground } from "@/components/shared/gradient-background"
 import { LuffyError } from "@/components/shared/luffy-error"
 import { Button, IconButton } from "@/components/ui/button"
 import { cn } from "@/components/ui/core/styling"
-import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import { Modal } from "@/components/ui/modal"
 import { useDisclosure } from "@/hooks/use-disclosure"
 import { logger } from "@/lib/helpers/debug"
@@ -145,7 +144,6 @@ import React, { useMemo, useRef, useState } from "react"
 import { flushSync } from "react-dom"
 import { BiExpand, BiX } from "react-icons/bi"
 import { FiMinimize2 } from "react-icons/fi"
-import { ImSpinner2 } from "react-icons/im"
 import { PiSpinnerDuotone } from "react-icons/pi"
 import { RemoveScrollBar } from "react-remove-scroll-bar"
 import { useUnmount, useUpdateEffect, useWindowSize } from "react-use"
@@ -650,21 +648,14 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                 ) : (
                     <div
                         data-vc-element="loading-overlay"
-                        className="w-full h-full absolute flex justify-center items-center flex-col space-y-4 bg-black rounded-md"
+                        className="w-full h-full absolute bg-black rounded-md overflow-hidden"
                     >
+                        <VideoCoreLoadingScreen
+                            loadingState={state.loadingState}
+                            showArtwork={!isMiniPlayer && !inline}
+                            media={state.playbackInfo?.media}
+                        />
                         {!inline && <FloatingButtons part="loading" onTerminateStream={onTerminateStream} />}
-                        {state.loadingState && (
-                            <LoadingSpinner
-                                title={state.loadingState || "Loading..."}
-                                spinner={<ImSpinner2 className="size-20 text-white animate-spin" />}
-                                containerClass="z-[1]"
-                            />
-                        )}
-                        {!isMiniPlayer && !inline && (
-                            <div className="opacity-50 absolute inset-0 z-[0] overflow-hidden" data-vc-element="loading-overlay-gradient">
-                                <GradientBackground duration={10} breathingRange={5} />
-                            </div>
-                        )}
                     </div>
                 )}
             </div>

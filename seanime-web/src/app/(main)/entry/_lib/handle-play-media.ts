@@ -9,6 +9,7 @@ import {
     useExternalPlayerLink,
 } from "@/app/(main)/_atoms/playback.atoms"
 import { useTorrentstreamAutoplay } from "@/app/(main)/_features/autoplay/autoplay"
+import { vc_loadingMediaIdAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { __mpt_currentExternalPlayerLinkAtom } from "@/app/(main)/_features/progress-tracking/manual-progress-tracking"
 import { useServerHMACAuth, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { useMediastreamActiveOnDevice, useMediastreamCurrentFile } from "@/app/(main)/mediastream/_lib/mediastream.atoms"
@@ -44,6 +45,7 @@ export function useHandlePlayMedia() {
     const { mutate: directstreamPlayLocalFile } = useDirectstreamPlayLocalFile()
 
     const { setTorrentstreamAutoplayInfo } = useTorrentstreamAutoplay()
+    const setLoadingMediaId = useSetAtom(vc_loadingMediaIdAtom)
 
     const { getForcePlaybackMethod, resetForcePlaybackMethod } = useForcePlaybackMethod()
 
@@ -62,6 +64,8 @@ export function useHandlePlayMedia() {
         resetForcePlaybackMethod()
 
         setTorrentstreamAutoplayInfo(null)
+        // Let the player's loading screen show this show's artwork.
+        setLoadingMediaId(mediaId)
 
         if (episode._isNakamaEpisode) {
             // If external player link is set, open the media file in the external player

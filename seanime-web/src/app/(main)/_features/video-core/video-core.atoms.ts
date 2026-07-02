@@ -13,6 +13,12 @@ export type {
     VideoCore_VideoSubtitleTrack, VideoCore_PlaybackType, VideoCore_VideoSource, VideoCore_VideoPlaybackInfo,
 }
 
+// AniList id of the media a stream is being prepared for. Set by the playback
+// initiators (torrent/debrid/local-file handlers) before the server's
+// "open-and-await" arrives — playbackInfo is still null at that point — so the
+// loading screen can show the show's artwork. Cleared on terminate/abort.
+export const vc_loadingMediaIdAtom = atom<number | null>(null)
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 export type VideoCoreSettings = {

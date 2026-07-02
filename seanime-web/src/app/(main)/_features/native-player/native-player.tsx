@@ -4,12 +4,12 @@ import { vc_subtitleManager } from "@/app/(main)/_features/video-core/video-core
 import { VideoCore } from "@/app/(main)/_features/video-core/video-core"
 import { vc_miniPlayer } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_videoElement } from "@/app/(main)/_features/video-core/video-core-atoms"
-import { VideoCoreLifecycleState } from "@/app/(main)/_features/video-core/video-core.atoms"
+import { vc_loadingMediaIdAtom, VideoCoreLifecycleState } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { clientIdAtom } from "@/app/websocket-provider"
 import { logger } from "@/lib/helpers/debug"
 import { WSEvents } from "@/lib/server/ws-events"
 import { useQueryClient } from "@tanstack/react-query"
-import { useAtom, useAtomValue } from "jotai"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import React from "react"
 import { toast } from "sonner"
 import { useWebsocketMessageListener, useWebsocketSender } from "../../_hooks/handle-websockets"
@@ -34,6 +34,7 @@ export function NativePlayer() {
     const [state, setState] = useAtom(nativePlayer_stateAtom)
     const [miniPlayer, setMiniPlayer] = useAtom(vc_miniPlayer)
     const subtitleManager = useAtomValue(vc_subtitleManager)
+    const setLoadingMediaId = useSetAtom(vc_loadingMediaIdAtom)
 
     // AniSkip
     const { data: aniSkipData } = useSkipData(state?.playbackInfo?.media?.idMal, state?.playbackInfo?.episode?.progressNumber ?? -1)
@@ -132,6 +133,7 @@ export function NativePlayer() {
                 case "abort-open":
                     log.info("Abort open event received", { payload })
                     resetSubtitleBuffer()
+                    setLoadingMediaId(null)
                     if (!(payload as string)) {
                         setMiniPlayer(true)
                         setState(draft => {
@@ -199,6 +201,7 @@ export function NativePlayer() {
         const playbackType = state.playbackInfo?.streamType || ""
 
         resetSubtitleBuffer()
+        setLoadingMediaId(null)
 
         // Clean up player first
         if (videoElement) {

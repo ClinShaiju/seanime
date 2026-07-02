@@ -11,6 +11,7 @@ import {
 import { lastDebridStreamStartAtom } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-reconnect"
 import { __debridstream_stateAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-overlay"
 import { __debridStream_currentSessionAutoSelectAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-page"
+import { vc_loadingMediaIdAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { ForcePlaybackMethod, useForcePlaybackMethod } from "@/app/(main)/entry/_lib/handle-play-media"
 import { clientIdAtom } from "@/app/websocket-provider"
 import { logger } from "@/lib/helpers/debug"
@@ -51,6 +52,7 @@ export function useHandleStartDebridStream() {
 
     const setCurrentSessionAutoSelect = useSetAtom(__debridStream_currentSessionAutoSelectAtom)
     const setLastDebridStreamStart = useSetAtom(lastDebridStreamStartAtom)
+    const setLoadingMediaId = useSetAtom(vc_loadingMediaIdAtom)
 
     const [state, setState] = useAtom(__debridstream_stateAtom)
 
@@ -100,6 +102,8 @@ export function useHandleStartDebridStream() {
         }
         // Remember the active stream so it can be re-issued if the server restarts mid-play.
         if (!params.preload) setLastDebridStreamStart(vars)
+        // Let the player's loading screen show this show's artwork.
+        if (!params.preload) setLoadingMediaId(params.mediaId)
         mutate(vars, {
             onSuccess: () => {
                 // Refresh the prewarm badge set right after a successful preload (replaces the old
@@ -135,6 +139,8 @@ export function useHandleStartDebridStream() {
         }
         // Remember the active stream so it can be re-issued if the server restarts mid-play.
         if (!params.preload) setLastDebridStreamStart(vars)
+        // Let the player's loading screen show this show's artwork.
+        if (!params.preload) setLoadingMediaId(params.mediaId)
         mutate(vars, {
             onSuccess: () => {
                 // Refresh the prewarm badge set right after a successful preload (replaces the old

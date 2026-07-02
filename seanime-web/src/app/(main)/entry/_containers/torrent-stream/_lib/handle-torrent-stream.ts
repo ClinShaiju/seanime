@@ -8,6 +8,7 @@ import {
 } from "@/app/(main)/_atoms/playback.atoms"
 import { getNextBatchFileSelection, useAutoPlaySelectedTorrent, useTorrentstreamAutoplay } from "@/app/(main)/_features/autoplay/autoplay"
 import { usePlaylistManager } from "@/app/(main)/_features/playlists/_containers/global-playlist-manager"
+import { vc_loadingMediaIdAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { useWebsocketMessageListener } from "@/app/(main)/_hooks/handle-websockets"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import {
@@ -52,6 +53,7 @@ export function useHandleStartTorrentStream() {
 
     const setLoadingState = useSetAtom(__torrentstream__loadingStateAtom)
     const setIsLoaded = useSetAtom(__torrentstream__isLoadedAtom)
+    const setLoadingMediaId = useSetAtom(vc_loadingMediaIdAtom)
     const { torrentStreamingPlayback, electronPlaybackMethod } = useCurrentDevicePlaybackSettings()
     const { externalPlayerLink } = useExternalPlayerLink()
     const clientId = useAtomValue(clientIdAtom)
@@ -85,6 +87,8 @@ export function useHandleStartTorrentStream() {
         const forcePlaybackMethod = getForcePlaybackMethod()
         resetForcePlaybackMethod()
         logger("TORRENT STREAM SELECTION").info("Starting torrent stream", params, getPlaybackType(forcePlaybackMethod))
+        // Let the player's loading screen show this show's artwork.
+        if (!params.preload) setLoadingMediaId(params.mediaId)
         mutate({
             mediaId: params.mediaId,
             episodeNumber: params.episodeNumber,
@@ -111,6 +115,8 @@ export function useHandleStartTorrentStream() {
         const forcePlaybackMethod = getForcePlaybackMethod()
         resetForcePlaybackMethod()
         logger("TORRENT STREAM SELECTION").info("Starting torrent stream (auto select)", params, getPlaybackType(forcePlaybackMethod))
+        // Let the player's loading screen show this show's artwork.
+        if (!params.preload) setLoadingMediaId(params.mediaId)
         mutate({
             mediaId: params.mediaId,
             episodeNumber: params.episodeNumber,
