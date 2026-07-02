@@ -38,8 +38,17 @@ type (
 
 		// fileIdCache maps "torrentID|shortName" -> numeric TorBox file id, so repeat resolves
 		// of the same torrent+file (urlRefreshTTL refresh, replays, cross-consumer reuse) skip
-		// the extra mylist round-trip in GetTorrentDownloadUrl. The first resolve still fetches.
+		// the extra mylist round-trip in GetTorrentDownloadUrl. GetTorrentStreamUrl's readiness
+		// poll primes it, so even the first play skips that fetch.
 		fileIdCache sync.Map
+
+		// infoCache memoizes /checkcached//torrentinfo file lists by lowercase infohash. A
+		// torrent's file list is immutable per hash, so GetInstantAvailability (search ranking)
+		// primes it and GetTorrentInfo (file selection, prewarm resolve) reads it — deduping the
+		// winner's second /checkcached on cold plays and the re-resolve on prewarm→play misses.
+		// ponytail: mutex+map, whole-map flush at cap instead of LRU.
+		infoCacheMu sync.Mutex
+		infoCache   map[string]infoCacheEntry
 
 		// requestdlLimiter paces /requestdl calls. TorBox's documented per-endpoint budget is
 		// 300/min, but the endpoint is community-observed to throttle at roughly ~20/min (429s
@@ -113,7 +122,39 @@ type (
 			Size int64  `json:"size"`
 		} `json:"files"`
 	}
+
+	infoCacheEntry struct {
+		info *TorrentInfo
+		at   time.Time
+	}
 )
+
+const (
+	infoCacheTTL = 1 * time.Hour
+	infoCacheCap = 4096
+)
+
+func (t *TorBox) storeTorrentInfo(hash string, info *TorrentInfo) {
+	if hash == "" || info == nil {
+		return
+	}
+	t.infoCacheMu.Lock()
+	defer t.infoCacheMu.Unlock()
+	if t.infoCache == nil || len(t.infoCache) >= infoCacheCap {
+		t.infoCache = make(map[string]infoCacheEntry)
+	}
+	t.infoCache[strings.ToLower(hash)] = infoCacheEntry{info: info, at: time.Now()}
+}
+
+func (t *TorBox) loadTorrentInfo(hash string) (*TorrentInfo, bool) {
+	t.infoCacheMu.Lock()
+	defer t.infoCacheMu.Unlock()
+	e, ok := t.infoCache[strings.ToLower(hash)]
+	if !ok || time.Since(e.at) > infoCacheTTL {
+		return nil, false
+	}
+	return e.info, true
+}
 
 func NewTorBox(logger *zerolog.Logger) debrid.Provider {
 	return &TorBox{
@@ -318,6 +359,14 @@ func (t *TorBox) GetInstantAvailability(hashes []string) map[string]debrid.Torre
 					Size: file.Size,
 				}
 			}
+
+			// Prime the info cache — same endpoint/shape GetTorrentInfo would re-fetch for the
+			// winner right after this ranking pass.
+			infoFiles := make([]*TorrentInfoFile, 0, len(item.Files))
+			for _, file := range item.Files {
+				infoFiles = append(infoFiles, &TorrentInfoFile{Name: file.Name, Size: file.Size})
+			}
+			t.storeTorrentInfo(item.Hash, &TorrentInfo{Name: item.Name, Hash: item.Hash, Size: item.Size, Files: infoFiles})
 		}
 
 	}
@@ -409,26 +458,35 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 			close(doneCh)
 		}()
 
-		// ponytail: poll fast then back off (500ms→1s→2s→4s). Cached torrents report ready on the
-		// first poll, so the old fixed 4s first-wait burned ~4s on the common case. Cap at 4s.
-		delay := 500 * time.Millisecond
+		// ponytail: first poll is immediate (cached torrents report ready on poll #1), then back
+		// off 500ms→1s→2s→4s cap.
+		delay := time.Duration(0)
 		for {
 			select {
 			case <-ctx.Done():
 				err = ctx.Err()
 				return
 			case <-time.After(delay):
-				torrent, _err := t.GetTorrent(opts.ID)
+				// Raw fetch (not GetTorrent) so we keep Files — priming fileIdCache below lets
+				// GetTorrentDownloadUrl skip its own /mylist re-fetch even on the first play.
+				rawTorrent, _err := t.getTorrent(opts.ID)
 				if _err != nil {
 					t.logger.Error().Err(_err).Msg("torbox: Failed to get torrent")
 					err = fmt.Errorf("torbox: Failed to get torrent: %w", _err)
 					return
 				}
+				torrent := toDebridTorrent(rawTorrent)
 
 				itemCh <- *torrent
 
 				// Check if the torrent is ready
 				if torrent.IsReady {
+					for _, f := range rawTorrent.Files {
+						if f.ShortName != "" {
+							t.fileIdCache.Store(opts.ID+"|"+f.ShortName, strconv.Itoa(f.ID))
+						}
+					}
+
 					// ponytail: dropped the 1s settle sleep — DownloadPresent=true means the file is
 					// available, so requestdl resolves immediately; the 429 backoff covers rate limits.
 					downloadUrl, err := t.GetTorrentDownloadUrl(debrid.DownloadTorrentOptions{
@@ -444,7 +502,9 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 					return
 				}
 
-				if delay < 4*time.Second {
+				if delay == 0 {
+					delay = 500 * time.Millisecond
+				} else if delay < 4*time.Second {
 					delay *= 2
 				}
 			}
@@ -552,6 +612,13 @@ func (t *TorBox) GetTorrentInfo(opts debrid.GetTorrentInfoOptions) (ret *debrid.
 		return nil, fmt.Errorf("torbox: No info hash provided")
 	}
 
+	// File lists are immutable per infohash — serve from the memo when a recent search or
+	// resolve already fetched this hash. toDebridTorrentInfo allocates fresh, so callers
+	// can't mutate the cached copy.
+	if info, ok := t.loadTorrentInfo(opts.InfoHash); ok {
+		return toDebridTorrentInfo(info), nil
+	}
+
 	resp, err := t.doQuery("GET", t.baseUrl+fmt.Sprintf("/torrents/checkcached?hash=%s&format=object&list_files=true", opts.InfoHash), nil, "application/json")
 	if err != nil {
 		return nil, fmt.Errorf("torbox: Failed to check cached torrent: %w", err)
@@ -570,6 +637,7 @@ func (t *TorBox) GetTorrentInfo(opts debrid.GetTorrentInfoOptions) (ret *debrid.
 					return nil, fmt.Errorf("torbox: Failed to parse cached torrent: %w", err)
 				}
 
+				t.storeTorrentInfo(opts.InfoHash, &torrent)
 				ret = toDebridTorrentInfo(&torrent)
 				return ret, nil
 			}
@@ -602,6 +670,7 @@ func (t *TorBox) GetTorrentInfo(opts debrid.GetTorrentInfoOptions) (ret *debrid.
 		return nil, fmt.Errorf("torbox: Failed to parse torrent: %w", err)
 	}
 
+	t.storeTorrentInfo(opts.InfoHash, &torrent)
 	ret = toDebridTorrentInfo(&torrent)
 
 	return ret, nil
