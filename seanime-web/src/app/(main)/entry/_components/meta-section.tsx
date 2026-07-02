@@ -74,6 +74,7 @@ export function MetaSection(props: { entry: Anime_Entry, details: AL_AnimeDetail
         <MediaPageHeader
             backgroundImage={entry.media?.bannerImage}
             coverImage={entry.media?.coverImage?.extraLarge}
+            trailerId={entry.media?.trailer?.site === "youtube" ? entry.media?.trailer?.id : undefined}
         >
 
             <MediaPageHeaderDetailsContainer>

@@ -31,6 +31,44 @@ type MediaPageHeaderProps = {
     children?: React.ReactNode
     backgroundImage?: string
     coverImage?: string
+    trailerId?: string
+}
+
+// #816: muted looping YouTube trailer as the banner background. Desktop-only,
+// respects prefers-reduced-motion, mounts after a delay so the banner image
+// paints first and stays as the poster/fallback.
+function MediaPageHeaderTrailerBackground({ trailerId }: { trailerId: string }) {
+    const [show, setShow] = React.useState(false)
+    const [loaded, setLoaded] = React.useState(false)
+
+    React.useEffect(() => {
+        if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return
+        const t = setTimeout(() => setShow(true), 2000)
+        return () => clearTimeout(t)
+    }, [trailerId])
+
+    if (!show) return null
+
+    return (
+        <div
+            data-media-page-header-banner-trailer
+            className="absolute inset-0 z-[1] overflow-hidden pointer-events-none hidden lg:block"
+        >
+            <iframe
+                src={`https://www.youtube-nocookie.com/embed/${trailerId}?autoplay=1&mute=1&loop=1&playlist=${trailerId}&controls=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&disablekb=1`}
+                title="Trailer"
+                allow="autoplay; encrypted-media"
+                onLoad={() => setLoaded(true)}
+                className={cn(
+                    // 16:9 sized to COVER the full-width banner regardless of its height
+                    "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+                    "w-[max(100%,177.78vh)] h-[max(100%,56.25vw)]",
+                    "opacity-0 transition-opacity duration-1000",
+                    loaded && "opacity-100",
+                )}
+            />
+        </div>
+    )
 }
 
 export function MediaPageHeader(props: MediaPageHeaderProps) {
@@ -39,6 +77,7 @@ export function MediaPageHeader(props: MediaPageHeaderProps) {
         children,
         backgroundImage,
         coverImage,
+        trailerId,
         ...rest
     } = props
 
@@ -170,6 +209,9 @@ export function MediaPageHeader(props: MediaPageHeaderProps) {
                         animate={{ scale: 1, x: 0, y: 1, opacity: shouldDimBanner ? 0.3 : 1 }}
                         transition={{ duration: 0.22, ease: "easeOut" }}
                     />}
+
+                    {(!!trailerId && !shouldBlurBanner && !shouldDimBanner) &&
+                        <MediaPageHeaderTrailerBackground trailerId={trailerId} />}
 
                     {shouldBlurBanner && <div
                         data-media-page-header-banner-blur
