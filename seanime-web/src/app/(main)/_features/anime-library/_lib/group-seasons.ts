@@ -28,14 +28,16 @@ function seasonKey(ref?: Anime_FranchiseRefEntry): number {
 // only used as a fallback when TMDB ids don't already group the seasons.
 export function franchiseTitleKey(title?: string | null): string {
     if (!title) return ""
+    // Strip list mirrors Go's FranchiseTitleStem (franchise.go franchiseStemStrip) exactly —
+    // including "stage" (Initial D Second Stage) which the server also strips.
     const t = ` ${title.toLowerCase()} `
-        .replace(/\b(the\s+)?final\s+season\b/g, " ")
-        .replace(/\b\d+(st|nd|rd|th)\s+season\b/g, " ")
-        .replace(/\b(second|third|fourth|fifth|sixth)\s+season\b/g, " ")
-        .replace(/\bseason\s*\d+\b/g, " ")
+        .replace(/\b(the\s+)?final\s+(season|stage)\b/g, " ")
+        .replace(/\b\d+(st|nd|rd|th)\s+(season|stage)\b/g, " ")
+        .replace(/\b(second|third|fourth|fifth|sixth)\s+(season|stage)\b/g, " ")
+        .replace(/\b(season|stage)\s*\d+\b/g, " ")
         .replace(/\bpart\s*\d+\b/g, " ")
         .replace(/\bcour\s*\d+\b/g, " ")
-        .replace(/\s(ii|iii|iv|v|vi|vii)\s/g, " ")
+        .replace(/\s(ii|iii|iv|v|vi|vii)\b/g, " ") // \b (not \s) to match Go's word-boundary behaviour
         .replace(/[^a-z0-9]+/g, " ")
         .trim()
     return t
