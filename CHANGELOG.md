@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.8.14
+
+### Direct CDN playback (new, opt-in)
+
+- ✨ **Debrid streams can now play straight from the debrid CDN** instead of proxying every byte through the server (`Settings → Debrid → Direct CDN playback`, TorBox only). The server keeps doing what clients can't — MKV metadata parse, ASS subtitle extraction, font serving — over its **own second CDN link** resolved from the same torrent, so client video and server subtitle reads never contend on one link's rate limit. Server egress for playback drops to ~zero.
+- ✨ Watch rooms compose with it: every capable participant resolves their **own** CDN link from the room's shared selection — N members, N independent links, no host relay hop.
+- 🦺 New `POST /debrid/stream/refresh-url` endpoint + player-side resilience: if the raw CDN link dies mid-playback (expired token), the player fetches a fresh link, swaps the source, and resumes where it was (capped retries, cooldown).
+- 🦺 Zero behavior change while the toggle is off or the client isn't capable: web tabs, Chromecast, thumbnails, and cross-server Nakama relay keep using the proxy path untouched. **Note:** the desktop app additionally needs CORS header injection (next Denshi build) before the toggle does anything there.
+
+### Playback & prewarm
+
+- ⚡️ **Prewarm batch fan-out**: when one added torrent is a batch, sibling episodes are preloaded from the same torrent item — no extra torrent adds.
+- ⚡️ TorBox: memoized `checkcached` file lists, immediate first status poll, and the file-id cache is primed from poll data — fewer API round-trips per stream start.
+- 🦺 Prewarm audit fixes: next-episode chaining on play, progress-aware cleanup, metadata-on-hydrate, 14-day recency cutoff, negative cache for failed resolves, 3h TTL for currently-releasing shows.
+- 🦺 Video player rebinds playback to the live client after a mid-playback disconnect (#814).
+
+### Web UI
+
+- ✨ Trailer plays as the anime page banner (#816).
+- ⚡️ Stale-while-revalidate cold start for the library and anime collection — instant paint from cache, refreshed in the background.
+- ✨ My List: scroll position restored (#826), sort applies while searching (#648).
+- 🦺 Franchise grouping: the title-stem regex now strips `(season|stage)` and roman numerals with word boundaries — parity with the Go implementation.
+
 ## v3.8.13
 
 Stability release from a full-fork audit (`fable-audit.md`) — every change is code-reviewed,
