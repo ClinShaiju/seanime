@@ -28,8 +28,13 @@ export function useAnilistAdvancedSearch() {
                 averageScore_greater: __advancedSearch_getValue(params.minScore) !== undefined
                     ? __advancedSearch_getValue(params.minScore)
                     : undefined,
-                sort: (params.title?.length && params.title.length > 0) ? ["SEARCH_MATCH",
-                    ...(__advancedSearch_getValue(params.sorting) || ["SCORE_DESC"])] : (__advancedSearch_getValue(params.sorting) || ["SCORE_DESC"]),
+                // #648: an explicitly-chosen sort leads even while searching (relevance becomes the
+                // tiebreaker); SEARCH_MATCH only leads when no sort was picked.
+                sort: (params.title?.length && params.title.length > 0)
+                    ? (__advancedSearch_getValue(params.sorting)
+                        ? [...__advancedSearch_getValue(params.sorting), "SEARCH_MATCH"]
+                        : ["SEARCH_MATCH", "SCORE_DESC"])
+                    : (__advancedSearch_getValue(params.sorting) || ["SCORE_DESC"]),
                 status: params.sorting?.includes("START_DATE_DESC") ? (__advancedSearch_getValue(params.status)
                     ?.filter((n: string) => n !== "NOT_YET_RELEASED") || ["FINISHED", "RELEASING"]) : __advancedSearch_getValue(params.status),
                 isAdult: params.isAdult,
@@ -68,8 +73,12 @@ export function useAnilistAdvancedSearch() {
                 averageScore_greater: __advancedSearch_getValue(params.minScore) !== undefined
                     ? __advancedSearch_getValue(params.minScore)
                     : undefined,
-                sort: (params.title?.length && params.title.length > 0) ? ["SEARCH_MATCH",
-                    ...(__advancedSearch_getValue(params.sorting) || ["SCORE_DESC"])] : (__advancedSearch_getValue(params.sorting) || ["SCORE_DESC"]),
+                // #648: same as anime — explicit sort leads while searching.
+                sort: (params.title?.length && params.title.length > 0)
+                    ? (__advancedSearch_getValue(params.sorting)
+                        ? [...__advancedSearch_getValue(params.sorting), "SEARCH_MATCH"]
+                        : ["SEARCH_MATCH", "SCORE_DESC"])
+                    : (__advancedSearch_getValue(params.sorting) || ["SCORE_DESC"]),
                 status: params.sorting?.includes("START_DATE_DESC") ? (__advancedSearch_getValue(params.status)
                     ?.filter((n: string) => n !== "NOT_YET_RELEASED") || ["FINISHED", "RELEASING"]) : __advancedSearch_getValue(params.status),
                 countryOfOrigin: __advancedSearch_getValue(params.countryOfOrigin),
