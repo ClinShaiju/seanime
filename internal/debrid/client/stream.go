@@ -13,6 +13,7 @@ import (
 	"seanime/internal/events"
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
 	"seanime/internal/hook"
+	"seanime/internal/library/anime"
 	"seanime/internal/library/playbackmanager"
 	"seanime/internal/util"
 	"strconv"
@@ -54,6 +55,10 @@ type (
 		preloadMu       sync.Mutex
 		preloads        map[string]*preloadedDebridStream // resolved, ready to consume
 		preloadInflight map[string]context.CancelFunc     // in-flight resolves, for dedupe/cancel
+		// preloadFailedAt is the negative cache for failed preload resolves (no torrents yet):
+		// skip re-attempts for preloadFailureBackoff so a just-aired target doesn't re-search
+		// every tick. ponytail: map[string]time.Time negative cache, no persistence.
+		preloadFailedAt map[string]time.Time
 		// lastConsumedKey is the preload entry currently being played. Kept (not deleted) on
 		// consume so re-pressing/restarting the same episode is instant; deleted on episode end
 		// (a different episode starts, or the stream is cancelled). TTL is the staleness backstop.
@@ -75,7 +80,7 @@ type (
 		torrent       *hibiketorrent.AnimeTorrent
 		torrentItemId string
 		resolvedAt    time.Time     // when the SELECTION was resolved (governs re-search via ttl)
-		ttl           time.Duration // selection lifetime: 24h finished show, 1h currently releasing
+		ttl           time.Duration // selection lifetime: 24h finished show, 3h currently releasing
 		urlResolvedAt time.Time     // when streamUrl was last (re)resolved — debrid URLs expire sooner
 		priority      bool          // protected from eviction (continue-watching set)
 	}
@@ -144,6 +149,7 @@ func NewStreamManager(repository *Repository) *StreamManager {
 		currentTorrentItemId:  "",
 		preloads:              make(map[string]*preloadedDebridStream),
 		preloadInflight:       make(map[string]context.CancelFunc),
+		preloadFailedAt:       make(map[string]time.Time),
 		previousStreamOptions: mo.None[*StartStreamOptions](),
 	}
 }
@@ -238,9 +244,10 @@ const (
 	// Selection lifetime — how long a preloaded SELECTION (torrent + added torrentItemId) is
 	// kept before re-searching/re-adding (which costs a TorBox createtorrent, limited to
 	// 60/hour). A torrent doesn't die in a day; a currently-releasing show is re-checked
-	// hourly in case a better release appears.
+	// every few hours in case a better release appears (releases materially change only in
+	// the first ~day; 1h caused hourly re-search churn + badge-flicker dead windows).
 	preloadSelectionTTL          = 24 * time.Hour
-	preloadSelectionTTLReleasing = 1 * time.Hour
+	preloadSelectionTTLReleasing = 3 * time.Hour
 	// urlRefreshTTL bounds how long a resolved debrid stream URL is trusted before we
 	// re-resolve it (cheaply, from the already-added torrentItemId — no createtorrent) on
 	// consume. An untouched TorBox CDN link stays valid ~3h, so 2h leaves a comfortable 1h
@@ -249,6 +256,10 @@ const (
 	// maxSpeculativePreloads caps non-priority preloads. With the hover prewarm dropped these
 	// are rare; the continue-watching (priority) set is uncapped (bounded at the source).
 	maxSpeculativePreloads = 8
+	// preloadFailureBackoff is the negative cache for failed preload resolves: a just-aired
+	// episode with no torrents yet would otherwise re-run a full aggregator search every tick.
+	// Real plays (startStream) are unaffected — this gates only background preloads.
+	preloadFailureBackoff = 30 * time.Minute
 )
 
 // selectionTTLForMedia returns the selection lifetime for a media: short (hourly re-check)
@@ -852,6 +863,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 				s.ev(opts).SendEvent(events.InvalidateQueries, []string{events.GetTorrentstreamBatchHistoryEndpoint})
 			}
 		}()
+
+		go s.chainNextEpisodePreload(opts, media)
 	}(ctx)
 
 	s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
@@ -985,6 +998,9 @@ func (s *StreamManager) clearAllPreloadsLocked() {
 	for k := range s.preloads {
 		delete(s.preloads, k)
 	}
+	for k := range s.preloadFailedAt {
+		delete(s.preloadFailedAt, k)
+	}
 	s.lastConsumedKey = ""
 }
 
@@ -1058,12 +1074,35 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 		if opts.Priority && !existing.priority {
 			existing.priority = true
 		}
+		// An incoming metadata-prewarm request must still warm metadata even though the URL is
+		// already resolved — otherwise a tier-1 target satisfied by an earlier metadata-less
+		// preload stays "hot"-badged with a cold parser. Idempotent (parser cache + CDN budget).
+		warmUrl := ""
+		if opts.PrewarmMetadata && existing.opts != nil && !existing.opts.PrewarmMetadata && existing.streamUrl != "" {
+			existing.opts.PrewarmMetadata = true
+			warmUrl = existing.streamUrl
+		}
 		s.preloadMu.Unlock()
+		if warmUrl != "" {
+			if dm := s.ds(opts); dm != nil {
+				go dm.PrewarmStreamMetadata(warmUrl)
+			}
+		}
 		return nil
 	}
 	if _, inflight := s.preloadInflight[key]; inflight {
 		s.preloadMu.Unlock()
 		return nil
+	}
+	// Negative cache: a recently-failed resolve (typically a just-aired episode with no torrents
+	// yet) is not retried for preloadFailureBackoff — the tick otherwise re-runs a full aggregator
+	// search every 10 minutes until releases appear.
+	if failedAt, ok := s.preloadFailedAt[key]; ok {
+		if time.Since(failedAt) < preloadFailureBackoff {
+			s.preloadMu.Unlock()
+			return nil
+		}
+		delete(s.preloadFailedAt, key)
 	}
 	preloadCtx, cancel := context.WithCancel(context.Background())
 	s.preloadInflight[key] = cancel
@@ -1085,7 +1124,14 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 		// Shared-DB front-gate: reuse an already-resolved prewarm for this account+profile instead of
 		// re-searching/re-adding (cross-user reuse + post-restart survival). Runs in the background so
 		// the link-validation probe adds no user-facing latency; on a miss/dead-item it falls through.
-		if _, ok := s.hydratePrewarmFromDB(preloadCtx, opts, prewarmProbeTimeout); ok {
+		if entry, ok := s.hydratePrewarmFromDB(preloadCtx, opts, prewarmProbeTimeout); ok {
+			// The hydrate satisfies the URL but never parses metadata — warm it here so a tier-1
+			// target isn't "hot"-badged with a cold parser after a restart. Idempotent.
+			if opts.PrewarmMetadata && entry.streamUrl != "" && preloadCtx.Err() == nil {
+				if dm := s.ds(opts); dm != nil {
+					dm.PrewarmStreamMetadata(entry.streamUrl)
+				}
+			}
 			return
 		}
 
@@ -1103,6 +1149,11 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 			pt, err := s.repository.findBestTorrent(provider, media, opts.EpisodeNumber, opts.UserID)
 			if err != nil {
 				s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to select torrent")
+				// Negative-cache the miss (no releases yet) so background preloads don't re-search
+				// every tick. Real plays still resolve cold and a success clears the entry.
+				s.preloadMu.Lock()
+				s.preloadFailedAt[key] = time.Now()
+				s.preloadMu.Unlock()
 				return
 			}
 			selectedTorrent, fileId, filepath, directStreamUrl = pt.torrent, pt.fileId, pt.filepath, pt.streamUrl
@@ -1168,6 +1219,7 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 		// Only store if this preload wasn't superseded or cancelled in the meantime.
 		if preloadCtx.Err() == nil {
 			s.evictIfNeededLocked(opts.Priority)
+			delete(s.preloadFailedAt, key) // resolve succeeded — clear the negative cache
 			now := time.Now()
 			stored = &preloadedDebridStream{
 				opts:          opts,
@@ -1456,7 +1508,53 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		}
 	}()
 
+	go s.chainNextEpisodePreload(opts, media)
+
 	return nil
+}
+
+// chainNextEpisodePreload kicks a background preload of episode N+1 when a real auto-select
+// stream of episode N starts. This is the event-driven feeder the 10-min tick can't be: the
+// tick targets progress+1, but progress only syncs at 85%, so during a binge it kept
+// re-resolving the episode already being watched and warmed the true next-up only by timing
+// luck (~2/14 observed). Chaining fires on the actual play event, so it works for every
+// client — including ones with no client-side preload trigger (Tenji, external players) —
+// with zero client deploys. The web @3s client preload dedupes against it via the existing
+// in-flight/fresh-key check in preloadStreamWith. Run on a goroutine (episode resolution may
+// hit the metadata provider).
+func (s *StreamManager) chainNextEpisodePreload(opts *StartStreamOptions, media *anilist.BaseAnime) {
+	defer util.HandlePanicInModuleThen("debrid/client/chainNextEpisodePreload", func() {})
+	if opts == nil || media == nil || opts.Preload || !opts.AutoSelect || !canReusePreloadedStream(opts.PlaybackType) {
+		return
+	}
+	nextEp := opts.EpisodeNumber + 1
+	if cnt := media.GetCurrentEpisodeCount(); cnt > 0 && nextEp > cnt {
+		return // caught up to what's aired (or a movie) — no next episode to warm
+	}
+	// Resolve the real AniDB episode so the cache key matches what the client sends at play
+	// time (differs from strconv(nextEp) for shows with specials / multiple seasons).
+	aniDBEpisode := strconv.Itoa(nextEp)
+	if ec, err := anime.NewEpisodeCollection(anime.NewEpisodeCollectionOptions{
+		Media:               media,
+		MetadataProviderRef: s.repository.metadataProviderRef,
+		Logger:              s.repository.logger,
+	}); err == nil {
+		if ep, ok := ec.FindEpisodeByNumber(nextEp); ok && ep.AniDBEpisode != "" {
+			aniDBEpisode = ep.AniDBEpisode
+		}
+	}
+	_ = s.preloadStream(context.Background(), &StartStreamOptions{
+		MediaId:       opts.MediaId,
+		EpisodeNumber: nextEp,
+		AniDBEpisode:  aniDBEpisode,
+		UserID:        opts.UserID,
+		AutoSelect:    true,
+		Preload:       true,
+		// The episode the user is watching right now is the highest-certainty target there is:
+		// protect it from eviction and pre-parse its metadata (idempotent, CDN-budget-gated).
+		Priority:        true,
+		PrewarmMetadata: true,
+	})
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

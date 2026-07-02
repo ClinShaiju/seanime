@@ -16,7 +16,12 @@ const (
 	prewarmContinueWatchingCount = 3                // next-up episode of the last N watched shows
 	prewarmJustAiredCount        = 3                // + new episode of up to N currently-airing shows
 	prewarmInitialDelay          = 30 * time.Second // let the collection + debrid settings load first
-	prewarmInterval              = 10 * time.Minute // refresh before debrid URLs expire (cache TTL is 15m)
+	prewarmInterval              = 10 * time.Minute // re-check targets well within the selection/URL TTLs
+	// prewarmRecencyCutoff drops candidates the user hasn't touched in a while — sessions live for
+	// the server process lifetime, so without this an inactive user's releasing-show targets are
+	// re-resolved forever. A returning user is re-picked the moment they watch anything.
+	// ponytail: 14d recency cutoff; make it a setting if anyone ever asks.
+	prewarmRecencyCutoff = 14 * 24 * time.Hour
 )
 
 // prewarmCandidate is the minimal per-show data needed to pick prewarm targets.
@@ -134,6 +139,9 @@ func (a *App) buildPrewarmCandidates(collection *anilist.AnimeCollection, cont *
 		if !ok {
 			continue // not in current/repeating list (finished, dropped, etc.)
 		}
+		if time.Since(item.TimeUpdated) > prewarmRecencyCutoff {
+			continue // user hasn't touched this in weeks — stop re-resolving it every tick
+		}
 		cands = append(cands, prewarmCandidate{
 			mediaId:   mediaId,
 			progress:  info.progress,
@@ -205,6 +213,13 @@ func (a *App) buildPrewarmOptsForSession(s *UserSession) []*debrid_client.StartS
 		return nil
 	}
 	cands, mediaById := a.buildPrewarmCandidates(collection, s.Continuity())
+	// Progress-aware cleanup: drop prewarm state (memory + shared DB rows) for episodes this
+	// user has already watched. Progress is in hand here, so this is the cheap place to do it.
+	for _, c := range cands {
+		if c.progress > 0 {
+			a.DebridClientRepository.CleanupWatchedPrewarms(s.UserID, c.mediaId, c.progress)
+		}
+	}
 	targets := selectPrewarmTargets(cands, prewarmContinueWatchingCount, prewarmJustAiredCount)
 	if len(targets) == 0 {
 		return nil

@@ -142,6 +142,7 @@ func (s *StreamManager) hydratePrewarmFromDB(ctx context.Context, opts *StartStr
 	}
 	key := preloadKey(opts)
 	s.preloadMu.Lock()
+	s.evictIfNeededLocked(opts.Priority) // hydrates count against the speculative cap too
 	s.preloads[key] = entry
 	s.preloadMu.Unlock()
 
@@ -221,6 +222,40 @@ func (r *Repository) SweepExpiredPrewarms() {
 		ttl := time.Duration(row.TtlNanos)
 		if ttl <= 0 || time.Since(row.ResolvedAt) > ttl {
 			_ = r.db.DeleteDebridPrewarmByID(row.ID)
+		}
+	}
+}
+
+// CleanupWatchedPrewarms drops prewarm state for episodes the user has already watched:
+// in-memory entries and shared DB rows with episode_number < keepFromEp (pass progress — the
+// last-watched episode is kept for instant replay, everything ≥ next-up is untouched). Called
+// from the continue-watching tick, where progress is already in hand. Without this, binge
+// leftovers sat for the full 24h TTL and flame-badged episodes already watched.
+// ponytail: progress-cleanup is per-account, not per-user; add user_tags refcounting if
+// multi-user progress divergence ever matters.
+func (r *Repository) CleanupWatchedPrewarms(userID uint, mediaId, keepFromEp int) {
+	defer util.HandlePanicInModuleThen("debrid/client/CleanupWatchedPrewarms", func() {})
+	// In-memory entries — only if the user's StreamManager exists (don't create one to clean it).
+	if sm, ok := r.streamManagers.Get(userID); ok {
+		sm.preloadMu.Lock()
+		for k, e := range sm.preloads {
+			if e == nil || e.opts == nil || e.opts.MediaId != mediaId || e.opts.EpisodeNumber >= keepFromEp {
+				continue
+			}
+			if k == sm.lastConsumedKey {
+				continue // currently/last playing — cancelStream owns its lifecycle
+			}
+			// Release any prewarmed MKV metadata (font attachments in RAM) with the entry.
+			if dm := sm.ds(e.opts); dm != nil {
+				dm.DropStreamMetadata(e.streamUrl)
+			}
+			delete(sm.preloads, k)
+		}
+		sm.preloadMu.Unlock()
+	}
+	if r.db != nil {
+		if acct := r.accountHash(); acct != "" {
+			_ = r.db.DeleteDebridPrewarmsBelow(acct, mediaId, keepFromEp)
 		}
 	}
 }

@@ -42,3 +42,11 @@ func (db *Database) ListDebridPrewarms() ([]*models.DebridPrewarm, error) {
 func (db *Database) DeleteDebridPrewarmByID(id uint) error {
 	return db.gormdb.Delete(&models.DebridPrewarm{}, id).Error
 }
+
+// DeleteDebridPrewarmsBelow removes shared prewarm rows for a media whose episode is below
+// keepFromEp (progress-aware cleanup of already-watched episodes).
+func (db *Database) DeleteDebridPrewarmsBelow(accountHash string, mediaId, keepFromEp int) error {
+	return db.gormdb.
+		Where("account_hash = ? AND media_id = ? AND episode_number < ?", accountHash, mediaId, keepFromEp).
+		Delete(&models.DebridPrewarm{}).Error
+}
