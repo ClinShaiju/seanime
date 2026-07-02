@@ -244,41 +244,73 @@ export const vc_createChapterVTT = (chapters: Array<MKVParser_ChapterInfo> | und
 
 export function vc_getChapterType(name: string | null | undefined) {
     if (!name) return false
-    if (/opening$|^opening\s|^op$/mi.test(name)) return "Opening"
-    if (/ending$|^ending\s|^ed$|^credits/mi.test(name)) return "Ending"
-    if (/^intro$|recap/mi.test(name)) return "Intro"
+    if (/opening$|^opening\s|^op$|^op\s*\d+$/mi.test(name)) return "Opening"
+    if (/ending$|^ending\s|^ed$|^ed\s*\d+$|^credits|end credits$|closing credits$/mi.test(name)) return "Ending"
+    if (/^intro$/mi.test(name)) return "Intro"
     if (/^outro$/mi.test(name)) return "Outro"
+    if (/recap/mi.test(name)) return "Recap"
     return false
 }
 
-export function vc_introIsOpening(chapters: VideoCoreTimeRangeChapter[]) {
-    const types = chapters.map(c => vc_getChapterType(c.label)).filter(Boolean)
-    return types.includes("Intro") && !types.includes("Opening")
+// OP/ED are ~90s in practice (Stremio Kai scores candidates against the same ideal).
+const SKIP_IDEAL_LENGTH = 90
+const SKIP_MIN_LENGTH = 60
+const SKIP_MAX_LENGTH = 150
+
+function vc_inSkipWindow(chapter: VideoCoreTimeRangeChapter) {
+    const len = chapter.end - chapter.start
+    return len >= SKIP_MIN_LENGTH && len <= SKIP_MAX_LENGTH
 }
 
-export function vc_getOPEDChapters(chapters: VideoCoreTimeRangeChapter[]): {
+// Best candidate = length closest to 90s. Near-ties (within 15s) go to the LATER chapter:
+// two ~90s segments at the start usually means [recap/prologue][OP] — the second is the OP.
+function vc_pickSkipCandidate(candidates: VideoCoreTimeRangeChapter[]): VideoCoreTimeRangeChapter | null {
+    let best: VideoCoreTimeRangeChapter | null = null
+    let bestScore = Infinity
+    for (const c of candidates) {
+        const score = Math.abs((c.end - c.start) - SKIP_IDEAL_LENGTH)
+        if (score < bestScore - 15 || (score <= bestScore + 15 && (!best || c.start > best.start))) {
+            best = c
+            bestScore = Math.min(score, bestScore)
+        }
+    }
+    return best
+}
+
+export function vc_getOPEDChapters(chapters: VideoCoreTimeRangeChapter[], duration: number = 0): {
     opening: VideoCoreTimeRangeChapter | null;
     ending: VideoCoreTimeRangeChapter | null
 } {
     let opening: VideoCoreTimeRangeChapter | null = null
     let ending: VideoCoreTimeRangeChapter | null = null
-    const introIsOpening = vc_introIsOpening(chapters)
+
+    // Pass 1: labels. "Opening"/"Ending" are trusted as-is; "Intro"/"Outro" (common in anime
+    // muxes for the actual OP/ED) additionally need a plausible ~90s length so a long cold-open
+    // labeled "Intro" isn't auto-skipped.
     for (const chapter of chapters) {
         const type = vc_getChapterType(chapter.label)
-        if (!opening && !introIsOpening && type === "Opening") {
+        if (!opening && (type === "Opening" || (type === "Intro" && vc_inSkipWindow(chapter)))) {
             opening = chapter
         }
-        // if (!opening && introIsOpening && type === "Intro") {
-        //     opening = chapter
-        // }
-        if (!ending && !introIsOpening && type === "Ending") {
+        if (!ending && (type === "Ending" || (type === "Outro" && vc_inSkipWindow(chapter)))) {
             ending = chapter
         }
-        // if (!ending && introIsOpening && type === "Outro") {
-        //     ending = chapter
-        // }
         if (opening && ending) break
     }
+
+    // Pass 2: duration heuristic for generically-labeled chapters ("Part A", "Chapter 2", ""):
+    // a ~90s chapter in the first/last 20% of the file is almost certainly the OP/ED.
+    // Episode-length files only — in a movie a ~90s early chapter is usually just a chapter.
+    if (duration > SKIP_MAX_LENGTH * 2 && duration < 2700 && (!opening || !ending)) {
+        const candidates = chapters.filter(c => !vc_getChapterType(c.label) && vc_inSkipWindow(c))
+        if (!opening) {
+            opening = vc_pickSkipCandidate(candidates.filter(c => c.start < duration * 0.2))
+        }
+        if (!ending) {
+            ending = vc_pickSkipCandidate(candidates.filter(c => c.end > duration * 0.8 && c !== opening))
+        }
+    }
+
     return { opening, ending }
 }
 

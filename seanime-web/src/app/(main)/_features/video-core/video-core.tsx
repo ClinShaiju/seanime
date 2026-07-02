@@ -117,7 +117,7 @@ import {
     useVideoCoreBindings,
     vc_createChapterCues,
     vc_createChaptersFromAniSkip,
-    vc_getChapterType,
+    vc_getOPEDChapters,
     vc_logGeneralInfo,
 } from "@/app/(main)/_features/video-core/video-core.utils"
 import { useServerHMACAuth, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
@@ -1819,21 +1819,21 @@ export function VideoCore(props: VideoCoreProps) {
             if (!duration || duration <= 1) return []
             const aniSkipAvailable = !!resolvedSkipData?.op?.interval && duration > 0
 
-            // Prefer MKV chapters — but only when they actually label OP/ED. Some releases label the
-            // opening/ending "Intro"/"Outro" (or in another language), which auto-skip can't detect,
-            // so the player would show chapters but never skip. In that case fall back to AniSkip,
-            // which provides precise, label-independent OP/ED intervals.
+            // Prefer MKV chapters — but only when auto-skip can actually resolve an OP/ED from them
+            // (label match or the ~90s duration heuristic). Some releases label chapters generically
+            // or in another language, so the player would show chapters but never skip. In that case
+            // fall back to AniSkip, which provides precise, label-independent OP/ED intervals.
             if (state.playbackInfo?.mkvMetadata?.chapters?.length) {
                 const cues = vc_createChapterCues(state.playbackInfo.mkvMetadata.chapters, duration)
-                const mkvHasOPED = cues.some(c => {
-                    const t = vc_getChapterType(c.text)
-                    return t === "Opening" || t === "Ending"
-                })
-                if (mkvHasOPED || !aniSkipAvailable) {
+                const { opening, ending } = vc_getOPEDChapters(
+                    cues.map(c => ({ start: c.startTime ?? 0, end: c.endTime ?? 0, label: c.text || null, width: 0, percentageOffset: 0 })),
+                    duration,
+                )
+                if (opening || ending || !aniSkipAvailable) {
                     log.info("Chapter cues from MKV", cues)
                     return cues
                 }
-                log.info("MKV chapters lack OP/ED labels — using AniSkip for skip support")
+                log.info("No skippable OP/ED in MKV chapters — using AniSkip for skip support")
             }
 
             // Otherwise, create chapters from skip data if available

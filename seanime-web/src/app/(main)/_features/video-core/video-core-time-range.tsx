@@ -132,7 +132,7 @@ export function VideoCoreTimeRange(props: VideoCoreTimeRangeProps) {
         setProgressPercentage((timeToUse / duration) * 100)
     }, [currentTime, duration, isSwiping, swipeSeekTime])
 
-    const opEdChapters = React.useMemo(() => vc_getOPEDChapters(chapters), [chapters])
+    const opEdChapters = React.useMemo(() => vc_getOPEDChapters(chapters, duration), [chapters, duration])
 
     // handle auto skip
     React.useEffect(() => {
