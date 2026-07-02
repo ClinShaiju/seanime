@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.8.16
+
+Fixes from the first live direct-CDN session (log-verified root causes).
+
+### Client identity survives server restarts
+
+- 🦺 **Fixed: mobile (Tenji) playback silently did nothing after a server deploy.** The client-identity HMAC secret was regenerated per boot, so a restart invalidated every client's identity proof; a phone's websocket then reconnected under a random id while its API requests kept the stored id — the `external-player-open-url` event was sent to an id with no socket and vanished. The secret is now persisted (new `server_values` table) and proofs last 30 days (was 24h).
+
+### Direct CDN playback (buffering fixes)
+
+- 🦺 **The "dual link" was one link**: TorBox's `requestdl` returns the same URL for the same file, so the second resolve just burned the paced API budget while client video and server subtitle reads contended on one link anyway. The duplicate resolve is removed (one `requestdl` per stream start); the server copes with the shared link properly instead:
+- ⚡️ The direct-mode subtitle cluster walk is now **paced (6 MiB/s)** instead of running at line speed — it no longer competes with the player's own video pulls on the shared link (the cause of mid-episode 429s → video network errors → buffering).
+- 🦺 A subtitle walk that still dies on a sustained CDN throttle now **retries after a cooldown, resuming from the last delivered cluster**, instead of leaving the rest of the episode without subtitles.
+
 ## v3.8.15
 
 ### Desktop (Denshi)
