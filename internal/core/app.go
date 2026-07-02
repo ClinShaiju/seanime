@@ -263,6 +263,17 @@ func NewApp(configOpts *ConfigOptions, selfupdater *updater.SelfUpdater) *App {
 	// Get Anilist token from database if available
 	anilistToken := database.GetAnilistToken()
 
+	// Client-identity HMAC secret: persisted so restarts don't invalidate every client's
+	// identity proof (a per-boot secret orphaned open websockets from their client ids after
+	// each deploy — targeted events like external-player-open-url silently went nowhere).
+	clientIdentitySecret := database.GetServerValue("client_identity_secret")
+	if clientIdentitySecret == "" {
+		clientIdentitySecret = util.GenerateCryptoID()
+		if err := database.SetServerValue("client_identity_secret", clientIdentitySecret); err != nil {
+			logger.Warn().Err(err).Msg("app: Failed to persist client identity secret; proofs will rotate on restart")
+		}
+	}
+
 	anilistCacheDir := filepath.Join(cfg.Cache.Dir, "anilist")
 
 	// Initialize Anilist API client with the token
@@ -458,7 +469,7 @@ func NewApp(configOpts *ConfigOptions, selfupdater *updater.SelfUpdater) *App {
 		HookManager:                     hookManager,
 		isOfflineRef:                    isOfflineRef,
 		ServerPasswordHash:              serverPasswordHash,
-		ClientIdentitySecret:            util.GenerateCryptoID(),
+		ClientIdentitySecret:            clientIdentitySecret,
 	}
 
 	plugin.GlobalAppContext.SetModulesPartial(plugin.AppContextModules{

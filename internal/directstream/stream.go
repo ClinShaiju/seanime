@@ -584,6 +584,8 @@ type BaseStream struct {
 
 	// Subtitle stream management
 	activeSubtitleStreams *result.Map[string, *SubtitleStream]
+	subtitleRetryMu       sync.Mutex
+	subtitleRetryLast     time.Time // rate-limits transient-error subtitle walk retries
 
 	manager        *Manager
 	updateProgress sync.Once

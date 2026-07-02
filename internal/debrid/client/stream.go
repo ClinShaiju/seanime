@@ -345,35 +345,16 @@ func directCdnEligibleWith(settings *models.DebridSettings, opts *StartStreamOpt
 	return settings != nil && settings.DirectCdnPlayback && settings.Provider == "torbox"
 }
 
-// resolveClientCdnUrl resolves a SECOND stream URL from an already-added torrent item — the
-// client-facing link in direct CDN mode. The primary link stays server-side (metadata parse,
-// subtitle readers, parserCache key), so client and server never contend on one link's rate
-// limit. Falls back to serverUrl when there is no torrent item (pre-resolved direct streams)
-// or the re-resolve fails: both sides then share one link, which still works.
-func (s *StreamManager) resolveClientCdnUrl(ctx context.Context, torrentItemId, fileId, serverUrl string) string {
-	if torrentItemId == "" {
-		return serverUrl
-	}
-	provider, err := s.repository.GetProvider()
-	if err != nil {
-		return serverUrl
-	}
-	itemCh := make(chan debrid.TorrentItem, 1)
-	go func() {
-		for range itemCh { //nolint:revive
-		}
-	}()
-	url, err := provider.GetTorrentStreamUrl(ctx, debrid.StreamTorrentOptions{
-		ID:     torrentItemId,
-		FileId: fileId,
-	}, itemCh)
-	close(itemCh)
-	if err != nil || url == "" {
-		s.repository.logger.Warn().Err(err).Msg("debridstream: Direct CDN second-link resolve failed; client shares the server link")
-		return serverUrl
-	}
-	s.repository.logger.Debug().Msg("debridstream: Resolved separate client CDN link (direct mode)")
-	return url
+// resolveClientCdnUrl returns the CDN link the client plays from in direct mode. The original
+// design resolved a SECOND link so client video and server readers wouldn't share one link's
+// rate limit — but TorBox's requestdl is idempotent per (torrent, file): production logs show
+// both resolves returning byte-identical URLs, so the extra call only burned the paced
+// requestdl budget. Client and server inherently share the one link; the server side copes via
+// the per-link connection gate, paced subtitle walk, and transient-429 retries.
+// ponytail: if a future allowlisted provider mints distinct links per request, do a real
+// second resolve here — the ClientStreamUrl plumbing downstream already supports it.
+func (s *StreamManager) resolveClientCdnUrl(torrentItemId, fileId, serverUrl string) string {
+	return serverUrl
 }
 
 func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOptions) (err error) {
@@ -893,7 +874,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			}
 			clientStreamUrl := ""
 			if s.directCdnEligible(opts) {
-				clientStreamUrl = s.resolveClientCdnUrl(ctx, torrentItemId, fileId, streamUrl)
+				clientStreamUrl = s.resolveClientCdnUrl(torrentItemId, fileId, streamUrl)
 			}
 			err := s.ds(opts).PlayDebridStream(ctx, filepath, directstream.PlayDebridStreamOptions{
 				StreamUrl:       streamUrl,
@@ -1527,7 +1508,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		}
 		clientStreamUrl := ""
 		if s.directCdnEligible(opts) {
-			clientStreamUrl = s.resolveClientCdnUrl(streamCtx, cached.torrentItemId, cached.fileId, streamUrl)
+			clientStreamUrl = s.resolveClientCdnUrl(cached.torrentItemId, cached.fileId, streamUrl)
 		}
 		err = s.ds(opts).PlayDebridStream(streamCtx, cached.filepath, directstream.PlayDebridStreamOptions{
 			StreamUrl:       streamUrl,

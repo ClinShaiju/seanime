@@ -697,6 +697,18 @@ type CustomSourceIdentifier struct {
 }
 
 // +---------------------+
+// |    Server values    |
+// +---------------------+
+
+// ServerValue is a tiny key-value store for per-install server state that must survive
+// restarts — e.g. the client-identity HMAC secret (regenerating it per boot invalidated
+// every client's identity proof on deploy, orphaning open websockets from their ids).
+type ServerValue struct {
+	Key   string `gorm:"primaryKey;column:key" json:"key"`
+	Value string `gorm:"column:value" json:"value"`
+}
+
+// +---------------------+
 // |      Metadata       |
 // +---------------------+
 

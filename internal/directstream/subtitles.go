@@ -12,6 +12,7 @@ import (
 	"seanime/internal/mkvparser"
 	"seanime/internal/nativeplayer"
 	"seanime/internal/util"
+	httputil "seanime/internal/util/http"
 	"sort"
 	"strings"
 	"sync"
@@ -247,6 +248,68 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *native
 	}
 }
 
+const (
+	// subtitleRetryCooldown is how long a transiently-failed subtitle walk waits before
+	// re-kicking — long enough for a CDN throttle window to clear.
+	subtitleRetryCooldown = 5 * time.Second
+	// subtitleRetryMinInterval rate-limits retries per stream so a hard outage can't loop.
+	subtitleRetryMinInterval = 15 * time.Second
+)
+
+// newSubtitleReaderForStream opens a fresh subtitle-walk reader for any stream kind — the
+// same per-type readers startSubtitleStreamForTime uses.
+func newSubtitleReaderForStream(stream Stream) (io.ReadSeekCloser, error) {
+	switch s := stream.(type) {
+	case *LocalFileStream:
+		return s.newReader()
+	case *TorrentStream:
+		return s.newSubtitleReader(), nil
+	case *UrlStream:
+		return s.getReader()
+	case *DebridStream:
+		return s.newSubtitleReader()
+	case *Nakama:
+		return s.getReader()
+	}
+	return nil, fmt.Errorf("directstream: no subtitle reader for stream type")
+}
+
+// maybeRetrySubtitleStream re-kicks a subtitle walk that died on a transient CDN throttle
+// (429 / gateway hiccup). In direct CDN mode the walk shares one link with the client's
+// video, so momentary throttling past the reader's own retry budget shouldn't strand the
+// rest of the episode without subtitles. Resumes from the last delivered cluster instead of
+// re-walking, waits out a cooldown first, and is rate-limited per stream.
+func (s *BaseStream) maybeRetrySubtitleStream(stream Stream, playbackCtx context.Context, cause error, offset int64, resumePos int64) {
+	if !httputil.IsTransientStatusError(cause) || playbackCtx == nil || playbackCtx.Err() != nil {
+		return
+	}
+
+	s.subtitleRetryMu.Lock()
+	if !s.subtitleRetryLast.IsZero() && time.Since(s.subtitleRetryLast) < subtitleRetryMinInterval {
+		s.subtitleRetryMu.Unlock()
+		return
+	}
+	s.subtitleRetryLast = time.Now()
+	s.subtitleRetryMu.Unlock()
+
+	retryOffset := max(offset, resumePos)
+
+	go func() {
+		select {
+		case <-playbackCtx.Done():
+			return
+		case <-time.After(subtitleRetryCooldown):
+		}
+		reader, err := newSubtitleReaderForStream(stream)
+		if err != nil {
+			s.logger.Warn().Err(err).Int64("offset", retryOffset).Msg("directstream: Subtitle retry: failed to create reader")
+			return
+		}
+		s.logger.Info().Int64("offset", retryOffset).Msg("directstream: Retrying subtitle stream after transient CDN error")
+		s.StartSubtitleStream(stream, playbackCtx, reader, retryOffset)
+	}()
+}
+
 func (s *SubtitleStream) Stop(completed bool) {
 	s.stopOnce.Do(func() {
 		s.logger.Debug().Int64("offset", s.offset).Msg("directstream: Stopping subtitle stream")
@@ -458,6 +521,13 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 				// This is the terminal signal from the mkvparser's subtitle streaming process.
 				if err != nil {
 					s.logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Error streaming subtitles")
+					lastSubtitleEventRWMutex.RLock()
+					resumePos := int64(0)
+					if lastSubtitleEvent != nil {
+						resumePos = lastSubtitleEvent.HeadPos
+					}
+					lastSubtitleEventRWMutex.RUnlock()
+					s.maybeRetrySubtitleStream(stream, playbackCtx, err, offset, resumePos)
 				} else {
 					s.logger.Info().Int64("offset", offset).Msg("directstream: Subtitle streaming completed by parser.")
 					subtitleStream.Stop(true)

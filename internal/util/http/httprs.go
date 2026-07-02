@@ -20,6 +20,7 @@ If you want to use a specific http.Client for additional range requests :
 */
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -98,6 +99,14 @@ type StatusError struct {
 
 func (e *StatusError) Error() string {
 	return fmt.Sprintf("httprs: unexpected status %d", e.Code)
+}
+
+// IsTransientStatusError reports whether err (anywhere in its chain) is a StatusError with a
+// retryable status — a CDN throttle (429) or transient gateway error. Callers use it to decide
+// whether a failed read is worth re-attempting after a cooldown rather than fatal.
+func IsTransientStatusError(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && httprsTransientStatus(se.Code)
 }
 
 func NewHttpReadSeekerFromURLWithHeaders(url string, headers http.Header) (*HttpReadSeeker, error) {

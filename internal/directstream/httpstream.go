@@ -135,15 +135,52 @@ func (s *httpBaseStream) directMode() bool {
 	return s.clientStreamUrl != ""
 }
 
+// directSubtitleWalkBytesPerSec paces the direct-mode subtitle cluster walk. The client's
+// <video> pulls video from the SAME CDN link (TorBox mints one URL per file), so an unpaced
+// walk at line speed competes with playback and trips the link's throttle (429s). 6 MiB/s
+// stays far ahead of any realistic bitrate (~1 MiB/s) while cutting the walk's burst 10x+.
+// ponytail: fixed rate, not playback-position-aware; tie the walk to player progress if a
+// very high-bitrate remux ever outruns it.
+const directSubtitleWalkBytesPerSec = 6 << 20
+
 // newSubtitleReader returns the reader subtitle streams should walk the file with.
 // Proxy mode: a FileStream reader (fed by the proxy's CDN pulls). Direct mode: the proxy
 // never fills the cache, so read the server link directly — same gated chunked CDN reader
-// as the metadata parse (per-token slot, transient-429 retry).
+// as the metadata parse (per-token slot, transient-429 retry), throughput-paced so the walk
+// doesn't compete with the client's video pulls on the shared link.
 func (s *httpBaseStream) newSubtitleReader() (io.ReadSeekCloser, error) {
 	if s.directMode() {
-		return s.newMetadataReader()
+		reader, err := s.newMetadataReader()
+		if err != nil {
+			return nil, err
+		}
+		return newPacedReadSeekCloser(reader, directSubtitleWalkBytesPerSec), nil
 	}
 	return s.getReader()
+}
+
+// pacedReadSeekCloser throttles cumulative read throughput to rate bytes/sec by sleeping off
+// the overshoot after each read. Seeks are free (no bytes transferred for the skipped span).
+type pacedReadSeekCloser struct {
+	io.ReadSeekCloser
+	rate  float64
+	start time.Time
+	read  int64
+}
+
+func newPacedReadSeekCloser(r io.ReadSeekCloser, bytesPerSec int64) *pacedReadSeekCloser {
+	return &pacedReadSeekCloser{ReadSeekCloser: r, rate: float64(bytesPerSec), start: time.Now()}
+}
+
+func (p *pacedReadSeekCloser) Read(b []byte) (int, error) {
+	n, err := p.ReadSeekCloser.Read(b)
+	p.read += int64(n)
+	ahead := time.Duration(float64(p.read)/p.rate*float64(time.Second)) - time.Since(p.start)
+	if ahead > 0 {
+		// Cap each pause so teardown (reader Close between reads) stays responsive.
+		time.Sleep(min(ahead, time.Second))
+	}
+	return n, err
 }
 
 // fetchMetadataReader opens a CDN reader for MKV metadata.

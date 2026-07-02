@@ -23,5 +23,8 @@ func (a *App) GetClientIdentityHMACAuth() *util.HMACAuth {
 		a.ClientIdentitySecret = util.GenerateCryptoID()
 	}
 
-	return util.NewHMACAuth(a.ClientIdentitySecret, 24*time.Hour)
+	// 30 days: the proof asserts identity continuity (auth is handled separately). A short
+	// TTL meant a client idle >24h reconnected its websocket under a random id while its
+	// HTTP requests kept the stored id — targeted events were silently lost until reconnect.
+	return util.NewHMACAuth(a.ClientIdentitySecret, 30*24*time.Hour)
 }
