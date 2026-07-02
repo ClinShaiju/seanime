@@ -506,6 +506,16 @@ func (m *Manager) listenToPlayerEvents() {
 					} else if ts, ok := cs.(*TorrentStream); ok {
 						subReader := ts.newSubtitleReader()
 						ts.StartSubtitleStream(ts, m.playbackCtx, subReader, 0)
+					} else if ds, ok := cs.(*DebridStream); ok && ds.directMode() {
+						// Direct CDN mode: the player never hits the proxy, so the proxy's
+						// range-triggered subtitle kick never fires — start the offset-0
+						// stream here instead. Proxy mode keeps its range-triggered kick.
+						subReader, err := ds.newSubtitleReader()
+						if err != nil {
+							m.Logger.Error().Err(err).Msg("directstream: Failed to create subtitle reader")
+						} else {
+							ds.StartSubtitleStream(ds, m.playbackCtx, subReader, 0)
+						}
 					}
 				case *videocore.VideoSeekedEvent:
 					m.Logger.Trace().Float64("currentTime", event.CurrentTime).Msg("directstream: Video seeked, refreshing subtitle stream")

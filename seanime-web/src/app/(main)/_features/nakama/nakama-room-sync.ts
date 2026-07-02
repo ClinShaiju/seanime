@@ -13,6 +13,7 @@ import { logger } from "@/lib/helpers/debug"
 import { WSEvents } from "@/lib/server/ws-events"
 import { getHalfRttSeconds } from "@/lib/server/ws-latency"
 import { useNakamaJoinWatchRoomStream } from "@/api/hooks/nakama.hooks"
+import { __isElectronDesktop__ } from "@/types/constants"
 import { useAtomValue, useSetAtom } from "jotai"
 import React from "react"
 import { currentWatchRoomAtom, optedOutStreamRoomIdAtom } from "./nakama-manager"
@@ -170,7 +171,12 @@ export function useWatchRoomPlayerSync() {
         autoStartingKeyRef.current = key
         if (p.streamType === "debrid" && room?.id) {
             logger("NAKAMA ROOM SYNC").info("Joining room debrid stream (shared link)", p.mediaId, p.episodeNumber)
-            joinRoomStream.mutate({ roomId: room.id, clientId: clientId || "", playbackType: debridStart.getResolvedPlaybackType() })
+            joinRoomStream.mutate({
+                roomId: room.id,
+                clientId: clientId || "",
+                playbackType: debridStart.getResolvedPlaybackType(),
+                directCdnCapable: __isElectronDesktop__,
+            })
         } else if (p.streamType === "torrent") {
             torrentStart.handleAutoSelectStream({ mediaId: p.mediaId, episodeNumber: p.episodeNumber, aniDBEpisode: p.aniDbEpisode || "" })
         }
@@ -490,7 +496,12 @@ export function useRoomStreamJoin() {
         if (mi.streamType === "torrent") {
             torrentStart.handleAutoSelectStream({ mediaId: mi.mediaId, episodeNumber: mi.episodeNumber, aniDBEpisode: mi.aniDbEpisode || "" })
         } else {
-            joinRoomStream.mutate({ roomId: room.id, clientId: clientId || "", playbackType: debridStart.getResolvedPlaybackType() })
+            joinRoomStream.mutate({
+                roomId: room.id,
+                clientId: clientId || "",
+                playbackType: debridStart.getResolvedPlaybackType(),
+                directCdnCapable: __isElectronDesktop__,
+            })
         }
     }, [room, mi, clientId, setOptedOut, joinRoomStream, debridStart, torrentStart])
 

@@ -23,6 +23,7 @@ const debridSettingsSchema = defineSchema(({ z }) => z.object({
     streamAutoSelect: z.boolean().default(false),
     streamPreferredResolution: z.string(),
     preloadNextStream: z.boolean().default(false),
+    directCdnPlayback: z.boolean().default(false),
 }))
 
 type DebridSettingsProps = {
@@ -91,6 +92,7 @@ export function DebridSettings(props: DebridSettingsProps) {
                     streamAutoSelect: settings?.streamAutoSelect ?? false,
                     streamPreferredResolution: settings?.streamPreferredResolution || "-",
                     preloadNextStream: settings?.preloadNextStream ?? false,
+                    directCdnPlayback: settings?.directCdnPlayback ?? false,
                 }}
                 stackClass="space-y-4"
             >
@@ -194,6 +196,24 @@ export function DebridSettings(props: DebridSettingsProps) {
                                 label="Preload next episode"
                                 help="When using the built-in player with auto-select, resolve the next episode's stream around 80% so autoplay starts instantly instead of after a delay."
                             />
+                        </SettingsCard>
+
+                        <SettingsCard title="Direct CDN playback">
+                            <Field.Switch
+                                side="right"
+                                name="directCdnPlayback"
+                                label="Play directly from CDN (desktop app)"
+                                help="The desktop app pulls video straight from the debrid CDN instead of proxying through the server. Subtitles and fonts still come from the server. TorBox only; other clients keep using the proxy."
+                            />
+                            {f.watch("directCdnPlayback") && f.watch("provider") !== "torbox" && (
+                                <Alert
+                                    intent="warning-basic"
+                                    title="TorBox only"
+                                    description={<p>
+                                        Direct CDN playback only activates with TorBox. Other providers lock links to the server's IP, so they keep using the proxy.
+                                    </p>}
+                                />
+                            )}
                         </SettingsCard>
 
 

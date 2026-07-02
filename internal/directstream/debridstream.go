@@ -42,15 +42,19 @@ func (s *DebridStream) GetAttachmentByName(filename string) (*mkvparser.Attachme
 }
 
 type PlayDebridStreamOptions struct {
-	StreamUrl    string
-	MediaId      int
-	AnidbEpisode string // Anizip episode
-	Media        *anilist.BaseAnime
-	Torrent      *hibiketorrent.AnimeTorrent // Selected torrent
-	FileId       string                      // File ID or index
-	UserAgent    string
-	ClientId     string
-	AutoSelect   bool
+	StreamUrl string
+	// ClientStreamUrl, when non-empty, enables direct CDN mode: the client plays this raw
+	// CDN URL itself (no server proxy) while the server keeps using StreamUrl for metadata
+	// parse + subtitle readers. May equal StreamUrl when a second link couldn't be resolved.
+	ClientStreamUrl string
+	MediaId         int
+	AnidbEpisode    string // Anizip episode
+	Media           *anilist.BaseAnime
+	Torrent         *hibiketorrent.AnimeTorrent // Selected torrent
+	FileId          string                      // File ID or index
+	UserAgent       string
+	ClientId        string
+	AutoSelect      bool
 }
 
 // PlayDebridStream is used by a module to load a new debrid stream.
@@ -73,8 +77,9 @@ func (m *Manager) PlayDebridStream(ctx context.Context, filepath string, opts Pl
 	stream := &DebridStream{
 		torrent: opts.Torrent,
 		httpBaseStream: httpBaseStream{
-			streamUrl: opts.StreamUrl,
-			filepath:  filepath,
+			streamUrl:       opts.StreamUrl,
+			clientStreamUrl: opts.ClientStreamUrl,
+			filepath:        filepath,
 			BaseStream: BaseStream{
 				manager:               m,
 				logger:                m.Logger,

@@ -622,6 +622,11 @@ export type DebridStartStream_Variables = {
     fileIndex?: number
     playbackType: DebridClient_StreamPlaybackType
     clientId: string
+    /**
+     *  DirectCdnCapable is sent by clients that can play a raw debrid CDN URL themselves
+     *  (Denshi/Electron — injects CORS headers). Web tabs send false → proxy.
+     */
+    directCdnCapable?: boolean
     batchEpisodeFiles?: HibikeTorrent_BatchEpisodeFiles
     /**
      *  Preload is true if the stream should only be resolved and cached, not played.
@@ -1689,6 +1694,11 @@ export type NakamaWatchRoomJoinStream_Variables = {
     roomId: string
     clientId: string
     playbackType: DebridClient_StreamPlaybackType
+    /**
+     *  DirectCdnCapable: this participant can play a raw CDN link (Denshi). Each capable
+     *  room member gets its own direct CDN link via the shared-selection dual-link resolve.
+     */
+    directCdnCapable?: boolean
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

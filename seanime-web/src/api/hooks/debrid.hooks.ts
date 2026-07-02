@@ -133,6 +133,17 @@ export function useDebridStartStream() {
     })
 }
 
+// useDebridRefreshStreamUrl re-resolves a fresh CDN link for the caller's active stream.
+// Direct-CDN playback calls this when the raw CDN link dies mid-playback (expired token /
+// hard 429), then swaps the video src and seeks back.
+export function useDebridRefreshStreamUrl() {
+    return useServerMutation<string>({
+        endpoint: API_ENDPOINTS.DEBRID.DebridRefreshStreamUrl.endpoint,
+        method: API_ENDPOINTS.DEBRID.DebridRefreshStreamUrl.methods[0],
+        mutationKey: [API_ENDPOINTS.DEBRID.DebridRefreshStreamUrl.key],
+    })
+}
+
 export function useDebridCancelStream() {
     return useServerMutation<boolean, DebridCancelStream_Variables>({
         endpoint: API_ENDPOINTS.DEBRID.DebridCancelStream.endpoint,

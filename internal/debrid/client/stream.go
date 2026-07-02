@@ -108,6 +108,10 @@ type (
 		// sets it from the host's active selection so peers reuse the selection without
 		// contending on the host's single resolved link (the cause of a follower never loading).
 		SharedTorrentItemId string
+		// DirectCdnCapable is set by clients that can play a raw debrid CDN URL themselves
+		// (Denshi injects CORS headers in its main process; a plain web tab cannot). Combined
+		// with the DirectCdnPlayback setting + provider allowlist to decide direct mode.
+		DirectCdnCapable  bool
 		UserAgent         string
 		ClientId          string
 		// UserID is the Seanime user who owns this stream; routes playback/events to
@@ -325,6 +329,53 @@ func (s *StreamManager) ev(opts *StartStreamOptions) events.WSEventManagerInterf
 }
 
 // startStream is called by the client to start streaming a torrent
+// directCdnEligible reports whether this stream should hand the raw CDN link to the client
+// (native player pulls video straight from the debrid CDN; the server keeps its own link for
+// metadata/subtitle readers). Requires client capability, the DirectCdnPlayback setting, and
+// an allowlisted provider — TorBox only (RD IP-locks links, a client fetch would 403).
+func (s *StreamManager) directCdnEligible(opts *StartStreamOptions) bool {
+	return directCdnEligibleWith(s.repository.GetSettings(), opts)
+}
+
+// directCdnEligibleWith is the pure eligibility check (unit-testable).
+func directCdnEligibleWith(settings *models.DebridSettings, opts *StartStreamOptions) bool {
+	if opts == nil || opts.PlaybackType != PlaybackTypeNativePlayer || !opts.DirectCdnCapable {
+		return false
+	}
+	return settings != nil && settings.DirectCdnPlayback && settings.Provider == "torbox"
+}
+
+// resolveClientCdnUrl resolves a SECOND stream URL from an already-added torrent item — the
+// client-facing link in direct CDN mode. The primary link stays server-side (metadata parse,
+// subtitle readers, parserCache key), so client and server never contend on one link's rate
+// limit. Falls back to serverUrl when there is no torrent item (pre-resolved direct streams)
+// or the re-resolve fails: both sides then share one link, which still works.
+func (s *StreamManager) resolveClientCdnUrl(ctx context.Context, torrentItemId, fileId, serverUrl string) string {
+	if torrentItemId == "" {
+		return serverUrl
+	}
+	provider, err := s.repository.GetProvider()
+	if err != nil {
+		return serverUrl
+	}
+	itemCh := make(chan debrid.TorrentItem, 1)
+	go func() {
+		for range itemCh { //nolint:revive
+		}
+	}()
+	url, err := provider.GetTorrentStreamUrl(ctx, debrid.StreamTorrentOptions{
+		ID:     torrentItemId,
+		FileId: fileId,
+	}, itemCh)
+	close(itemCh)
+	if err != nil || url == "" {
+		s.repository.logger.Warn().Err(err).Msg("debridstream: Direct CDN second-link resolve failed; client shares the server link")
+		return serverUrl
+	}
+	s.repository.logger.Debug().Msg("debridstream: Resolved separate client CDN link (direct mode)")
+	return url
+}
+
 func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOptions) (err error) {
 	defer util.HandlePanicInModuleWithError("debrid/client/StartStream", &err)
 
@@ -840,16 +891,21 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			if !s.ds(opts).IsOpenActive(opts.ClientId) {
 				return
 			}
+			clientStreamUrl := ""
+			if s.directCdnEligible(opts) {
+				clientStreamUrl = s.resolveClientCdnUrl(ctx, torrentItemId, fileId, streamUrl)
+			}
 			err := s.ds(opts).PlayDebridStream(ctx, filepath, directstream.PlayDebridStreamOptions{
-				StreamUrl:    streamUrl,
-				MediaId:      media.ID,
-				AnidbEpisode: opts.AniDBEpisode,
-				Media:        media,
-				Torrent:      selectedTorrent,
-				FileId:       fileId,
-				UserAgent:    opts.UserAgent,
-				ClientId:     opts.ClientId,
-				AutoSelect:   false,
+				StreamUrl:       streamUrl,
+				ClientStreamUrl: clientStreamUrl,
+				MediaId:         media.ID,
+				AnidbEpisode:    opts.AniDBEpisode,
+				Media:           media,
+				Torrent:         selectedTorrent,
+				FileId:          fileId,
+				UserAgent:       opts.UserAgent,
+				ClientId:        opts.ClientId,
+				AutoSelect:      false,
 			})
 			if err != nil {
 				s.repository.logger.Error().Err(err).Msg("directstream: Failed to prepare new stream")
@@ -1469,16 +1525,21 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		if !s.ds(opts).IsOpenActive(opts.ClientId) {
 			return nil
 		}
+		clientStreamUrl := ""
+		if s.directCdnEligible(opts) {
+			clientStreamUrl = s.resolveClientCdnUrl(streamCtx, cached.torrentItemId, cached.fileId, streamUrl)
+		}
 		err = s.ds(opts).PlayDebridStream(streamCtx, cached.filepath, directstream.PlayDebridStreamOptions{
-			StreamUrl:    streamUrl,
-			MediaId:      media.ID,
-			AnidbEpisode: opts.AniDBEpisode,
-			Media:        media,
-			Torrent:      cached.torrent,
-			FileId:       cached.fileId,
-			UserAgent:    opts.UserAgent,
-			ClientId:     opts.ClientId,
-			AutoSelect:   false,
+			StreamUrl:       streamUrl,
+			ClientStreamUrl: clientStreamUrl,
+			MediaId:         media.ID,
+			AnidbEpisode:    opts.AniDBEpisode,
+			Media:           media,
+			Torrent:         cached.torrent,
+			FileId:          cached.fileId,
+			UserAgent:       opts.UserAgent,
+			ClientId:        opts.ClientId,
+			AutoSelect:      false,
 		})
 		if err != nil {
 			s.repository.logger.Error().Err(err).Msg("debridstream: Failed to play preloaded stream")

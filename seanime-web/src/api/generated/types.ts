@@ -3923,6 +3923,11 @@ export type Models_DebridSettings = {
     streamAutoSelect: boolean
     streamPreferredResolution: string
     preloadNextStream: boolean
+    /**
+     *  DirectCdnPlayback lets capable native-player clients (Denshi) pull video straight from
+     *  the debrid CDN instead of proxying through the server. TorBox only.
+     */
+    directCdnPlayback: boolean
     id: number
     createdAt?: string
     updatedAt?: string

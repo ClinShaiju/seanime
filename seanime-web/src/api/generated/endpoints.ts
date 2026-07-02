@@ -668,6 +668,16 @@ export const API_ENDPOINTS = {
         },
         /**
          *  @description
+         *  Route re-resolves a fresh CDN link for the caller's active stream.
+         *  Direct-CDN clients call this when their raw CDN link dies mid-playback.
+         */
+        DebridRefreshStreamUrl: {
+            key: "DEBRID-debrid-refresh-stream-url",
+            methods: ["POST"],
+            endpoint: "/api/v1/debrid/stream/refresh-url",
+        },
+        /**
+         *  @description
          *  Route returns the set of prewarmed episodes for the current user.
          *  Used by the UI to badge episodes that are prewarmed and will play instantly.
          *  Read-only; never triggers a resolve. Returns an empty list when debrid/preload is off.

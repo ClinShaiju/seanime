@@ -579,6 +579,7 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1.POST("/debrid/torrents/file-previews", h.HandleDebridGetTorrentFilePreviews, h.UserOnly)
 	v1.POST("/debrid/stream/start", h.HandleDebridStartStream)
 	v1.POST("/debrid/stream/cancel", h.HandleDebridCancelStream)
+	v1.POST("/debrid/stream/refresh-url", h.HandleDebridRefreshStreamUrl)
 	v1.GET("/debrid/stream/prewarm-status", h.HandleDebridGetPrewarmStatus)
 
 	//

@@ -1,6 +1,7 @@
 import { getServerBaseUrl } from "@/api/client/server-url"
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { useHandleCurrentMediaContinuity } from "@/api/hooks/continuity.hooks"
+import { useDebridRefreshStreamUrl } from "@/api/hooks/debrid.hooks"
 import { useDirectstreamConvertSubs } from "@/api/hooks/directstream.hooks"
 import { useCancelDiscordActivity } from "@/api/hooks/discord.hooks"
 import { currentWatchRoomAtom, useNakamaWatchParty } from "@/app/(main)/_features/nakama/nakama-manager"
@@ -869,6 +870,16 @@ export function VideoCore(props: VideoCoreProps) {
     const { mutate: convertSubs } = useDirectstreamConvertSubs()
 
     const isFirstError = React.useRef(true)
+
+    // Direct-CDN resilience: when the player pulls straight from the debrid CDN (no server
+    // proxy), an expired link kills the <video> with a network error the proxy used to absorb.
+    // On error we ask the server for a fresh link, swap src and seek back. Capped retries +
+    // cooldown so a genuinely broken stream doesn't thrash (seek-reset lessons).
+    const { mutate: refreshCdnUrl } = useDebridRefreshStreamUrl()
+    const [cdnRefreshedUrl, setCdnRefreshedUrl] = React.useState<string | null>(null)
+    const cdnRetryCountRef = React.useRef(0)
+    const cdnLastRetryAtRef = React.useRef(0)
+    const cdnResumeRef = React.useRef<{ time: number, paused: boolean } | null>(null)
     const shouldDispatchTerminatedOnUnmount = React.useRef(false)
     const [activePlayer, setActivePlayer] = useAtom(vc_activePlayerId)
     const pendingMiniPlayerTransitionRef = React.useRef(false)
@@ -1115,6 +1126,9 @@ export function VideoCore(props: VideoCoreProps) {
         if (!!state.playbackInfo?.id && (!currentPlaybackRef.current || state.playbackInfo.id !== currentPlaybackRef.current)) {
             hasSoughtRef.current = false
             isFirstError.current = true
+            setCdnRefreshedUrl(null)
+            cdnRetryCountRef.current = 0
+            cdnResumeRef.current = null
             setInSightOpen(false)
             setInSightData(null)
             log.info("New stream loaded", state.playbackInfo)
@@ -1131,7 +1145,12 @@ export function VideoCore(props: VideoCoreProps) {
         }
     }, [state.playbackInfo?.id, activePlayer])
 
-    const streamUrl = state?.playbackInfo?.streamUrl?.replace?.("{{SERVER_URL}}", getServerBaseUrl())
+    const streamUrl = cdnRefreshedUrl ?? state?.playbackInfo?.streamUrl?.replace?.("{{SERVER_URL}}", getServerBaseUrl())
+
+    // Direct-CDN debrid stream: the URL points at the debrid CDN, not the server proxy.
+    const isDirectCdnStream = state?.playbackInfo?.streamType === "debrid"
+        && !!streamUrl
+        && !streamUrl.includes("/api/v1/directstream/stream")
 
     // Initialize HLS
     useVideoCoreHls({
@@ -1175,6 +1194,16 @@ export function VideoCore(props: VideoCoreProps) {
         onLoadedMetadata?.(e)
         if (!videoRef.current) return
         const v = videoRef.current
+
+        // Resuming after a direct-CDN link refresh: same playback, fresh src — restore
+        // position/state and skip nothing else (managers are keyed on playbackInfo.id).
+        if (cdnResumeRef.current) {
+            const resume = cdnResumeRef.current
+            cdnResumeRef.current = null
+            log.info("Resuming after CDN link refresh", resume.time)
+            v.currentTime = resume.time
+            if (!resume.paused) v.play().catch(() => {})
+        }
 
         log.info("Loaded metadata", v.duration)
         log.info("Audio tracks", v.audioTracks)
@@ -1531,6 +1560,32 @@ export function VideoCore(props: VideoCoreProps) {
 
     const handleError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         log.error("Video error", e)
+
+        // Direct-CDN debrid link died mid-playback (expired token / hard 429) — re-resolve a
+        // fresh link from the server, swap src, seek back. Cap + cooldown so a genuinely
+        // broken stream fails through to the normal error path instead of thrashing.
+        if (isDirectCdnStream && cdnRetryCountRef.current < 2 && Date.now() - cdnLastRetryAtRef.current > 5000) {
+            cdnRetryCountRef.current++
+            cdnLastRetryAtRef.current = Date.now()
+            const v = e.currentTarget
+            cdnResumeRef.current = { time: v?.currentTime || 0, paused: !!v?.paused }
+            log.warning("Direct CDN stream errored, requesting a fresh link", cdnRetryCountRef.current)
+            refreshCdnUrl(undefined, {
+                onSuccess: (url) => {
+                    if (!url) return
+                    // Bust element-level caching if the CDN returns the same URL.
+                    setCdnRefreshedUrl(url === streamUrl ? `${url}${url.includes("?") ? "&" : "?"}_r=${Date.now()}` : url)
+                },
+                onError: () => {
+                    cdnResumeRef.current = null
+                    const error = "Stream link expired and could not be refreshed."
+                    onError?.(error)
+                    dispatchVideoErrorEvent(error)
+                },
+            })
+            return
+        }
+
         if (isFirstError.current && props.id !== "native-player") {
             // Change stream type to HLS if it failed to load
             log.warning("Video player could not load the URL, switching to HLS")

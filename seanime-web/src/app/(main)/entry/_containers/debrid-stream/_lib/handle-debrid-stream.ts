@@ -90,6 +90,9 @@ export function useHandleStartDebridStream() {
             fileId: params.chosenFileId,
             playbackType: getPlaybackType(forcePlaybackMethod),
             clientId: clientId || "",
+            // Denshi/Electron can play a raw debrid CDN URL itself (CORS injected in main
+            // process) — lets the server hand off video directly when the setting is on.
+            directCdnCapable: __isElectronDesktop__,
             autoSelect: false,
             batchEpisodeFiles: params.batchEpisodeFiles,
             preload: params.preload,
@@ -125,6 +128,7 @@ export function useHandleStartDebridStream() {
             fileId: "",
             playbackType: getPlaybackType(forcePlaybackMethod),
             clientId: clientId || "",
+            directCdnCapable: __isElectronDesktop__,
             autoSelect: true,
             preload: params.preload,
             prewarmMetadata: params.prewarmMetadata,

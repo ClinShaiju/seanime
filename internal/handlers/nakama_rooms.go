@@ -216,6 +216,9 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 		RoomId       string                           `json:"roomId"`
 		ClientId     string                           `json:"clientId"`
 		PlaybackType debrid_client.StreamPlaybackType `json:"playbackType"`
+		// DirectCdnCapable: this participant can play a raw CDN link (Denshi). Each capable
+		// room member gets its own direct CDN link via the shared-selection dual-link resolve.
+		DirectCdnCapable bool `json:"directCdnCapable,omitempty"`
 	}
 	var b body
 	if err := c.Bind(&b); err != nil {
@@ -229,13 +232,14 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 	}
 
 	opts := &debrid_client.StartStreamOptions{
-		MediaId:       info.MediaId,
-		EpisodeNumber: info.EpisodeNumber,
-		AniDBEpisode:  info.AniDBEpisode,
-		UserAgent:     c.Request().Header.Get("User-Agent"),
-		ClientId:      b.ClientId,
-		UserID:        h.dataUserID(c),
-		PlaybackType:  b.PlaybackType,
+		MediaId:          info.MediaId,
+		EpisodeNumber:    info.EpisodeNumber,
+		AniDBEpisode:     info.AniDBEpisode,
+		UserAgent:        c.Request().Header.Get("User-Agent"),
+		ClientId:         b.ClientId,
+		DirectCdnCapable: b.DirectCdnCapable,
+		UserID:           h.dataUserID(c),
+		PlaybackType:     b.PlaybackType,
 	}
 
 	// Reuse the host's SELECTION (already-added debrid torrent item + file) and have this peer

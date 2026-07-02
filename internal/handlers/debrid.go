@@ -375,6 +375,9 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		FileIndex         *int                             `json:"fileIndex"`
 		PlaybackType      debrid_client.StreamPlaybackType `json:"playbackType"` // "default" or "externalPlayerLink"
 		ClientId          string                           `json:"clientId"`
+		// DirectCdnCapable is sent by clients that can play a raw debrid CDN URL themselves
+		// (Denshi/Electron — injects CORS headers). Web tabs send false → proxy.
+		DirectCdnCapable bool `json:"directCdnCapable,omitempty"`
 		BatchEpisodeFiles *hibiketorrent.BatchEpisodeFiles `json:"batchEpisodeFiles"`
 		// Preload is true if the stream should only be resolved and cached, not played.
 		Preload bool `json:"preload,omitempty"`
@@ -425,6 +428,7 @@ func (h *Handler) HandleDebridStartStream(c echo.Context) error {
 		FileIndex:         b.FileIndex,
 		UserAgent:         userAgent,
 		ClientId:          b.ClientId,
+		DirectCdnCapable:  b.DirectCdnCapable,
 		UserID:            h.dataUserID(c),
 		PlaybackType:      b.PlaybackType,
 		AutoSelect:        b.AutoSelect,
@@ -476,6 +480,25 @@ func (h *Handler) HandleDebridCancelStream(c echo.Context) error {
 	h.App.DebridClientRepository.CancelStream(b.Options)
 
 	return h.RespondWithData(c, true)
+}
+
+// HandleDebridRefreshStreamUrl
+//
+//	@summary re-resolves a fresh CDN link for the caller's active stream.
+//	@desc Direct-CDN clients call this when their raw CDN link dies mid-playback (expired
+//	@desc token / hard 429): the server re-resolves from the stored selection and the client
+//	@desc swaps its video src and seeks back. The server's own link is untouched.
+//	@returns string
+//	@route /api/v1/debrid/stream/refresh-url [POST]
+func (h *Handler) HandleDebridRefreshStreamUrl(c echo.Context) error {
+	if err := h.guardStreamingUser(c); err != nil {
+		return err
+	}
+	url, err := h.App.DebridClientRepository.RefreshStreamUrl(c.Request().Context(), h.dataUserID(c))
+	if err != nil {
+		return h.RespondWithError(c, err)
+	}
+	return h.RespondWithData(c, url)
 }
 
 // HandleDebridGetPrewarmStatus

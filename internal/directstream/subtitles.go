@@ -229,7 +229,9 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *native
 		}
 		s.StartSubtitleStream(s, m.playbackCtx, reader, offset)
 	case *DebridStream:
-		reader, err := s.getReader()
+		// Direct CDN mode reads the server link via a gated chunked reader (the proxy never
+		// fills the FileStream cache); proxy mode keeps the FileStream reader.
+		reader, err := s.newSubtitleReader()
 		if err != nil {
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return

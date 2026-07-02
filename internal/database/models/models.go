@@ -624,6 +624,10 @@ type DebridSettings struct {
 	StreamAutoSelect             bool   `gorm:"column:stream_auto_select" json:"streamAutoSelect"`
 	StreamPreferredResolution    string `gorm:"column:stream_preferred_resolution" json:"streamPreferredResolution"`
 	PreloadNextStream            bool   `gorm:"column:preload_next_stream" json:"preloadNextStream"`
+	// DirectCdnPlayback lets capable native-player clients (Denshi) pull video straight from
+	// the debrid CDN instead of proxying through the server. Subtitles/fonts stay server-side
+	// via a second link. Gated per provider (TorBox only — RD IP-locks links).
+	DirectCdnPlayback bool `gorm:"column:direct_cdn_playback" json:"directCdnPlayback"`
 }
 
 type DebridTorrentItem struct {

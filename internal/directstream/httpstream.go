@@ -23,7 +23,12 @@ import (
 // httpBaseStream holds shared state and logic for HTTP URL-based streams (debrid, URL, nakama).
 type httpBaseStream struct {
 	BaseStream
-	streamUrl           string
+	streamUrl string
+	// clientStreamUrl, when non-empty, puts the stream in direct CDN mode: PlaybackInfo hands
+	// this raw URL to the player (no proxy), and subtitle readers pull from streamUrl (the
+	// server's own link) via chunked CDN readers instead of the proxy-fed FileStream. The
+	// proxy endpoint stays alive for thumbnails / non-capable consumers.
+	clientStreamUrl     string
 	contentLength       int64
 	filepath            string
 	requestHeaders      http.Header
@@ -123,6 +128,22 @@ func (s *httpBaseStream) applyHeadRespHeaders(dst http.Header) {
 
 func (s *httpBaseStream) newMetadataReader() (io.ReadSeekCloser, error) {
 	return fetchMetadataReader(s.manager.playbackCtx, s.logger, s.streamUrl, s.requestHeaders)
+}
+
+// directMode reports whether the client plays the CDN URL itself (no proxy).
+func (s *httpBaseStream) directMode() bool {
+	return s.clientStreamUrl != ""
+}
+
+// newSubtitleReader returns the reader subtitle streams should walk the file with.
+// Proxy mode: a FileStream reader (fed by the proxy's CDN pulls). Direct mode: the proxy
+// never fills the cache, so read the server link directly — same gated chunked CDN reader
+// as the metadata parse (per-token slot, transient-429 retry).
+func (s *httpBaseStream) newSubtitleReader() (io.ReadSeekCloser, error) {
+	if s.directMode() {
+		return s.newMetadataReader()
+	}
+	return s.getReader()
 }
 
 // fetchMetadataReader opens a CDN reader for MKV metadata.
@@ -228,12 +249,19 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 
 		contentType := s.LoadContentType()
 
+		// Direct CDN mode: the player pulls straight from the debrid CDN (no {{SERVER_URL}}
+		// template, no HMAC — the CDN URL carries its own token). Proxy URL otherwise.
+		playerUrl := "{{SERVER_URL}}/api/v1/directstream/stream?id=" + id + s.manager.GetHMACTokenQueryParam("/api/v1/directstream/stream", "&")
+		if s.directMode() {
+			playerUrl = s.clientStreamUrl
+		}
+
 		playbackInfo := nativeplayer.PlaybackInfo{
 			ID:                id,
 			StreamType:        streamType,
 			StreamPath:        s.filepath,
 			MimeType:          contentType,
-			StreamUrl:         "{{SERVER_URL}}/api/v1/directstream/stream?id=" + id + s.manager.GetHMACTokenQueryParam("/api/v1/directstream/stream", "&"),
+			StreamUrl:         playerUrl,
 			ContentLength:     s.contentLength, // loaded by LoadContentType
 			MkvMetadata:       nil,
 			MkvMetadataParser: mo.None[*mkvparser.MetadataParser](),

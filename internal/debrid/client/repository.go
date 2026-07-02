@@ -2,6 +2,7 @@ package debrid_client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"seanime/internal/api/anilist"
@@ -437,6 +438,44 @@ func (r *Repository) GetUserStreamShare(userID uint) (share UserStreamShare, ok 
 
 func (r *Repository) CancelStream(opts *CancelStreamOptions) {
 	r.smFor(opts.UserID).cancelStream(opts)
+}
+
+// RefreshStreamUrl re-resolves a fresh CDN link for a user's active stream — the direct-CDN
+// client's escape hatch when its link dies mid-playback (403 expired token / hard 429). The
+// resolve comes from the stored selection (torrentItemId + fileId), so it's cheap (no
+// createtorrent) and the server's own link/readers are untouched.
+func (r *Repository) RefreshStreamUrl(ctx context.Context, userID uint) (string, error) {
+	sm, found := r.streamManagers.Get(userID)
+	if !found {
+		return "", errors.New("no active stream")
+	}
+	streamUrl, torrentItemId, fileId := sm.shareSnapshot()
+	if streamUrl == "" {
+		return "", errors.New("no active stream")
+	}
+	if torrentItemId == "" {
+		// Pre-resolved direct stream — nothing to re-resolve from; return the known link.
+		return streamUrl, nil
+	}
+	provider, err := r.GetProvider()
+	if err != nil {
+		return "", err
+	}
+	itemCh := make(chan debrid.TorrentItem, 1)
+	go func() {
+		for range itemCh { //nolint:revive
+		}
+	}()
+	freshUrl, err := provider.GetTorrentStreamUrl(ctx, debrid.StreamTorrentOptions{
+		ID:     torrentItemId,
+		FileId: fileId,
+	}, itemCh)
+	close(itemCh)
+	if err != nil {
+		return "", fmt.Errorf("failed to refresh stream url: %w", err)
+	}
+	r.logger.Debug().Str("user", r.usernameFor(userID)).Msg("debridstream: Refreshed client CDN link on request")
+	return freshUrl, nil
 }
 
 func (r *Repository) setPreviousStreamOptions(opts *StartStreamOptions) {
