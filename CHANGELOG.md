@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.8.15
+
+### Desktop (Denshi)
+
+- ✨ **Direct CDN playback now works in the desktop app.** The Electron main process injects `Access-Control-Allow-Origin` on media responses that lack it (debrid CDNs send no CORS headers), so `<video crossOrigin="anonymous">` can play a raw CDN URL. Scoped to media loads only; headers set by the origin server are never overridden. This is the missing piece flagged in v3.8.14 — the `Settings → Debrid → Direct CDN playback` toggle (TorBox only) is now functional on this build.
+
+No server-side changes — the server binaries are identical to v3.8.14 apart from the version string.
+
 ## v3.8.14
 
 ### Direct CDN playback (new, opt-in)
