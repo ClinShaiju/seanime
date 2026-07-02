@@ -129,6 +129,7 @@ export const THEME_DEFAULT_VALUES: ThemeSettings = {
     groupSeasons: false,
     hideFranchiseSpinoffs: false,
     hideFranchiseRecaps: false,
+    enableMediaPageBannerTrailer: false,
 }
 
 export type ThemeSettingsHook = {
@@ -191,6 +192,7 @@ export function useThemeSettings(): ThemeSettingsHook {
         groupSeasons: getThemeValue("groupSeasons", serverStatus?.themeSettings),
         hideFranchiseSpinoffs: getThemeValue("hideFranchiseSpinoffs", serverStatus?.themeSettings),
         hideFranchiseRecaps: getThemeValue("hideFranchiseRecaps", serverStatus?.themeSettings),
+        enableMediaPageBannerTrailer: getThemeValue("enableMediaPageBannerTrailer", serverStatus?.themeSettings),
     }
 }
 

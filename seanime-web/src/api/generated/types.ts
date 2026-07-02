@@ -4242,6 +4242,7 @@ export type Models_Theme = {
     groupSeasons: boolean
     hideFranchiseSpinoffs: boolean
     hideFranchiseRecaps: boolean
+    enableMediaPageBannerTrailer: boolean
     id: number
     createdAt?: string
     updatedAt?: string

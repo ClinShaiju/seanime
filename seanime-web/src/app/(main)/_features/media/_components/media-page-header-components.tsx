@@ -1,4 +1,5 @@
 import { AL_BaseAnime, AL_BaseManga, AL_MediaStatus, Anime_EntryListData, Manga_EntryListData, Nullish } from "@/api/generated/types"
+import { ElectronYoutubeEmbed } from "@/app/(main)/_electron/electron-embed"
 import { TRANSPARENT_SIDEBAR_BANNER_IMG_STYLE } from "@/app/(main)/_features/custom-ui/styles"
 import { AnilistMediaEntryModal } from "@/app/(main)/_features/media/_containers/anilist-media-entry-modal"
 import { imageShimmer } from "@/components/shared/image-helpers"
@@ -17,6 +18,7 @@ import {
     useIsMobile,
     useThemeSettings,
 } from "@/lib/theme/theme-hooks.ts"
+import { __isElectronDesktop__ } from "@/types/constants"
 import capitalize from "lodash/capitalize"
 import { motion } from "motion/react"
 import React from "react"
@@ -36,10 +38,14 @@ type MediaPageHeaderProps = {
 
 // #816: muted looping YouTube trailer as the banner background. Desktop-only,
 // respects prefers-reduced-motion, mounts after a delay so the banner image
-// paints first and stays as the poster/fallback.
+// paints first and stays as the poster/fallback. Uses the same embed paths as
+// the discover header: Denshi webview (plain iframes render a blank page in
+// Electron) and a credentialless iframe elsewhere (chromium storage-access
+// error page otherwise). On error the banner image simply stays.
 function MediaPageHeaderTrailerBackground({ trailerId }: { trailerId: string }) {
     const [show, setShow] = React.useState(false)
     const [loaded, setLoaded] = React.useState(false)
+    const [error, setError] = React.useState(false)
 
     React.useEffect(() => {
         if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return
@@ -47,26 +53,40 @@ function MediaPageHeaderTrailerBackground({ trailerId }: { trailerId: string }) 
         return () => clearTimeout(t)
     }, [trailerId])
 
-    if (!show) return null
+    if (!show || error) return null
 
     return (
         <div
             data-media-page-header-banner-trailer
-            className="absolute inset-0 z-[1] overflow-hidden pointer-events-none hidden lg:block"
+            className={cn(
+                "absolute inset-0 z-[1] overflow-hidden pointer-events-none hidden lg:block",
+                "opacity-0 transition-opacity duration-1000",
+                loaded && "opacity-100",
+            )}
         >
-            <iframe
-                src={`https://www.youtube-nocookie.com/embed/${trailerId}?autoplay=1&mute=1&loop=1&playlist=${trailerId}&controls=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&disablekb=1`}
-                title="Trailer"
-                allow="autoplay; encrypted-media"
-                onLoad={() => setLoaded(true)}
-                className={cn(
-                    // 16:9 sized to COVER the full-width banner regardless of its height
-                    "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
-                    "w-[max(100%,177.78vh)] h-[max(100%,56.25vw)]",
-                    "opacity-0 transition-opacity duration-1000",
-                    loaded && "opacity-100",
+            <div
+                // 16:9 sized to COVER the full-width banner regardless of its height
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100%,177.78vh)] h-[max(100%,56.25vw)]"
+            >
+                {__isElectronDesktop__ ? (
+                    <ElectronYoutubeEmbed
+                        trailerId={trailerId}
+                        isBanner
+                        onLoad={() => setLoaded(true)}
+                        onError={() => setError(true)}
+                    />
+                ) : (
+                    <iframe
+                        {...({ credentialless: "true" } as any)}
+                        src={`https://www.youtube-nocookie.com/embed/${trailerId}?autoplay=1&controls=0&mute=1&disablekb=1&loop=1&vq=medium&playlist=${trailerId}&cc_lang_pref=ja&enablejsapi=true`}
+                        title="Trailer"
+                        allow="autoplay; encrypted-media"
+                        className="w-full h-full"
+                        onLoad={() => setLoaded(true)}
+                        onError={() => setError(true)}
+                    />
                 )}
-            />
+            </div>
         </div>
     )
 }
@@ -210,7 +230,7 @@ export function MediaPageHeader(props: MediaPageHeaderProps) {
                         transition={{ duration: 0.22, ease: "easeOut" }}
                     />}
 
-                    {(!!trailerId && !shouldBlurBanner && !shouldDimBanner) &&
+                    {(ts.enableMediaPageBannerTrailer && !!trailerId && !shouldBlurBanner && !shouldDimBanner) &&
                         <MediaPageHeaderTrailerBackground trailerId={trailerId} />}
 
                     {shouldBlurBanner && <div

@@ -467,6 +467,9 @@ type Theme struct {
 	GroupSeasons          bool `gorm:"column:group_seasons" json:"groupSeasons"`
 	HideFranchiseSpinoffs bool `gorm:"column:hide_franchise_spinoffs" json:"hideFranchiseSpinoffs"`
 	HideFranchiseRecaps   bool `gorm:"column:hide_franchise_recaps" json:"hideFranchiseRecaps"`
+
+	// Muted looping YouTube trailer behind the media page banner (opt-in).
+	EnableMediaPageBannerTrailer bool `gorm:"column:enable_media_page_banner_trailer" json:"enableMediaPageBannerTrailer"`
 }
 
 type HomeItem struct {

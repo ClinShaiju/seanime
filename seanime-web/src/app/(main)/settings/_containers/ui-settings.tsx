@@ -66,6 +66,7 @@ const themeSchema = defineSchema(({ z }) => z.object({
     animeLibraryCollectionDefaultSorting: z.string().default(THEME_DEFAULT_VALUES.animeLibraryCollectionDefaultSorting),
     mangaLibraryCollectionDefaultSorting: z.string().default(THEME_DEFAULT_VALUES.mangaLibraryCollectionDefaultSorting),
     groupSeasons: z.boolean().default(false),
+    enableMediaPageBannerTrailer: z.boolean().default(false),
     hideFranchiseSpinoffs: z.boolean().default(false),
     hideFranchiseRecaps: z.boolean().default(false),
     showAnimeUnwatchedCount: z.boolean().default(THEME_DEFAULT_VALUES.showAnimeUnwatchedCount),
@@ -498,6 +499,7 @@ export function UISettings() {
                 animeLibraryCollectionDefaultSorting: themeSettings?.animeLibraryCollectionDefaultSorting,
                 mangaLibraryCollectionDefaultSorting: themeSettings?.mangaLibraryCollectionDefaultSorting,
                 groupSeasons: themeSettings?.groupSeasons ?? false,
+                enableMediaPageBannerTrailer: themeSettings?.enableMediaPageBannerTrailer ?? false,
                 hideFranchiseSpinoffs: themeSettings?.hideFranchiseSpinoffs ?? false,
                 hideFranchiseRecaps: themeSettings?.hideFranchiseRecaps ?? false,
                 showAnimeUnwatchedCount: themeSettings?.showAnimeUnwatchedCount,
@@ -820,6 +822,13 @@ export function UISettings() {
                                     itemContainerClass={thumbContainerClass}
                                     radioGroupStackClass="flex-wrap"
                                     help={ThemeMediaPageBannerSizeOptions.find(n => n.value === f.watch("mediaPageBannerSize"))?.description}
+                                />
+
+                                <Field.Switch
+                                    side="right"
+                                    name="enableMediaPageBannerTrailer"
+                                    label="Play trailer in banner"
+                                    help="Play a muted looping trailer behind the anime page banner when one is available. Desktop only."
                                 />
                             </SettingsCard>
 
