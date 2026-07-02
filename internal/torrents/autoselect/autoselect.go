@@ -53,6 +53,10 @@ type (
 		DebridTorrent   *debrid.TorrentInfo         // For debrid
 		DebridFileID    string                      // For debrid
 		OriginalTorrent *hibiketorrent.AnimeTorrent // The original torrent object
+		// OtherEpisodeFiles maps episode number -> file for OTHER episodes unambiguously
+		// present in the same (batch) torrent, so the debrid preload layer can fan out
+		// per-episode URLs from one AddTorrent instead of one search+add per episode.
+		OtherEpisodeFiles map[int]*debrid.TorrentItemFile
 	}
 )
 

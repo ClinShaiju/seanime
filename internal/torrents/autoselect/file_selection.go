@@ -296,10 +296,32 @@ func (s *AutoSelect) selectFileFromDebrid(
 	s.logger.Debug().Msgf("autoselect: Selected debrid file %s", tFile.Name)
 	s.log(fmt.Sprintf("Selected debrid file: %s", tFile.Name))
 
+	// Map the OTHER episodes in this (batch) torrent to their files. Keyed by the same
+	// AniDB-episode normalization the selection above used, and only when exactly one file
+	// claims the episode (multi-season batches collide under ForceMatch — skip those).
+	otherFiles := make(map[int]*debrid.TorrentItemFile)
+	for _, af := range analysis.GetFiles() {
+		lf := af.GetLocalFile()
+		if lf == nil || !lf.IsMain() {
+			continue
+		}
+		epNum, convErr := strconv.Atoi(lf.Metadata.AniDBEpisode)
+		if convErr != nil || epNum <= 0 || epNum == episodeNumber {
+			continue
+		}
+		if analysis.CountByAniDBEpisode(lf.Metadata.AniDBEpisode) != 1 {
+			continue
+		}
+		if af.GetIndex() < len(info.Files) {
+			otherFiles[epNum] = info.Files[af.GetIndex()]
+		}
+	}
+
 	return &Result{
-		DebridTorrent:   info,
-		DebridFileID:    tFile.ID,
-		AnalysisFile:    analysisFile,
-		OriginalTorrent: t,
+		DebridTorrent:     info,
+		DebridFileID:      tFile.ID,
+		AnalysisFile:      analysisFile,
+		OriginalTorrent:   t,
+		OtherEpisodeFiles: otherFiles,
 	}, nil
 }

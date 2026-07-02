@@ -260,6 +260,9 @@ const (
 	// episode with no torrents yet would otherwise re-run a full aggregator search every tick.
 	// Real plays (startStream) are unaffected — this gates only background preloads.
 	preloadFailureBackoff = 30 * time.Minute
+	// batchFanOutCount caps how many episodes AFTER a preloaded one are fanned out from the
+	// same batch torrent (URL-only, ~1 requestdl each; zero search/createtorrent).
+	batchFanOutCount = 2
 )
 
 // selectionTTLForMedia returns the selection lifetime for a media: short (hourly re-check)
@@ -1144,6 +1147,7 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 		fileId := opts.FileId
 		filepath := ""
 		directStreamUrl := ""
+		var otherEpisodeFiles map[int]*debrid.TorrentItemFile
 
 		if opts.AutoSelect {
 			pt, err := s.repository.findBestTorrent(provider, media, opts.EpisodeNumber, opts.UserID)
@@ -1157,6 +1161,7 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 				return
 			}
 			selectedTorrent, fileId, filepath, directStreamUrl = pt.torrent, pt.fileId, pt.filepath, pt.streamUrl
+			otherEpisodeFiles = pt.otherEpisodeFiles
 		} else {
 			if selectedTorrent == nil {
 				return
@@ -1248,6 +1253,13 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 		// so the speculative continue-watching prewarm doesn't download fonts it may never use.
 		if opts.PrewarmMetadata && streamUrl != "" && preloadCtx.Err() == nil && s.ds(opts) != nil {
 			s.ds(opts).PrewarmStreamMetadata(streamUrl)
+		}
+
+		// Batch fan-out: sibling episodes inside the same added batch torrent cost ~1 requestdl
+		// each (no search, no createtorrent) — warm the next couple so a binge stays ahead of
+		// the player. Runs inline so the prewarm drain's serialization still bounds TorBox pressure.
+		if stored != nil && torrentItemId != "" && len(otherEpisodeFiles) > 0 {
+			s.fanOutBatchPreloads(preloadCtx, opts, media, selectedTorrent, torrentItemId, otherEpisodeFiles)
 		}
 	}
 
@@ -1555,6 +1567,122 @@ func (s *StreamManager) chainNextEpisodePreload(opts *StartStreamOptions, media 
 		Priority:        true,
 		PrewarmMetadata: true,
 	})
+}
+
+// fanOutBatchPreloads derives preload entries for the next episodes contained in the SAME
+// already-added batch torrent — one cheap requestdl each, no search, no createtorrent. This is
+// what turns "next episode instant" into "binge-ahead instant" within the TorBox 60/hr budget.
+// Quality is untouched: the batch was chosen by the quality-first ranking for the base episode,
+// and reusing it for its own sibling episodes is exactly what a manual batch play does.
+func (s *StreamManager) fanOutBatchPreloads(
+	ctx context.Context,
+	base *StartStreamOptions,
+	media *anilist.CompleteAnime,
+	torrent *hibiketorrent.AnimeTorrent,
+	torrentItemId string,
+	otherFiles map[int]*debrid.TorrentItemFile,
+) {
+	defer util.HandlePanicInModuleThen("debrid/client/fanOutBatchPreloads", func() {})
+	if base == nil || media == nil || torrent == nil || torrentItemId == "" || len(otherFiles) == 0 {
+		return
+	}
+	provider, err := s.repository.GetProvider()
+	if err != nil {
+		return
+	}
+	baseMedia := media.ToBaseAnime()
+
+	// Resolve real AniDB episode keys once, same as chainNextEpisodePreload — the derived
+	// entries' keys must match what the client sends at play time.
+	var ec *anime.EpisodeCollection
+	if c, cerr := anime.NewEpisodeCollection(anime.NewEpisodeCollectionOptions{
+		Media:               baseMedia,
+		MetadataProviderRef: s.repository.metadataProviderRef,
+		Logger:              s.repository.logger,
+	}); cerr == nil {
+		ec = c
+	}
+
+	for k := 1; k <= batchFanOutCount; k++ {
+		if ctx.Err() != nil {
+			return
+		}
+		ep := base.EpisodeNumber + k
+		f, ok := otherFiles[ep]
+		if !ok || f == nil {
+			// A gap means the batch's numbering doesn't line up contiguously — stop rather
+			// than guess across it.
+			return
+		}
+		aniDBEpisode := strconv.Itoa(ep)
+		if ec != nil {
+			if e, found := ec.FindEpisodeByNumber(ep); found && e.AniDBEpisode != "" {
+				aniDBEpisode = e.AniDBEpisode
+			}
+		}
+		derived := &StartStreamOptions{
+			MediaId:       base.MediaId,
+			EpisodeNumber: ep,
+			AniDBEpisode:  aniDBEpisode,
+			UserID:        base.UserID,
+			AutoSelect:    true,
+			Preload:       true,
+			Priority:      base.Priority,
+		}
+		key := preloadKey(derived)
+
+		s.preloadMu.Lock()
+		if existing, exists := s.preloads[key]; exists && time.Since(existing.resolvedAt) <= existing.ttl {
+			s.preloadMu.Unlock()
+			continue
+		}
+		if _, inflight := s.preloadInflight[key]; inflight {
+			s.preloadMu.Unlock()
+			continue
+		}
+		s.preloadMu.Unlock()
+
+		itemCh := make(chan debrid.TorrentItem, 1)
+		go func() {
+			for range itemCh { //nolint:revive
+			}
+		}()
+		streamUrl, uerr := provider.GetTorrentStreamUrl(ctx, debrid.StreamTorrentOptions{
+			ID:     torrentItemId,
+			FileId: f.ID,
+		}, itemCh)
+		close(itemCh)
+		if uerr != nil || streamUrl == "" || ctx.Err() != nil {
+			return
+		}
+
+		var stored *preloadedDebridStream
+		s.preloadMu.Lock()
+		if ctx.Err() == nil {
+			s.evictIfNeededLocked(derived.Priority)
+			delete(s.preloadFailedAt, key)
+			now := time.Now()
+			stored = &preloadedDebridStream{
+				opts:          derived,
+				streamUrl:     streamUrl,
+				fileId:        f.ID,
+				filepath:      f.Path,
+				media:         baseMedia,
+				torrent:       torrent,
+				torrentItemId: torrentItemId,
+				resolvedAt:    now,
+				ttl:           selectionTTLForMedia(baseMedia),
+				urlResolvedAt: now,
+				priority:      derived.Priority,
+			}
+			s.preloads[key] = stored
+		}
+		s.preloadMu.Unlock()
+		if stored != nil {
+			s.repository.logger.Info().Int("episode", ep).Str("torrent", torrent.Name).Msg("debridstream: Batch fan-out preloaded sibling episode")
+			s.persistPrewarm(derived, stored)
+		}
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

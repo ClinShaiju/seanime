@@ -24,6 +24,10 @@ type (
 		// streamUrl is set for pre-resolved direct streams (StreamUrl on the result). When
 		// non-empty, startStream skips AddTorrent/GetTorrentStreamUrl and plays it directly.
 		streamUrl string
+		// otherEpisodeFiles maps episode number -> file for other episodes in the same batch
+		// torrent (auto-select only). Lets the preload layer fan out sibling-episode URLs from
+		// the one added torrent.
+		otherEpisodeFiles map[int]*debrid.TorrentItemFile
 	}
 )
 
@@ -146,9 +150,10 @@ func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.Co
 	r.logger.Debug().Msgf("debridstream: Selected file ID: %s", result.DebridFileID)
 
 	ret = &playbackTorrent{
-		torrent:  result.OriginalTorrent,
-		fileId:   result.DebridFileID,
-		filepath: result.AnalysisFile.GetPath(),
+		torrent:           result.OriginalTorrent,
+		fileId:            result.DebridFileID,
+		filepath:          result.AnalysisFile.GetPath(),
+		otherEpisodeFiles: result.OtherEpisodeFiles,
 	}
 
 	return ret, nil
