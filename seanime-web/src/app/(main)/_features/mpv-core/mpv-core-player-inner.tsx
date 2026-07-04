@@ -701,7 +701,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                     setState(draft => {
                         draft.active = true
                         draft.miniPlayer = false
-                        draft.loadingState = "Loading..."
+                        draft.loadingState = "Starting video..."
                         draft.playbackInfo = payload as Player_PlaybackInfo
                         draft.playbackError = null
                     })
@@ -1424,6 +1424,18 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
 
     const hasPlayback = !!state.playbackInfo && !state.loadingState
 
+    // Keep the loading overlay mounted while it fades out over the video, instead
+    // of unmounting it the instant playback is ready (jarring cut).
+    const [loadingOverlayGone, setLoadingOverlayGone] = React.useState(false)
+    React.useEffect(() => {
+        if (!hasPlayback) {
+            setLoadingOverlayGone(false)
+            return
+        }
+        const t = window.setTimeout(() => setLoadingOverlayGone(true), 800)
+        return () => window.clearTimeout(t)
+    }, [hasPlayback])
+
     const diagnosticsProperties = React.useMemo(() => new Set([
         "video-params",
         "audio-params",
@@ -1881,25 +1893,32 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                                     />
                                 </MediaCoreControlBarView>
                             </>
-                        ) : (
+                        ) : null}
+                        {(!hasPlayback || !loadingOverlayGone) && (
                             <div
                                 data-mpv-element="loading-overlay"
-                                className="w-full h-full absolute bg-black rounded-md overflow-hidden"
+                                className={cn(
+                                    "w-full h-full absolute bg-black rounded-md overflow-hidden",
+                                    "transition-opacity duration-700 ease-out",
+                                    hasPlayback && "opacity-0 pointer-events-none",
+                                )}
                             >
                                 <VideoCoreLoadingScreen
                                     loadingState={state.loadingState}
                                     showArtwork={!state.miniPlayer}
                                     media={state.playbackInfo?.media}
                                 />
-                                <MpvCoreFloatingButtons
-                                    part="loading"
-                                    fullscreen={isFullscreen}
-                                    miniPlayer={state.miniPlayer}
-                                    onEnterMiniPlayer={() => setMiniPlayer(true)}
-                                    onExpand={() => setMiniPlayer(false)}
-                                    onTerminate={() => terminate("user terminated player")}
-                                    onExitFullscreen={() => toggleFullscreen(false)}
-                                />
+                                {!hasPlayback && (
+                                    <MpvCoreFloatingButtons
+                                        part="loading"
+                                        fullscreen={isFullscreen}
+                                        miniPlayer={state.miniPlayer}
+                                        onEnterMiniPlayer={() => setMiniPlayer(true)}
+                                        onExpand={() => setMiniPlayer(false)}
+                                        onTerminate={() => terminate("user terminated player")}
+                                        onExitFullscreen={() => toggleFullscreen(false)}
+                                    />
+                                )}
                             </div>
                         )}
                     </MpvPrismVideo>

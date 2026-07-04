@@ -391,6 +391,19 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     // Relay subtitles to Chromecast when casting
     useCastSubtitleRelay()
 
+    // Keep the loading overlay mounted while it fades out over the video, instead
+    // of unmounting it the instant playback is ready (jarring cut).
+    const hasPlayback = !!state.playbackInfo?.streamUrl && !state.loadingState
+    const [loadingOverlayGone, setLoadingOverlayGone] = React.useState(false)
+    React.useEffect(() => {
+        if (!hasPlayback) {
+            setLoadingOverlayGone(false)
+            return
+        }
+        const t = window.setTimeout(() => setLoadingOverlayGone(true), 800)
+        return () => window.clearTimeout(t)
+    }, [hasPlayback])
+
     return (
         <>
 
@@ -408,7 +421,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                 onMouseEnter={handleContainerMouseEnter}
                 onMouseLeave={handleContainerMouseLeave}
             >
-                {(!!state.playbackInfo?.streamUrl && !state.loadingState) ? (
+                {hasPlayback ? (
                     <>
                         <VideoCoreKeybindingController
                             videoRef={videoRef}
@@ -614,17 +627,22 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             </>}
                         />}
                     </>
-                ) : (
+                ) : null}
+                {(!hasPlayback || !loadingOverlayGone) && (
                     <div
                         data-vc-element="loading-overlay"
-                        className="w-full h-full absolute bg-black rounded-md overflow-hidden"
+                        className={cn(
+                            "w-full h-full absolute bg-black rounded-md overflow-hidden",
+                            "transition-opacity duration-700 ease-out",
+                            hasPlayback && "opacity-0 pointer-events-none",
+                        )}
                     >
                         <VideoCoreLoadingScreen
                             loadingState={state.loadingState}
                             showArtwork={!isMiniPlayer && !inline}
                             media={state.playbackInfo?.media}
                         />
-                        {!inline && <FloatingButtons part="loading" onTerminateStream={onTerminateStream} />}
+                        {!hasPlayback && !inline && <FloatingButtons part="loading" onTerminateStream={onTerminateStream} />}
                     </div>
                 )}
             </div>

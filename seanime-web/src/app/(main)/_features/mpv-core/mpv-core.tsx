@@ -532,7 +532,7 @@ export function MpvCore() {
                     setState(draft => {
                         draft.active = true
                         draft.miniPlayer = false
-                        draft.loadingState = "Loading..."
+                        draft.loadingState = "Starting video..."
                         draft.playbackInfo = payload as Player_PlaybackInfo
                         draft.playbackError = null
                     })
