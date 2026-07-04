@@ -1,9 +1,10 @@
 import { AL_BaseAnime } from "@/api/generated/types"
-import { vc_loadingMediaIdAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
+import { vc_loadingMediaIdAtom, vc_loadingScreenVisibleAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
+import { __debridstream_stateAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-overlay"
 import { GradientBackground } from "@/components/shared/gradient-background"
 import { cn } from "@/components/ui/core/styling"
 import { useQuery } from "@tanstack/react-query"
-import { useAtomValue } from "jotai"
+import { useAtomValue, useSetAtom } from "jotai"
 import React from "react"
 import { ImSpinner2 } from "react-icons/im"
 
@@ -46,6 +47,19 @@ export function VideoCoreLoadingScreen({ loadingState, showArtwork, media }: {
     const loadingMediaId = useAtomValue(vc_loadingMediaIdAtom)
     const mediaId = loadingMediaId || media?.id
     const { data: artwork } = useAniZipArtwork(showArtwork ? mediaId : null)
+
+    // Absorb the debrid stream status (the floating pill's data) into this screen —
+    // its message is more detailed than the coarse open steps ("Adding torrent...",
+    // "Downloading torrent: 45%"), and the pill hides itself while we're mounted.
+    const debridState = useAtomValue(__debridstream_stateAtom)
+    const statusText = debridState?.message || loadingState
+    const torrentName = debridState?.torrentName
+
+    const setLoadingScreenVisible = useSetAtom(vc_loadingScreenVisibleAtom)
+    React.useEffect(() => {
+        setLoadingScreenVisible(true)
+        return () => setLoadingScreenVisible(false)
+    }, [])
 
     const backdrop = artwork?.fanart || media?.bannerImage || media?.coverImage?.extraLarge
     const [backdropLoaded, setBackdropLoaded] = React.useState(false)
@@ -97,13 +111,20 @@ export function VideoCoreLoadingScreen({ loadingState, showArtwork, media }: {
                         {title}
                     </h1>
                 ) : (
-                    !!loadingState && <ImSpinner2 className="size-20 text-white animate-spin" />
+                    !!statusText && <ImSpinner2 className="size-20 text-white animate-spin" />
                 )}
 
-                {!!loadingState && (
-                    <div className="flex items-center gap-3 text-white/80" data-vc-element="loading-screen-state">
-                        {hasArtwork && <ImSpinner2 className="size-4 animate-spin flex-none" />}
-                        <p className="text-sm lg:text-base font-medium tracking-wide text-center">{loadingState}</p>
+                {!!statusText && (
+                    <div className="flex flex-col items-center gap-1.5" data-vc-element="loading-screen-state">
+                        <div className="flex items-center gap-3 text-white/80">
+                            {hasArtwork && <ImSpinner2 className="size-4 animate-spin flex-none" />}
+                            <p className="text-sm lg:text-base font-medium tracking-wide text-center">{statusText}</p>
+                        </div>
+                        {!!torrentName && (
+                            <p className="text-xs text-white/40 max-w-[70%] truncate text-center [text-shadow:_0_1px_8px_rgb(0_0_0_/_60%)]">
+                                {torrentName}
+                            </p>
+                        )}
                     </div>
                 )}
             </div>

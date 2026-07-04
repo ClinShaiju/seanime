@@ -20,6 +20,11 @@ export type {
 // loading screen can show the show's artwork. Cleared on terminate/abort.
 export const vc_loadingMediaIdAtom = atom<number | null>(null)
 
+// True while a player loading screen (VideoCore or MpvCore) is mounted. Lets the
+// floating stream-status pills (debrid/torrent overlays) hide themselves instead of
+// duplicating the same status on top of the loading screen.
+export const vc_loadingScreenVisibleAtom = atom<boolean>(false)
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 export type VideoCoreSettings = {

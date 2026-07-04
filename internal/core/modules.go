@@ -674,6 +674,16 @@ func (a *App) InitOrRefreshModules() {
 		a.MediacoreCoordinator.SetSettings(settings)
 	}
 
+	// Re-apply effective settings to live per-user sessions — they only self-apply
+	// once at build, so changes like toggling MpvPrism (playback target) would
+	// otherwise never reach an already-built session's modules.
+	a.sessions.Range(func(_ uint, s *UserSession) bool {
+		if s != nil {
+			s.applyModuleSettings()
+		}
+		return true
+	})
+
 	// +---------------------+
 	// |       Torrents      |
 	// +---------------------+

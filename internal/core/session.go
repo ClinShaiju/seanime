@@ -252,6 +252,15 @@ func (s *UserSession) applyModuleSettings() {
 			AutoUpdateProgress:  settings.GetLibrary().AutoUpdateProgress,
 		})
 	}
+	if s.directStream != nil {
+		// Mirror modules.go: without this, session managers keep the constructor
+		// default (videocore) and MpvCore clients never get their open signal.
+		playbackTarget := directstream.PlaybackTargetVideoCore
+		if settings.GetMediaPlayer().MpvPrismEnabled {
+			playbackTarget = directstream.PlaybackTargetMpvCore
+		}
+		s.directStream.SetPlaybackTarget(playbackTarget)
+	}
 	// continuity settings are applied in ensureContinuity (its own lazy init).
 }
 

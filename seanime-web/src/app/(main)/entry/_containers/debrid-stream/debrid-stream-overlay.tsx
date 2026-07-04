@@ -1,6 +1,7 @@
 import { DebridClient_StreamState } from "@/api/generated/types"
 import { useDebridCancelStream } from "@/api/hooks/debrid.hooks"
 import { PlaybackManager_PlaybackState } from "@/app/(main)/_features/progress-tracking/_lib/playback-manager.types"
+import { vc_loadingScreenVisibleAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { useWebsocketMessageListener } from "@/app/(main)/_hooks/handle-websockets"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
 import { AppLayoutStack } from "@/components/ui/app-layout"
@@ -9,7 +10,7 @@ import { LoadingSpinner, Spinner } from "@/components/ui/loading-spinner"
 import { Modal } from "@/components/ui/modal"
 import { WSEvents } from "@/lib/server/ws-events"
 import { atom } from "jotai"
-import { useAtom } from "jotai/react"
+import { useAtom, useAtomValue } from "jotai/react"
 import React from "react"
 import { HiOutlineServerStack } from "react-icons/hi2"
 import { toast } from "sonner"
@@ -29,6 +30,10 @@ export function DebridStreamOverlay() {
     const { mutate: cancelStream, isPending: isCancelling } = useDebridCancelStream()
 
     const [minimized, setMinimized] = React.useState(true)
+
+    // The player loading screen (VideoCore/MpvCore) shows this same status itself —
+    // don't stack the pill on top of it.
+    const loadingScreenVisible = useAtomValue(vc_loadingScreenVisibleAtom)
 
     const [showMediaPlayerLoading, setShowMediaPlayerLoading] = React.useState(false)
 
@@ -117,7 +122,7 @@ export function DebridStreamOverlay() {
     return (
         <>
 
-            {minimized && (
+            {minimized && !loadingScreenVisible && (
                 <div className="fixed z-[100] bottom-8 w-full h-fit flex justify-center">
                     <div
                         className="shadow-2xl p-4 bg-gray-900 border text-white rounded-3xl cursor-pointer hover:border-gray-600"
