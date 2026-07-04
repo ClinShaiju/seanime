@@ -52,6 +52,8 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
     const [isDownloading, setIsDownloading] = React.useState(false)
     const [isDownloaded, setIsDownloaded] = React.useState(false)
     const [downloadProgress, setDownloadProgress] = React.useState(0)
+    // Version reported by electron-updater; used when the server-side check reports nothing.
+    const [electronUpdateVersion, setElectronUpdateVersion] = React.useState<string>("")
 
     const isMacOS = window.electron?.platform === "darwin"
     const { mutate: downloadMacUpdate, isPending: isMacUpdatePending } = useDownloadMacDenshiUpdate()
@@ -86,12 +88,13 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
         // Listen for update events from Electron
         if (window.electron) {
             // Register listeners for update events
-            const removeUpdateDownloaded = window.electron.on("update-downloaded", () => {
+            const removeUpdateDownloaded = window.electron.on("update-downloaded", (info: { version?: string }) => {
                 if (!isMacOS) {
                     toast.success("Update downloaded and ready to install")
                     setIsDownloading(false)
                     setIsDownloaded(true)
                     setDownloadProgress(100)
+                    if (info?.version) setElectronUpdateVersion(info.version)
                 }
             })
 
@@ -115,10 +118,11 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
                 }
             })
 
-            const removeUpdateAvailable = window.electron.on("update-available", () => {
+            const removeUpdateAvailable = window.electron.on("update-available", (info: { version?: string }) => {
                 setIsDownloading(true)
                 setIsDownloaded(false)
                 setDownloadProgress(0)
+                if (info?.version) setElectronUpdateVersion(info.version)
                 if (!isMacOS) {
                     toast.info("Update found, downloading...")
                 }
@@ -141,6 +145,14 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
         }
     }, [updateData])
 
+    // electron-updater may finish downloading while the server-side check reports no update
+    // (external server already updated, or app/server version skew). Surface the prompt anyway.
+    React.useEffect(() => {
+        if (isMacOS) return
+        if (serverStatus?.settings?.library?.disableUpdateCheck) return
+        if (isDownloaded) setUpdateModalOpen(true)
+    }, [isDownloaded, serverStatus])
+
     // Auto-install when download completes if user already clicked install
     React.useEffect(() => {
         if (isDownloaded && isUpdating && !isDownloading) {
@@ -150,7 +162,7 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
     }, [isDownloaded, isUpdating, isDownloading])
 
     async function handleInstallUpdate() {
-        if (!electronUpdate || isUpdating) return
+        if ((!electronUpdate && !isDownloaded) || isUpdating) return
 
         try {
             setIsUpdating(true)
@@ -279,20 +291,20 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
                 <div className="space-y-2">
                     <h3 className="text-center">A new update is available!</h3>
                     <h4 className="font-bold flex gap-2 text-center items-center justify-center">
-                        <span className="text-[--muted]">{updateData?.current_version}</span> <FiArrowRight />
-                        <span className="text-indigo-200">{updateData?.release?.version}</span></h4>
+                        <span className="text-[--muted]">{updateData?.current_version || serverStatus?.version}</span> <FiArrowRight />
+                        <span className="text-indigo-200">{updateData?.release?.version || electronUpdateVersion}</span></h4>
 
-                    {!electronUpdate && !isMacOS && (
+                    {!electronUpdate && !isDownloaded && !isMacOS && (
                         <Alert intent="warning">
                             This update is not yet available for desktop clients.
                             Wait a few minutes or check the GitHub page for more information.
                         </Alert>
                     )}
 
-                    <UpdateChangelogBody updateData={updateData} />
+                    {updateData?.release && <UpdateChangelogBody updateData={updateData} />}
 
                     <div className="flex gap-2 w-full !mt-4">
-                        {electronUpdate && !isMacOS && <Button
+                        {(electronUpdate || isDownloaded) && !isMacOS && <Button
                             leftIcon={<GrInstall className="text-2xl" />}
                             onClick={handleInstallUpdate}
                             loading={isUpdating || isDownloading || isMacUpdatePending}
@@ -311,7 +323,7 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
                             {(isMacUpdatePending) ? "Installing..." : "Install now"}
                         </Button>}
                         <div className="flex flex-1" />
-                        {!updateData?.release?.tag_name?.includes("v2.") && <SeaLink href={updateData?.release?.html_url || ""} target="_blank">
+                        {updateData?.release && !updateData?.release?.tag_name?.includes("v2.") && <SeaLink href={updateData?.release?.html_url || ""} target="_blank">
                             <Button intent="white-subtle" rightIcon={<BiLinkExternal />}>See on GitHub</Button>
                         </SeaLink>}
                     </div>
