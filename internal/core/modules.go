@@ -231,6 +231,11 @@ func (a *App) initModulesOnce() {
 			_, _ = a.RefreshAnimeCollection()
 		},
 		IsOfflineRef: a.IsOfflineRef(),
+		// Same scoping rationale as the global VideoCore above: on a networked server
+		// every user (incl. admin) has their own session MpvCore, so the global one must
+		// not claim any real user's client events.
+		UserID:                globalVideoCoreUserID,
+		AcceptUnscopedClients: globalAcceptUnscoped,
 	})
 
 	// +---------------------+

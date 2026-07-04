@@ -12,9 +12,12 @@ import (
 	"seanime/internal/directstream"
 	"seanime/internal/events"
 	"seanime/internal/library/playbackmanager"
+	"seanime/internal/mediacore"
+	"seanime/internal/mpvcore"
 	"seanime/internal/nativeplayer"
 	"seanime/internal/platforms/anilist_platform"
 	"seanime/internal/platforms/platform"
+	"seanime/internal/player"
 	"seanime/internal/user"
 	"seanime/internal/util"
 	"seanime/internal/videocore"
@@ -72,7 +75,9 @@ type UserSession struct {
 	modulesOnce    sync.Once
 	continuityOnce sync.Once
 	videoCore      *videocore.VideoCore
+	mpvCore        *mpvcore.MpvCore
 	nativePlayer   *nativeplayer.NativePlayer
+	mediaCoord     *mediacore.Coordinator
 	directStream   *directstream.Manager
 	playback       *playbackmanager.PlaybackManager
 	continuity     *continuity.Manager
@@ -142,6 +147,37 @@ func (s *UserSession) ensureModules() {
 			Logger:         sessionLogger,
 			VideoCore:      s.videoCore,
 		})
+		s.mpvCore = mpvcore.New(mpvcore.NewMpvCoreOptions{
+			WsEventManager:             scoped,
+			Logger:                     sessionLogger,
+			ContinuityManager:          s.continuity,
+			MetadataProviderRef:        a.MetadataProviderRef,
+			DiscordPresence:            a.DiscordPresence,
+			PlatformRef:                s.platformRef,
+			RefreshAnimeCollectionFunc: refresh,
+			IsOfflineRef:               a.IsOfflineRef(),
+			// Per-session: process only this user's client (player) events.
+			UserID:                s.UserID,
+			AcceptUnscopedClients: false,
+		})
+		// Per-session mediacore coordinator: since v3.9 ALL player signaling
+		// (open/watch/abort/error) goes through the coordinator, so a session
+		// without one can resolve a stream but never tell the client to open the
+		// player. Mirrors the App-global wiring in modules.go.
+		s.mediaCoord = mediacore.NewCoordinator(mediacore.NewCoordinatorOptions{
+			Logger:                     sessionLogger,
+			MetadataProviderRef:        a.MetadataProviderRef,
+			ContinuityManager:          s.continuity,
+			DiscordPresence:            a.DiscordPresence,
+			PlatformRef:                s.platformRef,
+			RefreshAnimeCollectionFunc: refresh,
+			IsOfflineRef:               a.IsOfflineRef(),
+			Backends: map[player.Target]mediacore.Backend{
+				player.TargetVideoCore: videocore.NewAdapter(s.videoCore, s.nativePlayer),
+				player.TargetMpvCore:   mpvcore.NewAdapter(s.mpvCore),
+			},
+		})
+		s.mediaCoord.SetupSharedEffects()
 		s.directStream = directstream.NewManager(directstream.NewManagerOptions{
 			Logger:                     sessionLogger,
 			WSEventManager:             scoped,
@@ -153,6 +189,7 @@ func (s *UserSession) ensureModules() {
 			IsOfflineRef:               a.IsOfflineRef(),
 			NativePlayer:               s.nativePlayer,
 			VideoCore:                  s.videoCore,
+			MediacoreCoordinator:       s.mediaCoord,
 			HMACTokenFunc: func(endpoint string, symbol string) string {
 				qp, err := a.GetServerPasswordHMACAuth().GenerateQueryParam(endpoint, symbol)
 				if err != nil {
@@ -194,6 +231,12 @@ func (s *UserSession) applyModuleSettings() {
 	}
 	if s.videoCore != nil {
 		s.videoCore.SetSettings(settings)
+	}
+	if s.mpvCore != nil {
+		s.mpvCore.SetSettings(settings)
+	}
+	if s.mediaCoord != nil {
+		s.mediaCoord.SetSettings(settings)
 	}
 	if settings.Library != nil && s.playback != nil {
 		if a.MediaPlayerRepository != nil {

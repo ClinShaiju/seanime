@@ -3,6 +3,7 @@ package mpvcore
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"seanime/internal/api/metadata_provider"
 	"seanime/internal/continuity"
 	"seanime/internal/database/models"
@@ -22,6 +23,13 @@ import (
 type MpvCore struct {
 	wsEventManager              events.WSEventManagerInterface
 	clientPlayerEventSubscriber *events.ClientEventSubscriber
+
+	// userID is the Seanime user this MpvCore belongs to (per-session). Inbound
+	// client events from connections owned by another user are ignored.
+	userID uint
+	// acceptUnscopedClients is true for the App-global (admin) MpvCore so it still
+	// handles untagged connections on local/desktop installs.
+	acceptUnscopedClients bool
 
 	continuityManager          *continuity.Manager
 	metadataProviderRef        *util.Ref[metadata_provider.Provider]
@@ -64,12 +72,20 @@ type NewMpvCoreOptions struct {
 	PlatformRef                *util.Ref[platform.Platform]
 	RefreshAnimeCollectionFunc func()
 	IsOfflineRef               *util.Ref[bool]
+	// UserID scopes this MpvCore to a Seanime user (per-session). 0 + the global
+	// instance should set AcceptUnscopedClients so local/desktop installs keep working.
+	UserID uint
+	// AcceptUnscopedClients lets this MpvCore also handle connections with no user id
+	// (local/desktop clients never present a session token).
+	AcceptUnscopedClients bool
 }
 
 func New(opts NewMpvCoreOptions) *MpvCore {
 	mc := &MpvCore{
 		wsEventManager:              opts.WsEventManager,
-		clientPlayerEventSubscriber: opts.WsEventManager.SubscribeToClientMpvCoreEvents("mpvcore"),
+		clientPlayerEventSubscriber: opts.WsEventManager.SubscribeToClientMpvCoreEvents(fmt.Sprintf("mpvcore:u%d", opts.UserID)),
+		userID:                      opts.UserID,
+		acceptUnscopedClients:       opts.AcceptUnscopedClients,
 		continuityManager:           opts.ContinuityManager,
 		metadataProviderRef:         opts.MetadataProviderRef,
 		discordPresence:             opts.DiscordPresence,
@@ -415,6 +431,16 @@ func (mc *MpvCore) listenToClientEvents() {
 		clientID := event.ClientID
 		if clientID == "" {
 			clientID = raw.ClientID
+		}
+
+		// Ownership: the client-event stream is shared across all per-session MpvCores
+		// (subscribers are broadcast to). Only process events whose source connection
+		// belongs to THIS MpvCore's user, so two users' players never cross-process.
+		// (Same filter as VideoCore.)
+		if connUID, ok := mc.wsEventManager.GetConnUserID(clientID); ok {
+			if connUID != mc.userID && !(mc.acceptUnscopedClients && connUID == 0) {
+				continue
+			}
 		}
 
 		if event.Type == ClientEventPlaybackLoaded {
