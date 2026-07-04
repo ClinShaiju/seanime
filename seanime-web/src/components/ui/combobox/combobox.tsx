@@ -16,6 +16,7 @@ export const ComboboxAnatomy = defineStyleAnatomy({
     root: cva([
         "UI-Combobox__root",
         "justify-between h-auto",
+        "focus-visible:outline-none focus-visible:ring-1 ring-offset-1 ring-offset-[--background] focus-visible:ring-white/40",
     ], {
         variants: {
             size: {
@@ -30,7 +31,7 @@ export const ComboboxAnatomy = defineStyleAnatomy({
     }),
     popover: cva([
         "UI-Combobox__popover",
-        "w-[--radix-popover-trigger-width] p-0",
+        "w-[--radix-popover-trigger-width] p-0 dark:bg-[--paper-lighter] rounded-xl",
     ]),
     checkIcon: cva([
         "UI-Combobox__checkIcon",
@@ -39,11 +40,11 @@ export const ComboboxAnatomy = defineStyleAnatomy({
     ]),
     item: cva([
         "UI-Combobox__item",
-        "flex gap-1 items-center flex-none truncate bg-gray-100 dark:bg-gray-800 px-2 pr-1 rounded-[--radius] max-w-96",
+        "flex gap-1 text-sm items-center flex-none truncate bg-gray-100 dark:bg-gray-800 px-2 pr-1 rounded-[--radius] max-w-96",
     ]),
     placeholder: cva([
         "UI-Combobox__placeholder",
-        "text-[--muted] truncate",
+        "text-[--muted] truncate text-sm",
     ]),
     inputValuesContainer: cva([
         "UI-Combobox__inputValuesContainer",
@@ -259,7 +260,7 @@ export const Combobox = React.forwardRef<HTMLButtonElement, ComboboxProps>((prop
                         </button>
                     }
                 >
-                    <Command inputContainerClass="py-1" {...commandProps}>
+                    <Command inputContainerClass="py-1" {...commandProps} className="bg-gray-900 rounded-xl">
                         <CommandInput
                             placeholder={placeholder}
                             onValueChange={onTextChange}

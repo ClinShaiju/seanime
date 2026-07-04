@@ -2939,6 +2939,21 @@
           "descriptions": []
         },
         {
+          "name": "DirectCdnCapable",
+          "jsonName": "directCdnCapable",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": false,
+          "descriptions": [
+            "DirectCdnCapable is sent by clients that can play a raw debrid CDN URL themselves",
+            "(Denshi/Electron — injects CORS headers). Web tabs send false → proxy.",
+            "",
+            "DirectCdnCapable is sent by clients that can play a raw debrid CDN URL themselves",
+            "(Denshi/Electron — injects CORS headers). Web tabs send false → proxy."
+          ]
+        },
+        {
           "name": "BatchEpisodeFiles",
           "jsonName": "batchEpisodeFiles",
           "goType": "hibiketorrent.BatchEpisodeFiles",
@@ -3021,6 +3036,40 @@
       "returns": "bool",
       "returnGoType": "bool",
       "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "HandleDebridRefreshStreamUrl",
+    "trimmedName": "DebridRefreshStreamUrl",
+    "comments": [
+      "HandleDebridRefreshStreamUrl",
+      "",
+      "\t@summary re-resolves a fresh CDN link for the caller's active stream.",
+      "\t@desc Direct-CDN clients call this when their raw CDN link dies mid-playback (expired",
+      "\t@desc token / hard 429): the server re-resolves from the stored selection and the client",
+      "\t@desc swaps its video src and seeks back. The server's own link is untouched.",
+      "\t@returns string",
+      "\t@route /api/v1/debrid/stream/refresh-url [POST]",
+      ""
+    ],
+    "filepath": "internal/handlers/debrid.go",
+    "filename": "debrid.go",
+    "api": {
+      "summary": "re-resolves a fresh CDN link for the caller's active stream.",
+      "descriptions": [
+        "Direct-CDN clients call this when their raw CDN link dies mid-playback (expired",
+        "token / hard 429): the server re-resolves from the stored selection and the client",
+        "swaps its video src and seeks back. The server's own link is untouched."
+      ],
+      "endpoint": "/api/v1/debrid/stream/refresh-url",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "string",
+      "returnGoType": "string",
+      "returnTypescriptType": "string"
     }
   },
   {
@@ -8319,6 +8368,46 @@
     }
   },
   {
+    "name": "HandleMpvCoreInSightGetCharacterDetails",
+    "trimmedName": "MpvCoreInSightGetCharacterDetails",
+    "comments": [
+      "HandleMpvCoreInSightGetCharacterDetails",
+      "",
+      "\t@summary returns the character details for MpvCore InSight.",
+      "\t@param malId - int - true - \"The MAL character ID\"",
+      "\t@returns mpvcore.InSightCharacterDetails",
+      "\t@route /api/v1/mpvcore/insight/character/{malId} [GET]",
+      ""
+    ],
+    "filepath": "internal/handlers/mpvcore.go",
+    "filename": "mpvcore.go",
+    "api": {
+      "summary": "returns the character details for MpvCore InSight.",
+      "descriptions": [],
+      "endpoint": "/api/v1/mpvcore/insight/character/{malId}",
+      "methods": [
+        "GET"
+      ],
+      "params": [
+        {
+          "name": "malId",
+          "jsonName": "malId",
+          "goType": "int",
+          "usedStructType": "",
+          "typescriptType": "number",
+          "required": true,
+          "descriptions": [
+            "The MAL character ID"
+          ]
+        }
+      ],
+      "bodyFields": [],
+      "returns": "mpvcore.InSightCharacterDetails",
+      "returnGoType": "mpvcore.InSightCharacterDetails",
+      "returnTypescriptType": "MpvCore_InSightCharacterDetails"
+    }
+  },
+  {
     "name": "HandleNakamaWebSocket",
     "trimmedName": "NakamaWebSocket",
     "comments": [
@@ -9448,8 +9537,9 @@
       "HandleNakamaWatchRoomJoinStream",
       "",
       "\t@summary starts (or rejoins) the room's active debrid stream for the caller.",
-      "\t@desc Reuses the host's already-resolved debrid link directly — no second torrent",
-      "\t@desc selection or CDN resolution. Falls back to auto-select if the host link isn't ready.",
+      "\t@desc Reuses the host's already-resolved debrid SELECTION — no second torrent selection.",
+      "\t@desc Retries briefly while the host is still resolving; errors (retryable) rather than",
+      "\t@desc auto-selecting independently, which could put this peer on a different release.",
       "\t@route /api/v1/nakama/watch-room/join-stream [POST]",
       "\t@returns bool",
       ""
@@ -9459,8 +9549,9 @@
     "api": {
       "summary": "starts (or rejoins) the room's active debrid stream for the caller.",
       "descriptions": [
-        "Reuses the host's already-resolved debrid link directly — no second torrent",
-        "selection or CDN resolution. Falls back to auto-select if the host link isn't ready."
+        "Reuses the host's already-resolved debrid SELECTION — no second torrent selection.",
+        "Retries briefly while the host is still resolving; errors (retryable) rather than",
+        "auto-selecting independently, which could put this peer on a different release."
       ],
       "endpoint": "/api/v1/nakama/watch-room/join-stream",
       "methods": [
@@ -9494,6 +9585,21 @@
           "typescriptType": "DebridClient_StreamPlaybackType",
           "required": true,
           "descriptions": []
+        },
+        {
+          "name": "DirectCdnCapable",
+          "jsonName": "directCdnCapable",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": false,
+          "descriptions": [
+            "DirectCdnCapable: this participant can play a raw CDN link (Denshi). Each capable",
+            "room member gets its own direct CDN link via the shared-selection dual-link resolve.",
+            "",
+            "DirectCdnCapable: this participant can play a raw CDN link (Denshi). Each capable",
+            "room member gets its own direct CDN link via the shared-selection dual-link resolve."
+          ]
         }
       ],
       "returns": "bool",
@@ -13363,6 +13469,61 @@
       "returns": "videocore.InSightCharacterDetails",
       "returnGoType": "videocore.InSightCharacterDetails",
       "returnTypescriptType": "VideoCore_InSightCharacterDetails"
+    }
+  },
+  {
+    "name": "HandleVideoCoreSaveScreenshot",
+    "trimmedName": "VideoCoreSaveScreenshot",
+    "comments": [
+      "HandleVideoCoreSaveScreenshot",
+      "",
+      "\t@summary saves a screenshot to a local directory.",
+      "\t@route /api/v1/videocore/screenshot [POST]",
+      "\t@returns bool",
+      ""
+    ],
+    "filepath": "internal/handlers/videocore.go",
+    "filename": "videocore.go",
+    "api": {
+      "summary": "saves a screenshot to a local directory.",
+      "descriptions": [],
+      "endpoint": "/api/v1/videocore/screenshot",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "Dir",
+          "jsonName": "dir",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Filename",
+          "jsonName": "filename",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Base64Data",
+          "jsonName": "base64Data",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
     }
   },
   {

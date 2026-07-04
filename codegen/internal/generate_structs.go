@@ -119,6 +119,8 @@ var typePrefixesByPackage = map[string]string{
 	"discordrpc_client":  "DiscordRPC_",
 	"directstream":       "Directstream_",
 	"nativeplayer":       "NativePlayer_",
+	"mpvcore":            "MpvCore_",
+	"player":             "Player_",
 	"mkvparser":          "MKVParser_",
 	"nakama":             "Nakama_",
 	"library_explorer":   "LibraryExplorer_",

@@ -625,6 +625,9 @@ export type DebridStartStream_Variables = {
     /**
      *  DirectCdnCapable is sent by clients that can play a raw debrid CDN URL themselves
      *  (Denshi/Electron — injects CORS headers). Web tabs send false → proxy.
+     *
+     *  DirectCdnCapable is sent by clients that can play a raw debrid CDN URL themselves
+     *  (Denshi/Electron — injects CORS headers). Web tabs send false → proxy.
      */
     directCdnCapable?: boolean
     batchEpisodeFiles?: HibikeTorrent_BatchEpisodeFiles
@@ -1526,6 +1529,24 @@ export type DeleteMediaMetadataParent_Variables = {
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// mpvcore
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * - Filepath: internal/handlers/mpvcore.go
+ * - Filename: mpvcore.go
+ * - Endpoint: /api/v1/mpvcore/insight/character/{malId}
+ * @description
+ * Route returns the character details for MpvCore InSight.
+ */
+export type MpvCoreInSightGetCharacterDetails_Variables = {
+    /**
+     *  The MAL character ID
+     */
+    malId: number
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // nakama
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1695,6 +1716,9 @@ export type NakamaWatchRoomJoinStream_Variables = {
     clientId: string
     playbackType: DebridClient_StreamPlaybackType
     /**
+     *  DirectCdnCapable: this participant can play a raw CDN link (Denshi). Each capable
+     *  room member gets its own direct CDN link via the shared-selection dual-link resolve.
+     *
      *  DirectCdnCapable: this participant can play a raw CDN link (Denshi). Each capable
      *  room member gets its own direct CDN link via the shared-selection dual-link resolve.
      */
@@ -2346,6 +2370,19 @@ export type VideoCoreInSightGetCharacterDetails_Variables = {
      *  The MAL character ID
      */
     malId: number
+}
+
+/**
+ * - Filepath: internal/handlers/videocore.go
+ * - Filename: videocore.go
+ * - Endpoint: /api/v1/videocore/screenshot
+ * @description
+ * Route saves a screenshot to a local directory.
+ */
+export type VideoCoreSaveScreenshot_Variables = {
+    dir: string
+    filename: string
+    base64Data: string
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

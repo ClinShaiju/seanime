@@ -57,7 +57,7 @@ func (r *Repository) resolveAutoSelectProfile(userID uint) *anime.AutoSelectProf
 	return &anime.AutoSelectProfile{Resolutions: []string{resolution}, MinSeeders: 0}
 }
 
-func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.CompleteAnime, episodeNumber int, userID uint) (ret *playbackTorrent, err error) {
+func (r *Repository) findBestTorrent(ctx context.Context, provider debrid.Provider, media *anilist.CompleteAnime, episodeNumber int, userID uint) (ret *playbackTorrent, err error) {
 
 	defer util.HandlePanicInModuleWithError("debridstream/findBestTorrent", &err)
 
@@ -114,7 +114,7 @@ func (r *Repository) findBestTorrent(provider debrid.Provider, media *anilist.Co
 	}
 
 	result, err := r.autoSelect.FindBestTorrent(
-		context.Background(),
+		ctx,
 		media,
 		episodeNumber,
 		profile,

@@ -7,7 +7,7 @@ import (
 	"seanime/internal/api/anilist"
 	"seanime/internal/library/anime"
 	"seanime/internal/mkvparser"
-	"seanime/internal/nativeplayer"
+	"seanime/internal/player"
 	"seanime/internal/util/result"
 )
 
@@ -22,11 +22,11 @@ type UrlStream struct {
 	httpBaseStream
 }
 
-func (s *UrlStream) Type() nativeplayer.StreamType {
-	return nativeplayer.StreamTypeURL
+func (s *UrlStream) Type() player.PlaybackType {
+	return player.PlaybackTypeURL
 }
 
-func (s *UrlStream) LoadPlaybackInfo() (*nativeplayer.PlaybackInfo, error) {
+func (s *UrlStream) LoadPlaybackInfo() (*player.PlaybackInfo, error) {
 	return s.httpBaseStream.loadPlaybackInfo(s.Type())
 }
 

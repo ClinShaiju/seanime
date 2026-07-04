@@ -338,9 +338,9 @@ export function MarketplaceExtensions(props: MarketplaceExtensionsProps) {
                 {!!missingDefaultTypes.length && (
                     <Alert
                         intent="warning"
-                        title="Update the repository!"
+                        title="No content providers available"
                         description={<div>
-                            <p>To protect Seanime, some extensions have been removed. Find a new repository URL online and add it.</p>
+                            <p>The Seanime default marketplace no longer indexes content providers. Find a new repository URL online and add it.</p>
                             <Button
                                 intent="primary"
                                 size="sm"
@@ -359,8 +359,9 @@ export function MarketplaceExtensions(props: MarketplaceExtensionsProps) {
                 )}
 
                 <StaticTabs
-                    className="h-10 w-fit border rounded-full"
-                    triggerClass="px-4 py-1 text-sm"
+                    className="w-fit border rounded-full py-0"
+                    triggerClass="px-4 py-2 text-sm h-full rounded-full"
+                    pillClass="rounded-full border-transparent"
                     items={[
                         {
                             name: "All Types",

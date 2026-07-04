@@ -8,10 +8,10 @@ import {
     useCurrentDevicePlaybackSettings,
     useExternalPlayerLink,
 } from "@/app/(main)/_atoms/playback.atoms"
-import { lastDebridStreamStartAtom } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-reconnect"
-import { __debridstream_stateAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-overlay"
-import { __debridStream_currentSessionAutoSelectAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-page"
 import { vc_loadingMediaIdAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
+import { lastDebridStreamStartAtom } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-reconnect"
+import { __debridStream_currentSessionAutoSelectAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-page"
+import { __debridstream_stateAtom } from "@/app/(main)/entry/_containers/torrent-stream/playback-play-pill"
 import { ForcePlaybackMethod, useForcePlaybackMethod } from "@/app/(main)/entry/_lib/handle-play-media"
 import { clientIdAtom } from "@/app/websocket-provider"
 import { logger } from "@/lib/helpers/debug"

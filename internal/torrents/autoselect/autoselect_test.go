@@ -1,6 +1,7 @@
 package autoselect
 
 import (
+	"context"
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
 	"seanime/internal/library/anime"
 	"testing"
@@ -477,7 +478,7 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			testTorrents := make([]*hibiketorrent.AnimeTorrent, len(tt.torrents))
 			copy(testTorrents, tt.torrents)
 
-			sorted := s.filterAndSort(testTorrents, tt.profile, -1, 0, 0, postSearchSort)
+			sorted := s.filterAndSort(context.Background(), testTorrents, tt.profile, -1, 0, 0, postSearchSort)
 
 			var sortedNames []string
 			for _, st := range sorted {
@@ -497,7 +498,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			return []*TorrentWithCacheStatus{}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{}, nil, -1, 0, 0, postSearchSort)
+		result := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{}, nil, -1, 0, 0, postSearchSort)
 		assert.Empty(t, result)
 	})
 
@@ -512,7 +513,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			return []*TorrentWithCacheStatus{{Torrent: torrents[0], IsCached: true}}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, -1, 0, 0, postSearchSort)
+		result := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{torrent}, nil, -1, 0, 0, postSearchSort)
 		assert.Len(t, result, 1)
 		assert.Equal(t, torrent.Name, result[0].Name)
 	})
@@ -524,7 +525,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			Seeders:  100,
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{torrent}, nil, -1, 0, 0, nil)
+		result := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{torrent}, nil, -1, 0, 0, nil)
 		assert.Len(t, result, 1)
 		assert.Equal(t, torrent.Name, result[0].Name)
 	})
@@ -555,7 +556,7 @@ func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {
 			}
 		}
 
-		result := s.filterAndSort([]*hibiketorrent.AnimeTorrent{highQuality, thresholdQuality}, profile, -1, 0, 0, postSearchSort)
+		result := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{highQuality, thresholdQuality}, profile, -1, 0, 0, postSearchSort)
 		assert.Len(t, result, 2)
 		assert.NotNil(t, result[0])
 	})
@@ -586,7 +587,7 @@ func TestAutoSelect_LanguageDemotion(t *testing.T) {
 		return out
 	}
 
-	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{ruOnly, jpru, eng}, profile, -1, 0, 0, postSearchSort)
+	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{ruOnly, jpru, eng}, profile, -1, 0, 0, postSearchSort)
 
 	names := make([]string, len(sorted))
 	for i, r := range sorted {
@@ -612,7 +613,7 @@ func TestAutoSelect_LanguageTiers(t *testing.T) {
 	jpOnly := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese].mkv", InfoHash: "jp", Seeders: 900}
 	jpRu := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] [Japanese] [Russian].mkv", InfoHash: "jpru", Seeders: 901}
 
-	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{jpOnly, jpRu, dual, jpEn, enOnly}, profile, -1, 0, 0, nil)
+	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{jpOnly, jpRu, dual, jpEn, enOnly}, profile, -1, 0, 0, nil)
 	pos := map[string]int{}
 	for i, r := range sorted {
 		pos[r.InfoHash] = i
@@ -641,7 +642,7 @@ func TestAutoSelect_FlagLanguages(t *testing.T) {
 	frDual := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] Dual Audio 🌐 🇫🇷", InfoHash: "frdual", Seeders: 50}
 	frSingle := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] 🌐 🇫🇷", InfoHash: "fr", Seeders: 900}
 
-	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{frSingle, frDual, jpFlag, enFlag}, profile, -1, 10, 0, nil)
+	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{frSingle, frDual, jpFlag, enFlag}, profile, -1, 10, 0, nil)
 	pos := map[string]int{}
 	for i, r := range sorted {
 		pos[r.InfoHash] = i
@@ -662,7 +663,7 @@ func TestAutoSelect_SizeUnitNotLanguage(t *testing.T) {
 	esBigGB := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] WEBRip 2.32 GB 🌐 🇪🇸", InfoHash: "es", Seeders: 900}
 	enFlag := &hibiketorrent.AnimeTorrent{Name: "Show S01 E10 [1080p] WEBRip 531 MB 🌐 🇬🇧", InfoHash: "en", Seeders: 1}
 
-	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{esBigGB, enFlag}, profile, -1, 10, 0, nil)
+	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{esBigGB, enFlag}, profile, -1, 10, 0, nil)
 	assert.Equal(t, "en", sorted[0].InfoHash, "actual EN flag must outrank a GB-sized Spanish release")
 	assert.Equal(t, "es", sorted[1].InfoHash, "the GB size must not make the Spanish release English")
 }
@@ -678,7 +679,7 @@ func TestAutoSelect_SizeTiebreak(t *testing.T) {
 	small := &hibiketorrent.AnimeTorrent{Name: "[Lat] Show S01 E10 [1080p] WEB-DL Dual Audio", InfoHash: "small", Seeders: 0, Size: 651 * 1024 * 1024}
 	big := &hibiketorrent.AnimeTorrent{Name: "[ToonsHub] Show S01 E10 [1080p] WEB-DL AVC AAC Dual Audio", InfoHash: "big", Seeders: 0, Size: 1490 * 1024 * 1024}
 
-	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{small, big}, profile, -1, 10, 0, nil)
+	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{small, big}, profile, -1, 10, 0, nil)
 	assert.Equal(t, "big", sorted[0].InfoHash, "larger (higher-bitrate) release wins the tie")
 }
 
@@ -703,7 +704,7 @@ func TestAutoSelect_EpisodeRelevance(t *testing.T) {
 		return out
 	}
 
-	sorted := s.filterAndSort([]*hibiketorrent.AnimeTorrent{wrongBatch, wrongSingle, ep10, fullBatch}, profile, -1, 10, 0, postSearchSort)
+	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{wrongBatch, wrongSingle, ep10, fullBatch}, profile, -1, 10, 0, postSearchSort)
 	names := make([]string, len(sorted))
 	for i, r := range sorted {
 		names[i] = r.Name
@@ -727,7 +728,7 @@ func TestAutoSelect_SeasonGate(t *testing.T) {
 	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}
 
 	// expectedSeason = 2: the S1-only release must be dropped; S2 / season-less / combined kept.
-	result := s.filterAndSort(torrents, profile, 2, 0, 0, nil)
+	result := s.filterAndSort(context.Background(), torrents, profile, 2, 0, 0, nil)
 
 	names := make([]string, len(result))
 	for i, r := range result {
@@ -771,7 +772,7 @@ func TestAutoSelect_SeasonMismatch_RomanAndUnlabeledBatch(t *testing.T) {
 	assert.Equal(t, wrongRoman.Name, ranked[len(ranked)-1].Name, "the declared-wrong-season release must sink to the very bottom")
 
 	// filterAndSort = the auto-download path: the wrong-season roman release is now gated out entirely.
-	filtered := s.filterAndSort([]*hibiketorrent.AnimeTorrent{s1batch, wrongRoman, correct}, profile, 4, 10, 0, nil)
+	filtered := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{s1batch, wrongRoman, correct}, profile, 4, 10, 0, nil)
 	names := make([]string, len(filtered))
 	for i, r := range filtered {
 		names[i] = r.Name

@@ -2,144 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
-## v3.8.17
+## v3.9.0
 
-### Media page
-
-- ✨ **Banner trailers are now a toggle** — "Play trailer in banner" in Settings → UI → Media page (off by default, per-user). Muted looping trailer behind the anime page banner when AniList has one.
-- 🦺 **Fixed: banner trailer faded to a white screen on every show.** Plain YouTube iframes render a blank document in Denshi (Electron) and Chromium's storage-access error page in browsers; the banner now uses the discover header's embed paths (Denshi webview / credentialless iframe) and hides itself on error instead of covering the banner.
-
-### Player
-
-- ✨ **Stremio-style loading screen.** While a stream is prepared, the player now shows the show's fanart backdrop with a slowly breathing clearlogo (TVDB art via ani.zip, keyless) instead of a black screen — the status line ("Loading metadata…", "Loading preloaded stream…") stays visible underneath. Falls back to pulsing title text without a logo, and to the previous gradient when no artwork exists.
-
-## v3.8.16
-
-Fixes from the first live direct-CDN session (log-verified root causes).
-
-### Client identity survives server restarts
-
-- 🦺 **Fixed: mobile (Tenji) playback silently did nothing after a server deploy.** The client-identity HMAC secret was regenerated per boot, so a restart invalidated every client's identity proof; a phone's websocket then reconnected under a random id while its API requests kept the stored id — the `external-player-open-url` event was sent to an id with no socket and vanished. The secret is now persisted (new `server_values` table) and proofs last 30 days (was 24h).
-
-### Direct CDN playback (buffering fixes)
-
-- 🦺 **The "dual link" was one link**: TorBox's `requestdl` returns the same URL for the same file, so the second resolve just burned the paced API budget while client video and server subtitle reads contended on one link anyway. The duplicate resolve is removed (one `requestdl` per stream start); the server copes with the shared link properly instead:
-- ⚡️ The direct-mode subtitle cluster walk is now **paced (6 MiB/s)** instead of running at line speed — it no longer competes with the player's own video pulls on the shared link (the cause of mid-episode 429s → video network errors → buffering).
-- 🦺 A subtitle walk that still dies on a sustained CDN throttle now **retries after a cooldown, resuming from the last delivered cluster**, instead of leaving the rest of the episode without subtitles.
-
-## v3.8.15
-
-### Desktop (Denshi)
-
-- ✨ **Direct CDN playback now works in the desktop app.** The Electron main process injects `Access-Control-Allow-Origin` on media responses that lack it (debrid CDNs send no CORS headers), so `<video crossOrigin="anonymous">` can play a raw CDN URL. Scoped to media loads only; headers set by the origin server are never overridden. This is the missing piece flagged in v3.8.14 — the `Settings → Debrid → Direct CDN playback` toggle (TorBox only) is now functional on this build.
-
-No server-side changes — the server binaries are identical to v3.8.14 apart from the version string.
-
-## v3.8.14
-
-### Direct CDN playback (new, opt-in)
-
-- ✨ **Debrid streams can now play straight from the debrid CDN** instead of proxying every byte through the server (`Settings → Debrid → Direct CDN playback`, TorBox only). The server keeps doing what clients can't — MKV metadata parse, ASS subtitle extraction, font serving — over its **own second CDN link** resolved from the same torrent, so client video and server subtitle reads never contend on one link's rate limit. Server egress for playback drops to ~zero.
-- ✨ Watch rooms compose with it: every capable participant resolves their **own** CDN link from the room's shared selection — N members, N independent links, no host relay hop.
-- 🦺 New `POST /debrid/stream/refresh-url` endpoint + player-side resilience: if the raw CDN link dies mid-playback (expired token), the player fetches a fresh link, swaps the source, and resumes where it was (capped retries, cooldown).
-- 🦺 Zero behavior change while the toggle is off or the client isn't capable: web tabs, Chromecast, thumbnails, and cross-server Nakama relay keep using the proxy path untouched. **Note:** the desktop app additionally needs CORS header injection (next Denshi build) before the toggle does anything there.
-
-### Playback & prewarm
-
-- ⚡️ **Prewarm batch fan-out**: when one added torrent is a batch, sibling episodes are preloaded from the same torrent item — no extra torrent adds.
-- ⚡️ TorBox: memoized `checkcached` file lists, immediate first status poll, and the file-id cache is primed from poll data — fewer API round-trips per stream start.
-- 🦺 Prewarm audit fixes: next-episode chaining on play, progress-aware cleanup, metadata-on-hydrate, 14-day recency cutoff, negative cache for failed resolves, 3h TTL for currently-releasing shows.
-- 🦺 Video player rebinds playback to the live client after a mid-playback disconnect (#814).
-
-### Web UI
-
-- ✨ Trailer plays as the anime page banner (#816).
-- ⚡️ Stale-while-revalidate cold start for the library and anime collection — instant paint from cache, refreshed in the background.
-- ✨ My List: scroll position restored (#826), sort applies while searching (#648).
-- 🦺 Franchise grouping: the title-stem regex now strips `(season|stage)` and roman numerals with word boundaries — parity with the Go implementation.
-
-## v3.8.13
-
-Stability release from a full-fork audit (`fable-audit.md`) — every change is code-reviewed,
-built, and unit/race-tested; live verification is the next step.
-
-### Debrid / directstream (the missing-tracks & CDN-429 family)
-
-- 🦺 **Root cause of "audio/subtitle tracks missing" and "Media format not supported" fixed**: a CDN 429 error body was silently handed to the MKV parser as if it were the video file, producing a track-less parse that was then cached (poisoned) for 2 hours. Non-2xx responses are now rejected and retried, and a track-less parse is never cached — playback degrades gracefully instead of losing tracks or hard-failing.
-- 🦺 Per-link CDN connection gate: the stream-start burst (player head + tail probe + metadata + warm reads all hitting one debrid link at once) is what tripped TorBox's per-link throttle. Connections to a single link are now bounded (default 2, `SEANIME_DIRECTSTREAM_PER_TOKEN_CONNS`); other links/users unaffected.
-- ⚡️ Metadata reads are now chunked + cached: one "Loading metadata" step used to fire ~5–15 rapid CDN requests (a new request per parser seek); it's now a handful of spaced 8MiB range fetches with revisited regions served from memory.
-- 🦺 `requestdl` is paced (~15/min) — TorBox throttles this endpoint far below its documented budget, and every play/URL-refresh/room-join lands on it. Waiting a few seconds beats a 429 + backoff cycle.
-- 🦺 The scheduled prewarm now resolves strictly one target at a time (the old "queue" only staggered kickoffs; resolves still overlapped and clustered their TorBox calls).
-- 🦺 429 logs now say where the throttle came from (`api:<endpoint>` vs `cdn:<host>`), so future rate-limit blame is read off the logs.
-- 🦺 A link probe that hits a 429 no longer counts as "dead link" (which used to trigger a pointless re-resolve exactly when the CDN said to back off).
-- 🦺 Bounded the metadata parse (45s): a CDN that stalled mid-body could hang "Loading metadata…" forever.
-- 🦺 Fixed a cross-stream cancellation race: starting a new episode while the previous stream's goroutine was still winding down could silently kill the NEW stream's download ("second episode never starts").
-- 🦺 A stale direct-URL preload is now probed before playing; dead links fail with a clear retryable error instead of a dead player.
-
-### Stability (race-detector pass)
-
-- 🦺 Fixed a data race in the global log buffer — every goroutine's log line wrote to an unsynchronized buffer (corruption/crash risk, confirmed by `go test -race`).
-- 🦺 Fixed shared-pointer mutation races in torrent search aggregation (parallel batch+single searches) and the provider search-cache swap.
-
-### Same-instance watch rooms
-
-- 🦺 A bare **pause** can no longer steal room control: a stalled player's pause is indistinguishable from a user pause, and a stall taking the controller anchored the room to a frozen player. Pauses still apply; only deliberate acts (play/seek) transfer control.
-- 🦺 "Join room stream" now retries the host's stream share briefly and errors retryably instead of silently running its own selection — which could put a follower on a *different release* than the host (a desync no sync logic can fix).
-- 🦺 The Join button no longer disappears for a non-host driver who closed their own player.
-- 🦺 Host reconnects no longer get ~1s of stale-position echo.
-- 🦺 Room discovery cards are no longer broadcast to pre-login connections on networked servers.
-
-### Auto-select
-
-- 🦺 The wrong-cour year guard no longer buries premiere-year **complete batches** ("Show (2019) S1–S4 Complete") when streaming a later cour — wrong-season batches are still policed by the season gate (Honzuki case unchanged, test-pinned).
-
-### Multi-user
-
-- 🦺 `/user/login` now has a brute-force lockout (5 failures → 30s); user registration validates the role.
-
-### Housekeeping
-
-- 🦺 The updater package's tests compile again (broken since the GitHub-only update rework in 3.8.9); fixed a long-standing debrid test panic; vet is clean.
-
-## v3.8.12
-
-### Same-instance watch rooms
-
-- 🦺 Fixed the "rubber-band": a follower no longer rewinds to a controller that's frozen/buffering but still reporting itself as playing (the iOS "stopped playback" case). Heartbeats now only snap a follower *forward* when it falls behind; a driver that's stalled behind you is ignored so you keep playing. Deliberate controller seeks still snap both ways. Also clears the stuck `0.95x` slow-motion a follower fell into while nudging toward an absent driver.
-- 🦺 Only the **host** closing the player now stops the episode for everyone. A non-host closing — even one currently driving — just leaves; the rest of the room keeps watching. (Server-side guard drops a stop from any non-host.)
-
-### Tenji (iOS)
-
-- 🦺 Fixed watch-progress not saving on close: the on-close continuity flush used a stale first-render closure and silently no-op'd, so the resume position was lost and short watches never reached Continue Watching. Resume now saves reliably, on a tighter cadence.
-
-### Debrid streaming
-
-- 🦺 Fixed a regression in v3.8.10 where the always-on directstream read-ahead broke debrid playback (the player would load but never start, and audio/subtitle tracks failed to appear). The read-ahead is now **opt-in and off by default**, so v3.8.11 streams exactly like the known-good behavior unless you enable it.
-- ✨ Reworked read-ahead as a safe, single-connection design: it reuses the player's own CDN request (no extra connection), only engages on proper `206` range responses, and always falls back to direct streaming — so it can't corrupt offsets or starve the player. Enable with `SEANIME_DIRECTSTREAM_READAHEAD=1` to let streams ride through CDN dips.
-
-## v3.8.10
-
-### Same-instance watch rooms
-
-Synchronized playback (position + play/pause/seek) across your own clients — Denshi desktop and Tenji iOS — against a single server, each member in their own player.
-
-- ✨ Server-authoritative play/pause/seek sync with a shared debrid link, opt-in stream join, and "everyone can control" handoff
-- ✨ Per-room auto-skip voting and optional "force host tracks" (push the host's audio/subtitle selection to everyone)
-- ⚡️ Smooth convergence: followers glide into sync via playback-rate nudging instead of constant hard seeks
-- ⚡️ Network-latency compensation: each client leads by its measured half-RTT so everyone lands on the controller's true frame
-- 🦺 Buffering hold: a buffering controller no longer drags followers backward — everyone holds and resumes together
-- 🦺 Fixed control flapping, play/pause inversion, echo loops, and self-driven oscillation; faster heartbeat re-anchoring after a seek
-
-### Debrid streaming
-
-- ✨ Read-ahead prefetch for debrid/HTTP directstreams: the server now buffers ahead of the player into its cache, so streams ride through CDN dips and survive seeks instead of dropping the connection and re-pulling cold
-- ✨ Stream prewarm/preload: continue-watching prewarm, metadata-warm the next episode, shared prewarm DB, request rate-safety, and a UI "fire" badge marking warmed entries
-- 🦺 Fixed debrid race conditions and improved CDN throttling/back-off handling
-
-### Fixes
-
-- 🦺 Auto-select: season matching via title-number + year guard (e.g. Honzuki); franchise and event audit fixes
-- 🦺 Web: clearer stale-client "reload to update" prompt handling
+- 🎉 Denshi: New libmpv-based Built-in Player (Experimental)
+  - Enable in 'Settings > Video Playback'
+  - Hardware-accelerated rendering directly in the app viewport (no external window)
+  - Flawless codec and subtitle support on all platforms
+  - Supports many 'mpv.conf' options and shaders
+- ⚡️ UI: New splashcreen, updated components and colors
+- ⚡️ Torrent Streaming: Up to 20% faster startup depending on seeding
+- ⚡️ Debrid Streaming: Up to 5 seconds faster launch for cached streams
+- ⚡️ UI: Support for alt + mouse wheel horizontal scrolling on carousels
+- ⚡️ VideoCore: Support for screenshot directory
+- ⚡️ Plugins: Added new ChromeDP APIs
+- ⚡️ Discord: Seanime logo no longer displayed in Rich Presence
+- ⚡️ Debrid: Premiumize support #845
+- 🦺 Torrent Streaming: Fixed batch selection
+- 🦺 VideoCore: Ability to exit fullscreen when next stream is loading
+- 🦺 MPV/IINA: Fixed progress tracking dropping when media path is temporarily unavailable #836
+- 🦺 AllDebrid: Fixed batch torrent streaming #841
+- 🦺 Manga: Fixed unnecessary image proxy
+- 🦺 Torrent Streaming: More accurate download progress reporting
+- 🦺 Nakama: Refresh collection when turning off host library sharing
+- 🦺 Torrent Client: Fixed runtime error when display name is null
+- 🦺 Torrent Client: Use classic file-based downloading instead of memory-mapped files
+- 🦺 Mobile: Potential fixes for debrid downloading
+- ⬆️ Updated Electron to 42.4.0
+  - Fixes AC3/EAC3 audio support detection on Windows for HTML5 player
+  - Fixes security vulnerabilities
+- ⬆️ Upgraded to Rust-based React Compiler
 
 ## v3.8.7
 

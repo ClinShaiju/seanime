@@ -15,8 +15,8 @@ import (
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
 	"seanime/internal/library/anime"
 	"seanime/internal/library/playbackmanager"
+	"seanime/internal/mediacore"
 	"seanime/internal/mediaplayers/mediaplayer"
-	"seanime/internal/nativeplayer"
 	"seanime/internal/platforms/platform"
 	"seanime/internal/torrents/autoselect"
 	"seanime/internal/torrents/torrent"
@@ -52,7 +52,7 @@ type (
 		mediaPlayerRepository           *mediaplayer.Repository
 		mediaPlayerRepositorySubscriber *mediaplayer.RepositorySubscriber
 		directStreamManager             *directstream.Manager
-		nativePlayer                    *nativeplayer.NativePlayer
+		mediacoreCoordinator            *mediacore.Coordinator
 		logger                          *zerolog.Logger
 		db                              *db.Database
 
@@ -66,6 +66,8 @@ type (
 		startCancel           context.CancelFunc
 		startCancelId         uint64
 		shouldPreloadStream   atomic.Bool // Flag on whether the client should prepare a stream
+
+		acceleratedStartup bool
 	}
 
 	Settings struct {
@@ -82,17 +84,17 @@ type (
 	}
 
 	NewRepositoryOptions struct {
-		Logger              *zerolog.Logger
-		TorrentRepository   *torrent.Repository
-		BaseAnimeCache      *anilist.BaseAnimeCache
-		CompleteAnimeCache  *anilist.CompleteAnimeCache
-		PlatformRef         *util.Ref[platform.Platform]
-		MetadataProviderRef *util.Ref[metadata_provider.Provider]
-		PlaybackManager     *playbackmanager.PlaybackManager
-		WSEventManager      events.WSEventManagerInterface
-		Database            *db.Database
-		DirectStreamManager *directstream.Manager
-		NativePlayer        *nativeplayer.NativePlayer
+		Logger               *zerolog.Logger
+		TorrentRepository    *torrent.Repository
+		BaseAnimeCache       *anilist.BaseAnimeCache
+		CompleteAnimeCache   *anilist.CompleteAnimeCache
+		PlatformRef          *util.Ref[platform.Platform]
+		MetadataProviderRef  *util.Ref[metadata_provider.Provider]
+		PlaybackManager      *playbackmanager.PlaybackManager
+		WSEventManager       events.WSEventManagerInterface
+		Database             *db.Database
+		DirectStreamManager  *directstream.Manager
+		MediacoreCoordinator *mediacore.Coordinator
 	}
 )
 
@@ -115,9 +117,10 @@ func NewRepository(opts *NewRepositoryOptions) *Repository {
 		logger:                          opts.Logger,
 		db:                              opts.Database,
 		directStreamManager:             opts.DirectStreamManager,
-		nativePlayer:                    opts.NativePlayer,
+		mediacoreCoordinator:            opts.MediacoreCoordinator,
 		previousStreamOptions:           mo.None[*StartStreamOptions](),
 		preloadedStream:                 mo.None[*preloadedStream](),
+		acceleratedStartup:              true,
 	}
 
 	ret.autoSelect = autoselect.New(&autoselect.NewAutoSelectOptions{
@@ -125,6 +128,9 @@ func NewRepository(opts *NewRepositoryOptions) *Repository {
 		TorrentRepository: opts.TorrentRepository,
 		MetadataProvider:  opts.MetadataProviderRef,
 		Platform:          opts.PlatformRef,
+		OnStatus: func(status autoselect.StreamAutoSelectStatusPayload) {
+			opts.WSEventManager.SendEvent(events.StreamAutoSelectStatus, status)
+		},
 	})
 
 	ret.client = NewClient(ret)
@@ -178,6 +184,8 @@ func (r *Repository) InitModules(settings *models.TorrentstreamSettings, host st
 		return nil
 	}
 
+	r.acceleratedStartup = !s.DisableAcceleratedStartup
+
 	// Set default download directory, which is a temporary directory
 	if s.DownloadDir == "" {
 		s.DownloadDir = r.getDefaultDownloadPath()
@@ -213,8 +221,8 @@ func (r *Repository) InitModules(settings *models.TorrentstreamSettings, host st
 		return err
 	}
 
-	// Start listening to native player events
-	r.listenToNativePlayerEvents()
+	// Start listening to Mediacore events
+	r.listenToMediacoreEvents()
 
 	r.logger.Info().Msg("torrentstream: Module initialized")
 	return nil

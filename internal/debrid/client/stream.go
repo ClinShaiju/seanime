@@ -469,7 +469,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			Message:     "Selecting best torrent...",
 		})
 
-		pt, err := s.repository.findBestTorrent(provider, media, opts.EpisodeNumber, opts.UserID)
+		pt, err := s.repository.findBestTorrent(ctx, provider, media, opts.EpisodeNumber, opts.UserID)
 		if err != nil {
 			if opts.PlaybackType == PlaybackTypeNativePlayer {
 				s.ds(opts).AbortOpen(opts.ClientId, err)
@@ -1187,7 +1187,7 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 		var otherEpisodeFiles map[int]*debrid.TorrentItemFile
 
 		if opts.AutoSelect {
-			pt, err := s.repository.findBestTorrent(provider, media, opts.EpisodeNumber, opts.UserID)
+			pt, err := s.repository.findBestTorrent(context.Background(), provider, media, opts.EpisodeNumber, opts.UserID)
 			if err != nil {
 				s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to select torrent")
 				// Negative-cache the miss (no releases yet) so background preloads don't re-search

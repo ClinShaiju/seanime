@@ -4,6 +4,7 @@ import { useHandleCurrentMediaContinuity } from "@/api/hooks/continuity.hooks"
 import { useDebridRefreshStreamUrl } from "@/api/hooks/debrid.hooks"
 import { useDirectstreamConvertSubs } from "@/api/hooks/directstream.hooks"
 import { useCancelDiscordActivity } from "@/api/hooks/discord.hooks"
+import { MediaCoreBufferingOverlay, MediaCoreErrorOverlay } from "@/app/(main)/_features/media-core/media-core-overlays"
 import { currentWatchRoomAtom, useNakamaWatchParty } from "@/app/(main)/_features/nakama/nakama-manager"
 import { clientIdAtom } from "@/app/websocket-provider"
 import { nativePlayer_initialState, nativePlayer_stateAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
@@ -33,7 +34,7 @@ import { vc_seekingTargetProgress } from "@/app/(main)/_features/video-core/vide
 import { vc_timeRanges } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_ended } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_paused } from "@/app/(main)/_features/video-core/video-core-atoms"
-import { vc_miniPlayer } from "@/app/(main)/_features/video-core/video-core-atoms"
+import { vc_globalMiniPlayerAtom, vc_miniPlayer } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_cursorBusy } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_cursorPosition } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_busy } from "@/app/(main)/_features/video-core/video-core-atoms"
@@ -127,8 +128,7 @@ import {
     __torrentSearch_selectionAtom,
     __torrentSearch_selectionEpisodeAtom,
 } from "@/app/(main)/entry/_containers/torrent-search/torrent-search-drawer"
-import { TorrentStreamOverlay } from "@/app/(main)/entry/_containers/torrent-stream/torrent-stream-overlay"
-import { LuffyError } from "@/components/shared/luffy-error"
+import { PlaybackPlayPill } from "@/app/(main)/entry/_containers/torrent-stream/playback-play-pill"
 import { Button, IconButton } from "@/components/ui/button"
 import { cn } from "@/components/ui/core/styling"
 import { Modal } from "@/components/ui/modal"
@@ -144,9 +144,9 @@ import React, { useMemo, useRef, useState } from "react"
 import { flushSync } from "react-dom"
 import { BiExpand, BiX } from "react-icons/bi"
 import { FiMinimize2 } from "react-icons/fi"
-import { PiSpinnerDuotone } from "react-icons/pi"
 import { RemoveScrollBar } from "react-remove-scroll-bar"
 import { useUnmount, useUpdateEffect, useWindowSize } from "react-use"
+import { VideoCoreScreenshotDirPrompt } from "./video-core-screenshot-prompt"
 
 const log = logger("VIDEO CORE")
 
@@ -378,6 +378,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     const settings = useAtomValue(vc_settings)
     const beautifyImage = useAtomValue(vc_beautifyImageAtom)
     const isPip = useAtomValue(vc_pip)
+    const fullscreen = useAtomValue(vc_isFullscreen)
     const skipOpeningTime = useAtomValue(vc_skipOpeningTime)
     const skipEndingTime = useAtomValue(vc_skipEndingTime)
     const pipManager = useAtomValue(vc_pipManager)
@@ -392,32 +393,9 @@ const PlayerContent = React.memo<PlayerContentProps>(({
 
     return (
         <>
-            <TorrentStreamOverlay
-                isNativePlayerComponent="top-section"
-                show={!isMiniPlayer && !(!!state.playbackInfo?.streamUrl && !state.loadingState)}
-            />
 
-            {(state?.playbackError) && (
-                <div
-                    data-vc-element="playback-error-container"
-                    className="h-full w-full bg-black/100 flex items-center justify-center z-[20] absolute p-4"
-                >
-                    <div className="text-white text-center" data-vc-element="playback-error-content">
-                        {!isMiniPlayer ? (
-                            <LuffyError title="Playback Error" imageContainerClass="size-[3.5rem] lg:size-[8rem]" />
-                        ) : (
-                            <h1 data-vc-element="playback-error-title" className={cn("text-2xl font-bold", isMiniPlayer && "text-lg")}>Playback
-                                                                                                                                       Error</h1>
-                        )}
-                        <p
-                            data-vc-element="playback-error-message"
-                            className={cn("text-base text-white/50 max-w-xl", isMiniPlayer && "text-sm max-w-lg mx-auto")}
-                        >
-                            {state.playbackError || "An error occurred while playing the stream. Please try again later."}
-                        </p>
-                    </div>
-                </div>
-            )}
+
+            <MediaCoreErrorOverlay playbackError={state.playbackError} isMiniPlayer={isMiniPlayer} onClose={onTerminateStream} />
 
             <div
                 data-vc-element="container"
@@ -451,16 +429,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
 
                         <VideoCoreOverlayDisplay />
 
-                        {buffering && (
-                            <div
-                                data-vc-element="buffering-indicator"
-                                className="absolute inset-0 flex items-center justify-center z-[50] pointer-events-none"
-                            >
-                                <div className="bg-black/20 backdrop-blur-sm rounded-full p-4">
-                                    <PiSpinnerDuotone className="size-12 text-white animate-spin" />
-                                </div>
-                            </div>
-                        )}
+                        <MediaCoreBufferingOverlay buffering={buffering} />
 
                         {busy && (
                             <>
@@ -547,7 +516,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                                     filter: (settings.videoEnhancement.enabled && beautifyImage)
                                         ? `contrast(${settings.videoEnhancement.contrast}) saturate(${settings.videoEnhancement.saturation}) brightness(${settings.videoEnhancement.brightness})`
                                         : "none",
-                                    imageRendering: "crisp-edges",
+                                    imageRendering: "auto",
                                 }}
                             >
                                 {state.playbackInfo?.mkvMetadata?.subtitleTracks?.map(track => (
@@ -614,7 +583,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             <VideoCoreVolumeButton />
                             <VideoCoreTimestamp />
                             <div className="flex flex-1" data-vc-element="control-bar-separator" />
-                            {!inline && <TorrentStreamOverlay isNativePlayerComponent="control-bar" show={!isMiniPlayer} />}
+                            {!inline && <PlaybackPlayPill isNativePlayerComponent="control-bar" show={!isMiniPlayer} />}
                             <VideoCoreWatchPartyChat />
                             <VideoCoreSettingsMenu />
                             <VideoCoreResolutionMenu state={state} onVideoSourceChange={onVideoSourceChange} />
@@ -839,6 +808,13 @@ export function VideoCore(props: VideoCoreProps) {
     const qc = useQueryClient()
     const settings = useAtomValue(vc_settings)
     const [isMiniPlayer, setIsMiniPlayer] = useAtom(vc_miniPlayer)
+    const setGlobalMiniPlayer = useSetAtom(vc_globalMiniPlayerAtom)
+    React.useEffect(() => {
+        setGlobalMiniPlayer(isMiniPlayer)
+        return () => {
+            setGlobalMiniPlayer(false)
+        }
+    }, [isMiniPlayer, setGlobalMiniPlayer])
     const [busy, setBusy] = useAtom(vc_busy)
     const [buffering, setBuffering] = useAtom(vc_buffering)
     const duration = useAtomValue(vc_duration)
@@ -1099,8 +1075,13 @@ export function VideoCore(props: VideoCoreProps) {
             pipManager?.destroy?.()
             setPipManager(null)
             setPipElement(null)
-            fullscreenManager?.destroy?.()
-            setFullscreenManager(null)
+            // Keep the fullscreenManager alive during buffering or transitions to next episodes (when state.active is true).
+            // Only destroy and set it to null if the stream is terminated entirely
+            if (!state.active && fullscreenManager) {
+                fullscreenManager.exitFullscreen()
+                fullscreenManager.destroy()
+                setFullscreenManager(null)
+            }
             setInSightOpen(false)
             setInSightData(null)
             // setIsFullscreen(false)
@@ -1806,6 +1787,20 @@ export function VideoCore(props: VideoCoreProps) {
         }
     }, [state.active])
 
+
+    // Exit fullscreen and clean up fullscreen manager when the entire component is unmounted
+    React.useEffect(() => {
+        return () => {
+            setFullscreenManager(p => {
+                if (p) {
+                    p.exitFullscreen()
+                    p.destroy()
+                }
+                return null
+            })
+        }
+    }, [])
+
     const chapterCues = useMemo(() => {
             if (!duration || duration <= 1) return []
             const aniSkipAvailable = !!resolvedSkipData?.op?.interval && duration > 0
@@ -1852,6 +1847,7 @@ export function VideoCore(props: VideoCoreProps) {
             <ScopeProvider atoms={[__torrentSearch_selectionAtom, __torrentSearch_selectionEpisodeAtom, __torrentSearch_selectedTorrentsAtom]}>
                 <VideoCoreAnime4K />
                 <VideoCorePreferencesModal isWebPlayer={props.id !== "native-player"} />
+                <VideoCoreScreenshotDirPrompt />
                 {fullscreen && <RemoveScrollBar />}
                 <div
                     data-vc-element="inline-container"
@@ -1902,9 +1898,9 @@ export function VideoCore(props: VideoCoreProps) {
 
                 <VideoCoreAnime4K />
                 <VideoCorePreferencesModal isWebPlayer={props.id !== "native-player"} />
+                <VideoCoreScreenshotDirPrompt />
                 {state.active && !isMiniPlayer && <RemoveScrollBar />}
 
-                <TorrentStreamOverlay isNativePlayerComponent="overlay" show={(state.active && isMiniPlayer)} />
 
                 <VideoCoreDrawer
                     open={state.active}
@@ -2020,56 +2016,75 @@ function FloatingButtons(props: { part: "video" | "loading", onTerminateStream: 
     const { part, onTerminateStream } = props
     const fullscreen = useAtomValue(vc_isFullscreen)
     const [isMiniPlayer, setIsMiniPlayer] = useAtom(vc_miniPlayer)
-    if (fullscreen) return null
+    const fullscreenManager = useAtomValue(vc_fullscreenManager)
+
+    if (fullscreen && part === "video") return null
     const Content = () => (
         <>
-            {!isMiniPlayer && <>
-                <IconButton
-                    data-vc-element="floating-button-miniplayer"
-                    data-vc-for={part}
-                    icon={<FiMinimize2 className="text-2xl" />}
-                    intent="gray-basic"
-                    className="rounded-full absolute top-0 flex-none right-4 z-[999]"
-                    onClick={() => {
-                        startVideoCoreMiniPlayerTransition(() => {
-                            setIsMiniPlayer(true)
-                        })
-                    }}
-                />
-            </>}
+            {fullscreen ? (
+                <>
+                    <IconButton
+                        data-vc-element="floating-button-exit-fullscreen"
+                        data-vc-for={part}
+                        icon={<FiMinimize2 className="text-2xl" />}
+                        intent="gray-basic"
+                        className="rounded-full absolute top-0 flex-none right-4 z-[999]"
+                        onClick={() => {
+                            fullscreenManager?.exitFullscreen()
+                        }}
+                    />
+                </>
+            ) : (
+                <>
+                    {!isMiniPlayer && <>
+                        <IconButton
+                            data-vc-element="floating-button-miniplayer"
+                            data-vc-for={part}
+                            icon={<FiMinimize2 className="text-2xl" />}
+                            intent="gray-basic"
+                            className="rounded-full absolute top-0 flex-none right-4 z-[999]"
+                            onClick={() => {
+                                startVideoCoreMiniPlayerTransition(() => {
+                                    setIsMiniPlayer(true)
+                                })
+                            }}
+                        />
+                    </>}
 
-            {isMiniPlayer && <>
-                <IconButton
-                    data-vc-element="floating-button-expand"
-                    data-vc-for={part}
-                    type="button"
-                    intent="gray"
-                    size="sm"
-                    className={cn(
-                        "rounded-full text-2xl flex-none absolute z-[999] right-4 top-4 pointer-events-auto bg-black/30 hover:bg-black/40",
-                        isMiniPlayer && "text-xl",
-                    )}
-                    icon={<BiExpand />}
-                    onClick={() => {
-                        setIsMiniPlayer(false)
-                    }}
-                />
-                <IconButton
-                    data-vc-element="floating-button-terminate"
-                    data-vc-for={part}
-                    type="button"
-                    intent="alert-subtle"
-                    size="sm"
-                    className={cn(
-                        "rounded-full text-2xl flex-none absolute z-[999] left-4 top-4 pointer-events-auto",
-                        isMiniPlayer && "text-xl",
-                    )}
-                    icon={<BiX />}
-                    onClick={() => {
-                        onTerminateStream()
-                    }}
-                />
-            </>}
+                    {isMiniPlayer && <>
+                        <IconButton
+                            data-vc-element="floating-button-expand"
+                            data-vc-for={part}
+                            type="button"
+                            intent="gray"
+                            size="sm"
+                            className={cn(
+                                "rounded-full text-2xl flex-none absolute z-[999] right-4 top-4 pointer-events-auto bg-black/30 hover:bg-black/40",
+                                isMiniPlayer && "text-xl",
+                            )}
+                            icon={<BiExpand />}
+                            onClick={() => {
+                                setIsMiniPlayer(false)
+                            }}
+                        />
+                        <IconButton
+                            data-vc-element="floating-button-terminate"
+                            data-vc-for={part}
+                            type="button"
+                            intent="alert-subtle"
+                            size="sm"
+                            className={cn(
+                                "rounded-full text-2xl flex-none absolute z-[999] left-4 top-4 pointer-events-auto",
+                                isMiniPlayer && "text-xl",
+                            )}
+                            icon={<BiX />}
+                            onClick={() => {
+                                onTerminateStream()
+                            }}
+                        />
+                    </>}
+                </>
+            )}
         </>
     )
 

@@ -669,7 +669,9 @@ export const API_ENDPOINTS = {
         /**
          *  @description
          *  Route re-resolves a fresh CDN link for the caller's active stream.
-         *  Direct-CDN clients call this when their raw CDN link dies mid-playback.
+         *  Direct-CDN clients call this when their raw CDN link dies mid-playback (expired
+         *  token / hard 429): the server re-resolves from the stored selection and the client
+         *  swaps its video src and seeks back. The server's own link is untouched.
          */
         DebridRefreshStreamUrl: {
             key: "DEBRID-debrid-refresh-stream-url",
@@ -1581,6 +1583,13 @@ export const API_ENDPOINTS = {
             endpoint: "/api/v1/metadata/parent",
         },
     },
+    MPVCORE: {
+        MpvCoreInSightGetCharacterDetails: {
+            key: "MPVCORE-mpv-core-in-sight-get-character-details",
+            methods: ["GET"],
+            endpoint: "/api/v1/mpvcore/insight/character/{malId}",
+        },
+    },
     NAKAMA: {
         /**
          *  @description
@@ -1773,8 +1782,9 @@ export const API_ENDPOINTS = {
         /**
          *  @description
          *  Route starts (or rejoins) the room's active debrid stream for the caller.
-         *  Reuses the host's already-resolved debrid link directly — no second torrent
-         *  selection or CDN resolution. Falls back to auto-select if the host link isn't ready.
+         *  Reuses the host's already-resolved debrid SELECTION — no second torrent selection.
+         *  Retries briefly while the host is still resolving; errors (retryable) rather than
+         *  auto-selecting independently, which could put this peer on a different release.
          */
         NakamaWatchRoomJoinStream: {
             key: "NAKAMA-ROOMS-nakama-watch-room-join-stream",
@@ -2517,6 +2527,11 @@ export const API_ENDPOINTS = {
             key: "VIDEOCORE-video-core-in-sight-get-character-details",
             methods: ["GET"],
             endpoint: "/api/v1/videocore/insight/character/{malId}",
+        },
+        VideoCoreSaveScreenshot: {
+            key: "VIDEOCORE-video-core-save-screenshot",
+            methods: ["POST"],
+            endpoint: "/api/v1/videocore/screenshot",
         },
     },
 } satisfies ApiEndpoints

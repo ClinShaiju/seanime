@@ -69,10 +69,12 @@ func (s *AutoSelect) selectFile(
 
 		s.logger.Debug().Msgf("autoselect: Checking torrent candidate: %s", t.Name)
 		s.log(fmt.Sprintf("Checking torrent candidate: %s", t.Name))
+		s.updateCandidateStatus(ctx, t.Name, "analyzing")
 
 		providerExt, ok := s.torrentRepository.GetAnimeProviderExtension(t.Provider)
 		if !ok {
 			s.logger.Warn().Str("provider", t.Provider).Msg("autoselect: Provider not found")
+			s.updateCandidateStatus(ctx, t.Name, "skipped")
 			continue
 		}
 
@@ -82,9 +84,10 @@ func (s *AutoSelect) selectFile(
 		switch mode {
 		case SelectionModeDebrid:
 			if debridClient != nil {
-				res, err = s.selectFileFromDebrid(media, episodeNumber, t, providerExt, debridClient, shared)
+				res, err = s.selectFileFromDebrid(ctx, media, episodeNumber, t, providerExt, debridClient, shared)
 			} else {
 				s.logger.Error().Msg("autoselect: Debrid client is nil but mode is Debrid")
+				s.updateCandidateStatus(ctx, t.Name, "skipped")
 				continue
 			}
 		case SelectionModeTorrent:
@@ -92,17 +95,20 @@ func (s *AutoSelect) selectFile(
 				res, err = s.selectFileFromTorrentClient(ctx, media, episodeNumber, t, providerExt, torrentClient, shared)
 			} else {
 				s.logger.Error().Msg("autoselect: Torrent client is nil but mode is Torrent")
+				s.updateCandidateStatus(ctx, t.Name, "skipped")
 				continue
 			}
 		}
 
 		if err == nil && res != nil {
+			s.updateCandidateStatus(ctx, t.Name, "selected")
 			return res, nil
 		}
 
 		if err != nil {
 			s.logger.Warn().Err(err).Msgf("autoselect: Could not select file for %s", t.Name)
 		}
+		s.updateCandidateStatus(ctx, t.Name, "skipped")
 
 		// Count the analysis attempt if we actually tried
 		analyzedCount++
@@ -215,6 +221,7 @@ func (s *AutoSelect) selectFileFromTorrentClient(
 }
 
 func (s *AutoSelect) selectFileFromDebrid(
+	ctx context.Context,
 	media *anilist.CompleteAnime,
 	episodeNumber int,
 	t *hibiketorrent.AnimeTorrent,
@@ -239,6 +246,10 @@ func (s *AutoSelect) selectFileFromDebrid(
 	magnet, err := s.torrentRepository.ResolveMagnetLink(t)
 	if err != nil {
 		s.logger.Warn().Err(err).Msgf("autoselect: Error scraping magnet link for %s", t.Link)
+		return nil, err
+	}
+
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 

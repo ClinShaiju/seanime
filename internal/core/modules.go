@@ -17,16 +17,19 @@ import (
 	"seanime/internal/library/playbackmanager"
 	"seanime/internal/library_explorer"
 	"seanime/internal/manga"
+	"seanime/internal/mediacore"
 	"seanime/internal/mediaplayers/iina"
 	"seanime/internal/mediaplayers/mediaplayer"
 	"seanime/internal/mediaplayers/mpchc"
 	"seanime/internal/mediaplayers/mpv"
 	"seanime/internal/mediaplayers/vlc"
 	"seanime/internal/mediastream"
+	"seanime/internal/mpvcore"
 	"seanime/internal/nakama"
 	"seanime/internal/nativeplayer"
 	"seanime/internal/notifier"
 	"seanime/internal/platforms/shared_platform"
+	"seanime/internal/player"
 	"seanime/internal/playlist"
 	"seanime/internal/plugin"
 	seanime_torrent "seanime/internal/torrent_clients/builtin_client"
@@ -192,7 +195,7 @@ func (a *App) initModulesOnce() {
 	a.MangaDownloader.Start()
 
 	// +---------------------+
-	// |     Video Core      |
+	// |      VideoCore      |
 	// +---------------------+
 
 	a.VideoCore = videocore.New(videocore.NewVideoCoreOptions{
@@ -214,18 +217,20 @@ func (a *App) initModulesOnce() {
 	})
 
 	// +---------------------+
-	// |    Media Stream     |
+	// |       MpvCore       |
 	// +---------------------+
 
-	a.MediastreamRepository = mediastream.NewRepository(&mediastream.NewRepositoryOptions{
-		Logger:         a.Logger,
-		WSEventManager: a.adminEvents,
-		FileCacher:     a.FileCacher,
-		VideoCore:      a.VideoCore,
-	})
-
-	a.AddCleanupFunction(func() {
-		a.MediastreamRepository.OnCleanup()
+	a.MpvCore = mpvcore.New(mpvcore.NewMpvCoreOptions{
+		WsEventManager:      a.adminEvents,
+		Logger:              a.Logger,
+		ContinuityManager:   a.ContinuityManager,
+		MetadataProviderRef: a.MetadataProviderRef,
+		DiscordPresence:     a.DiscordPresence,
+		PlatformRef:         a.AnilistPlatformRef,
+		RefreshAnimeCollectionFunc: func() {
+			_, _ = a.RefreshAnimeCollection()
+		},
+		IsOfflineRef: a.IsOfflineRef(),
 	})
 
 	// +---------------------+
@@ -236,6 +241,50 @@ func (a *App) initModulesOnce() {
 		WsEventManager: a.adminEvents,
 		Logger:         a.Logger,
 		VideoCore:      a.VideoCore,
+	})
+
+	// +-----------------------+
+	// | Mediacore Coordinator |
+	// +-----------------------+
+
+	vcAdapter := videocore.NewAdapter(a.VideoCore, a.NativePlayer)
+	mcAdapter := mpvcore.NewAdapter(a.MpvCore)
+
+	a.MediacoreCoordinator = mediacore.NewCoordinator(mediacore.NewCoordinatorOptions{
+		Logger:              a.Logger,
+		MetadataProviderRef: a.MetadataProviderRef,
+		ContinuityManager:   a.ContinuityManager,
+		DiscordPresence:     a.DiscordPresence,
+		PlatformRef:         a.AnilistPlatformRef,
+		RefreshAnimeCollectionFunc: func() {
+			_, _ = a.RefreshAnimeCollection()
+		},
+		IsOfflineRef: a.IsOfflineRef(),
+		Backends: map[player.Target]mediacore.Backend{
+			player.TargetVideoCore: vcAdapter,
+			player.TargetMpvCore:   mcAdapter,
+		},
+	})
+
+	a.AddCleanupFunction(func() {
+		_ = a.MediacoreCoordinator.Close()
+	})
+
+	a.MediacoreCoordinator.SetupSharedEffects()
+
+	// +---------------------+
+	// |    Media Stream     |
+	// +---------------------+
+
+	a.MediastreamRepository = mediastream.NewRepository(&mediastream.NewRepositoryOptions{
+		Logger:               a.Logger,
+		WSEventManager:       a.adminEvents,
+		FileCacher:           a.FileCacher,
+		MediacoreCoordinator: a.MediacoreCoordinator,
+	})
+
+	a.AddCleanupFunction(func() {
+		a.MediastreamRepository.OnCleanup()
 	})
 
 	// +---------------------+
@@ -252,9 +301,10 @@ func (a *App) initModulesOnce() {
 		RefreshAnimeCollectionFunc: func() {
 			_, _ = a.RefreshAnimeCollection()
 		},
-		IsOfflineRef: a.IsOfflineRef(),
-		NativePlayer: a.NativePlayer,
-		VideoCore:    a.VideoCore,
+		IsOfflineRef:         a.IsOfflineRef(),
+		NativePlayer:         a.NativePlayer,
+		VideoCore:            a.VideoCore,
+		MediacoreCoordinator: a.MediacoreCoordinator,
 		HMACTokenFunc: func(endpoint string, symbol string) string {
 			qp, err := a.GetServerPasswordHMACAuth().GenerateQueryParam(endpoint, symbol)
 			if err != nil {
@@ -269,17 +319,17 @@ func (a *App) initModulesOnce() {
 	// +---------------------+
 
 	a.TorrentstreamRepository = torrentstream.NewRepository(&torrentstream.NewRepositoryOptions{
-		Logger:              a.Logger,
-		BaseAnimeCache:      anilist.NewBaseAnimeCache(),
-		CompleteAnimeCache:  anilist.NewCompleteAnimeCache(),
-		MetadataProviderRef: a.MetadataProviderRef,
-		TorrentRepository:   a.TorrentRepository,
-		PlatformRef:         a.AnilistPlatformRef,
-		PlaybackManager:     a.PlaybackManager,
-		WSEventManager:      a.adminEvents,
-		Database:            a.Database,
-		DirectStreamManager: a.DirectStreamManager,
-		NativePlayer:        a.NativePlayer,
+		Logger:               a.Logger,
+		BaseAnimeCache:       anilist.NewBaseAnimeCache(),
+		CompleteAnimeCache:   anilist.NewCompleteAnimeCache(),
+		MetadataProviderRef:  a.MetadataProviderRef,
+		TorrentRepository:    a.TorrentRepository,
+		PlatformRef:          a.AnilistPlatformRef,
+		PlaybackManager:      a.PlaybackManager,
+		WSEventManager:       a.adminEvents,
+		Database:             a.Database,
+		DirectStreamManager:  a.DirectStreamManager,
+		MediacoreCoordinator: a.MediacoreCoordinator,
 	})
 
 	// +---------------------+
@@ -307,10 +357,11 @@ func (a *App) initModulesOnce() {
 	})
 
 	plugin.GlobalAppContext.SetModulesPartial(plugin.AppContextModules{
-		PlaybackManager:     a.PlaybackManager,
-		MangaRepository:     a.MangaRepository,
-		VideoCore:           a.VideoCore,
-		DirectStreamManager: a.DirectStreamManager,
+		PlaybackManager:      a.PlaybackManager,
+		MangaRepository:      a.MangaRepository,
+		VideoCore:            a.VideoCore,
+		MediacoreCoordinator: a.MediacoreCoordinator,
+		DirectStreamManager:  a.DirectStreamManager,
 	})
 
 	// +---------------------+
@@ -367,8 +418,7 @@ func (a *App) initModulesOnce() {
 		PlatformRef:             a.AnilistPlatformRef,
 		ServerHost:              a.Config.Server.Host,
 		ServerPort:              a.Config.Server.Port,
-		NativePlayer:            a.NativePlayer,
-		VideoCore:               a.VideoCore,
+		MediacoreCoordinator:    a.MediacoreCoordinator,
 		DirectStreamManager:     a.DirectStreamManager,
 		IsOfflineRef:            a.IsOfflineRef(),
 	})
@@ -385,7 +435,7 @@ func (a *App) initModulesOnce() {
 		PlaybackManager:         a.PlaybackManager,
 		WSEventManager:          a.WSEventManager,
 		NakamaManager:           a.NakamaManager,
-		NativePlayer:            a.NativePlayer,
+		MediacoreCoordinator:    a.MediacoreCoordinator,
 		Database:                a.Database,
 		Logger:                  a.Logger,
 	})
@@ -594,6 +644,12 @@ func (a *App) InitOrRefreshModules() {
 			AutoUpdateProgress:  a.Settings.GetLibrary().AutoUpdateProgress,
 		})
 
+		playbackTarget := directstream.PlaybackTargetVideoCore
+		if a.Settings.GetMediaPlayer().MpvPrismEnabled {
+			playbackTarget = directstream.PlaybackTargetMpvCore
+		}
+		a.DirectStreamManager.SetPlaybackTarget(playbackTarget)
+
 		a.TorrentstreamRepository.SetMediaPlayerRepository(a.MediaPlayerRepository)
 
 		plugin.GlobalAppContext.SetModulesPartial(plugin.AppContextModules{
@@ -605,6 +661,12 @@ func (a *App) InitOrRefreshModules() {
 
 	if a.VideoCore != nil {
 		a.VideoCore.SetSettings(settings)
+	}
+	if a.MpvCore != nil {
+		a.MpvCore.SetSettings(settings)
+	}
+	if a.MediacoreCoordinator != nil {
+		a.MediacoreCoordinator.SetSettings(settings)
 	}
 
 	// +---------------------+
@@ -739,7 +801,7 @@ func (a *App) InitOrRefreshModules() {
 	// +---------------------+
 
 	if settings.Nakama != nil {
-		go a.NakamaManager.SetSettings(settings.Nakama)
+		a.NakamaManager.SetSettings(settings.Nakama)
 	}
 
 	a.Logger.Info().Msg("app: Refreshed modules")
@@ -801,20 +863,21 @@ func (a *App) InitOrRefreshTorrentstreamSettings() {
 			BaseModel: models.BaseModel{
 				ID: 1,
 			},
-			Enabled:             false,
-			AutoSelect:          true,
-			PreferredResolution: "",
-			DisableIPV6:         false,
-			DownloadDir:         "",
-			AddToLibrary:        false,
-			TorrentClientHost:   "",
-			TorrentClientPort:   43213,
-			StreamingServerHost: "0.0.0.0",
-			StreamingServerPort: 43214,
-			IncludeInLibrary:    false,
-			StreamUrlAddress:    "",
-			SlowSeeding:         false,
-			PreloadNextStream:   false,
+			Enabled:                   false,
+			AutoSelect:                true,
+			PreferredResolution:       "",
+			DisableIPV6:               false,
+			DownloadDir:               "",
+			AddToLibrary:              false,
+			TorrentClientHost:         "",
+			TorrentClientPort:         43213,
+			StreamingServerHost:       "0.0.0.0",
+			StreamingServerPort:       43214,
+			IncludeInLibrary:          false,
+			StreamUrlAddress:          "",
+			SlowSeeding:               false,
+			PreloadNextStream:         false,
+			DisableAcceleratedStartup: false,
 		})
 		if err != nil {
 			a.Logger.Error().Err(err).Msg("app: Failed to initialize mediastream module")

@@ -11,6 +11,7 @@ import (
 	"seanime/internal/database/models"
 	"seanime/internal/debrid/alldebrid"
 	"seanime/internal/debrid/debrid"
+	"seanime/internal/debrid/premiumize"
 	"seanime/internal/debrid/realdebrid"
 	"seanime/internal/debrid/torbox"
 	"seanime/internal/directstream"
@@ -132,6 +133,9 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		TorrentRepository: opts.TorrentRepository,
 		MetadataProvider:  opts.MetadataProviderRef,
 		Platform:          opts.PlatformRef,
+		OnStatus: func(status autoselect.StreamAutoSelectStatusPayload) {
+			opts.WSEventManager.SendEvent(events.StreamAutoSelectStatus, status)
+		},
 	})
 
 	ret.prewarmLimiter = rate.NewLimiter(rate.Every(prewarmKickoffInterval), 1)
@@ -180,6 +184,8 @@ func (r *Repository) InitializeProvider(settings *models.DebridSettings) error {
 		r.provider = mo.Some(realdebrid.NewRealDebrid(r.logger))
 	case "alldebrid":
 		r.provider = mo.Some(alldebrid.NewAllDebrid(r.logger))
+	case "premiumize":
+		r.provider = mo.Some(premiumize.NewPremiumize(r.logger, &premiumizeHashStore{db: r.db}))
 	default:
 		r.provider = mo.None[debrid.Provider]()
 	}
@@ -227,6 +233,34 @@ func (r *Repository) GetProvider() (debrid.Provider, error) {
 	}
 
 	return p, nil
+}
+
+// premiumizeHashStore implements premiumize.HashStore on top of the app database, so transfer
+// hashes survive a restart instead of only living in the provider's in-memory cache.
+type premiumizeHashStore struct {
+	db *db.Database
+}
+
+func (s *premiumizeHashStore) LoadAll() (map[string]string, error) {
+	rows, err := s.db.GetDebridTransferHashes("premiumize")
+	if err != nil {
+		return nil, err
+	}
+
+	ret := make(map[string]string, len(rows))
+	for _, row := range rows {
+		ret[row.TransferID] = row.Hash
+	}
+
+	return ret, nil
+}
+
+func (s *premiumizeHashStore) Save(transferId, hash string) {
+	_ = s.db.UpsertDebridTransferHash("premiumize", transferId, hash)
+}
+
+func (s *premiumizeHashStore) Delete(transferId string) {
+	_ = s.db.DeleteDebridTransferHash("premiumize", transferId)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

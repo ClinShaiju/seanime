@@ -1,3 +1,4 @@
+import { useOpenInExplorer } from "@/api/hooks/explorer.hooks"
 import { useUpdateTheme } from "@/api/hooks/theme.hooks"
 import { useCustomCSS } from "@/components/shared/custom-css-provider"
 import { Alert } from "@/components/ui/alert"
@@ -25,7 +26,7 @@ import { useAtom } from "jotai/react"
 import { atomWithStorage } from "jotai/utils"
 import React, { useState } from "react"
 import { useFormContext, UseFormReturn, useWatch } from "react-hook-form"
-import { LuChevronRight } from "react-icons/lu"
+import { LuChevronRight, LuFolderOpen } from "react-icons/lu"
 import { toast } from "sonner"
 import { z } from "zod"
 import { useIsSimulatedUser } from "../../_hooks/use-server-status"
@@ -87,7 +88,6 @@ const selectUISettingTabAtom = atom("main")
 const tabsRootClass = cn("w-full contents space-y-4")
 
 const tabsTriggerClass = cn(
-    "text-base px-6 rounded-[--radius-md] w-fit border-none data-[state=active]:bg-[--subtle] data-[state=active]:text-white dark:hover:text-white",
     "h-10 lg:justify-center px-3 flex-1",
 )
 
@@ -96,7 +96,7 @@ const tabsListClass = cn(
 )
 
 const tabContentClass = cn(
-    "space-y-4 animate-in fade-in-0 duration-300",
+    "space-y-8 animate-in fade-in-0 duration-300",
 )
 
 // compact thumbnail for radio card option labels
@@ -326,6 +326,8 @@ export function UISettings() {
     const themeSettings = useThemeSettings()
     const serverStatus = useServerStatus()
 
+    const { mutate: openInExplorer } = useOpenInExplorer()
+
     const { mutate, isPending } = useUpdateTheme()
     // const [fixBorderRenderingArtifacts, setFixBorerRenderingArtifacts] = useAtom(__ui_fixBorderRenderingArtifacts)
     const [navigationPreloadMode, setNavigationPreloadMode] = useAtom(__navigationPreloadModeAtom)
@@ -521,11 +523,12 @@ export function UISettings() {
                     <Tabs
                         value={tab}
                         onValueChange={setTab}
+                        variant="pill"
                         className={tabsRootClass}
                         triggerClass={tabsTriggerClass}
                         listClass={tabsListClass}
                     >
-                        <TabsList data-settings-ui-panel-tabs className="flex-wrap max-w-full bg-[--paper] p-2 border rounded-xl">
+                        <TabsList data-settings-ui-panel-tabs>
                             <TabsTrigger value="main">General</TabsTrigger>
                             <TabsTrigger value="css">CSS</TabsTrigger>
                         </TabsList>
@@ -640,7 +643,7 @@ export function UISettings() {
                                 />
                             </SettingsCard>
 
-                            <SettingsCard>
+                            <SettingsCard title="Theme">
                                 <Field.Switch
                                     side="right"
                                     label={swLabel(
@@ -790,6 +793,17 @@ export function UISettings() {
                                         min={1}
                                         max={100}
                                     />
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <Button
+                                        size="sm"
+                                        intent="gray-outline"
+                                        onClick={() => openInExplorer({ path: `${serverStatus?.dataDir}/assets` })}
+                                        leftIcon={<LuFolderOpen />}
+                                    >
+                                        Open assets directory
+                                    </Button>
                                 </div>
 
                                 <Field.RadioCards

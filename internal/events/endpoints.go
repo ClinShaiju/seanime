@@ -27,6 +27,7 @@ const (
 	DebridGetTorrentFilePreviewsEndpoint               = "DEBRID-debrid-get-torrent-file-previews"
 	DebridGetTorrentInfoEndpoint                       = "DEBRID-debrid-get-torrent-info"
 	DebridGetTorrentsEndpoint                          = "DEBRID-debrid-get-torrents"
+	DebridRefreshStreamUrlEndpoint                     = "DEBRID-debrid-refresh-stream-url"
 	DebridStartStreamEndpoint                          = "DEBRID-debrid-start-stream"
 	DecompressIssueReportEndpoint                      = "REPORT-decompress-issue-report"
 	DeleteAnilistListEntryEndpoint                     = "ANILIST-delete-anilist-list-entry"
@@ -171,6 +172,7 @@ const (
 	MangaManualSearchEndpoint                          = "MANGA-manga-manual-search"
 	MediastreamLocalSubtitlesEndpoint                  = "MEDIASTREAM-mediastream-local-subtitles"
 	MediastreamShutdownTranscodeStreamEndpoint         = "MEDIASTREAM-mediastream-shutdown-transcode-stream"
+	MpvCoreInSightGetCharacterDetailsEndpoint          = "MPVCORE-mpv-core-in-sight-get-character-details"
 	NakamaCreateAndJoinRoomEndpoint                    = "NAKAMA-nakama-create-and-join-room"
 	NakamaCreateWatchPartyEndpoint                     = "NAKAMA-nakama-create-watch-party"
 	NakamaDisconnectFromRoomEndpoint                   = "NAKAMA-nakama-disconnect-from-room"
@@ -280,4 +282,5 @@ const (
 	UserMeEndpoint                                     = "USER-AUTH-user-me"
 	UserRegisterEndpoint                               = "USER-AUTH-user-register"
 	VideoCoreInSightGetCharacterDetailsEndpoint        = "VIDEOCORE-video-core-in-sight-get-character-details"
+	VideoCoreSaveScreenshotEndpoint                    = "VIDEOCORE-video-core-save-screenshot"
 )

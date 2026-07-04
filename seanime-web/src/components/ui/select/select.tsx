@@ -15,6 +15,7 @@ export const SelectAnatomy = defineStyleAnatomy({
     root: cva([
         "UI-Select__root",
         "inline-flex items-center justify-between relative whitespace-nowrap truncate",
+        "focus-visible:outline-none focus-visible:ring-1 ring-offset-1 ring-offset-[--background] focus-visible:ring-white/40",
     ]),
     chevronIcon: cva([
         "UI-Combobox__chevronIcon",
@@ -22,11 +23,11 @@ export const SelectAnatomy = defineStyleAnatomy({
     ]),
     scrollButton: cva([
         "UI-Select__scrollButton",
-        "flex items-center justify-center h-[25px] bg-[--paper] text-base cursor-default",
+        "flex items-center justify-center h-[25px] bg-gray-800 text-base cursor-default",
     ]),
     content: cva([
         "UI-Select__content",
-        "w-full overflow-hidden rounded-[--radius] shadow-md bg-[--paper] border leading-none z-[100]",
+        "w-full overflow-hidden rounded-[--radius] shadow-md bg-gray-800 border leading-none z-[100]",
     ]),
     viewport: cva([
         "UI-Select__viewport",
@@ -34,7 +35,7 @@ export const SelectAnatomy = defineStyleAnatomy({
     ]),
     item: cva([
         "UI-Select__item",
-        "text-base leading-none rounded-[--radius] flex items-center h-8 pr-2 pl-8 relative",
+        "text-base leading-none rounded-[--radius] flex items-center h-8 pr-2 pl-8 relative text-sm",
         "select-none disabled:opacity-50 disabled:pointer-events-none",
         "data-highlighted:outline-none data-highlighted:bg-[--subtle]",
         "data-[disabled=true]:opacity-50 data-[disabled=true]:pointer-events-none",

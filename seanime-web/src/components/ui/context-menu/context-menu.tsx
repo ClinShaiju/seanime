@@ -14,7 +14,7 @@ export const ContextMenuAnatomy = defineStyleAnatomy({
     ]),
     subContent: cva([
         "UI-ContextMenu__subContent",
-        "z-50 min-w-[12rem] overflow-hidden rounded-xl border bg-[--background] p-2 text-[--foreground] shadow-sm",
+        "z-50 min-w-[12rem] overflow-hidden rounded-xl border bg-[--paper-lighter] p-2 text-[--foreground] shadow-sm",
         "data-[state=open]:animate-in",
         "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         "data-[state=closed]:zoom-out-100 data-[state=open]:zoom-in-95",
@@ -29,7 +29,7 @@ export const ContextMenuAnatomy = defineStyleAnatomy({
     ]),
     root: cva([
         "UI-ContextMenu__root",
-        "z-50 min-w-[15rem] overflow-hidden rounded-xl border bg-[--background] p-2 text-[--foreground] shadow-sm",
+        "z-50 min-w-[15rem] overflow-hidden rounded-xl border bg-[--paper-lighter] p-1 text-[--foreground] shadow-sm",
         "data-[state=open]:animate-in",
         "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         "data-[state=closed]:zoom-out-100 data-[state=open]:zoom-in-95",
@@ -38,7 +38,7 @@ export const ContextMenuAnatomy = defineStyleAnatomy({
     ]),
     item: cva([
         "UI-ContextMenu__item",
-        "relative flex cursor-default select-none items-center rounded-[--radius] cursor-pointer px-2 py-2 text-sm outline-none transition-colors",
+        "relative flex cursor-default select-none items-center rounded-[--radius] cursor-pointer px-1.5 py-2 text-sm outline-none transition-colors",
         "focus:bg-[--subtle] data-[disabled]:pointer-events-none",
         "data-[disabled]:opacity-50",
         "[&>svg]:mr-2 [&>svg]:text-lg",

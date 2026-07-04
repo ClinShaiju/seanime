@@ -10,7 +10,7 @@ import (
 	"math"
 	"seanime/internal/events"
 	"seanime/internal/mkvparser"
-	"seanime/internal/nativeplayer"
+	"seanime/internal/player"
 	"seanime/internal/util"
 	httputil "seanime/internal/util/http"
 	"sort"
@@ -47,14 +47,14 @@ type subtitleFlushConfig struct {
 	minSendInterval     time.Duration
 }
 
-func subtitleFlushConfigFor(streamType nativeplayer.StreamType, offset int64) subtitleFlushConfig {
+func subtitleFlushConfigFor(streamType player.PlaybackType, offset int64) subtitleFlushConfig {
 	config := subtitleFlushConfig{
 		flushInterval:       100 * time.Millisecond,
 		maxBatchSize:        500,
 		sleepAfterFullBatch: 200 * time.Millisecond,
 	}
 
-	if streamType == nativeplayer.StreamTypeTorrent {
+	if streamType == player.PlaybackTypeTorrent {
 		config = subtitleFlushConfig{
 			flushInterval:       250 * time.Millisecond,
 			maxBatchSize:        25,
@@ -71,7 +71,7 @@ func subtitleFlushConfigFor(streamType nativeplayer.StreamType, offset int64) su
 		}
 	}
 
-	if streamType == nativeplayer.StreamTypeFile {
+	if streamType == player.PlaybackTypeLocalFile {
 		config = subtitleFlushConfig{
 			flushInterval:       300 * time.Millisecond,
 			maxBatchSize:        50,
@@ -132,6 +132,14 @@ func (s *BaseStream) sendSubtitleEvents(ctx context.Context, stream Stream, even
 		return true
 	}
 
+	s.manager.playbackMu.Lock()
+	target := s.manager.currentPlaybackTarget
+	s.manager.playbackMu.Unlock()
+	if target != PlaybackTargetVideoCore || s.manager.nativePlayer == nil {
+		// MpvCore lets libmpv demux and render embedded subtitles directly.
+		return true
+	}
+
 	if config.minSendInterval <= 0 {
 		s.manager.nativePlayer.SubtitleEvents(stream.ClientId(), events)
 		return true
@@ -139,11 +147,9 @@ func (s *BaseStream) sendSubtitleEvents(ctx context.Context, stream Stream, even
 
 	s.subtitleSendMu.Lock()
 	defer s.subtitleSendMu.Unlock()
-
 	if !s.waitForSubtitleSend(ctx, config.minSendInterval) {
 		return false
 	}
-
 	s.manager.nativePlayer.SubtitleEvents(stream.ClientId(), events)
 	s.subtitleLastSent = time.Now()
 	return true
@@ -170,7 +176,7 @@ func (s *BaseStream) waitForSubtitleSend(ctx context.Context, minSendInterval ti
 	}
 }
 
-func subtitleOffsetForTime(playbackInfo *nativeplayer.PlaybackInfo, currentTime float64, duration float64) int64 {
+func subtitleOffsetForTime(playbackInfo *player.PlaybackInfo, currentTime float64, duration float64) int64 {
 	if playbackInfo == nil || playbackInfo.ContentLength <= 0 || currentTime <= 0 {
 		return 0
 	}
@@ -201,7 +207,7 @@ func subtitleOffsetDistance(a int64, b int64) int64 {
 	return b - a
 }
 
-func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *nativeplayer.PlaybackInfo, currentTime float64, duration float64) {
+func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player.PlaybackInfo, currentTime float64, duration float64) {
 	if playbackInfo == nil {
 		return
 	}
@@ -497,7 +503,7 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 				if subtitle != nil {
 					onFirstEventSent()
 					setLastSubtitleEvent(subtitle)
-					if stream.Type() == nativeplayer.StreamTypeTorrent && !s.shouldSendSubtitleEvent(subtitle) {
+					if stream.Type() == player.PlaybackTypeTorrent && !s.shouldSendSubtitleEvent(subtitle) {
 						continue
 					}
 
@@ -652,5 +658,26 @@ func (s *BaseStream) OnSubtitleFileUploaded(filename string, content string) {
 	s.logger.Debug().
 		Msg("directstream: Sending subtitle file to the client")
 
-	s.manager.videoCore.AddSubtitleTrack(track)
+	s.manager.playbackMu.Lock()
+	target := s.manager.currentPlaybackTarget
+	s.manager.playbackMu.Unlock()
+	if target == PlaybackTargetVideoCore && s.manager.videoCore != nil {
+		s.manager.videoCore.AddSubtitleTrack(track)
+	} else {
+		session, ok := s.manager.mediacoreCoordinator.GetActiveSession()
+		if ok {
+			format := "ass"
+			cmd := player.Command{
+				Type: player.CommandAddSubtitleTrack,
+				Payload: &player.SubtitleTrack{
+					Index:    int(subtitleNum),
+					Content:  &newContent,
+					Label:    name,
+					Language: lang,
+					Format:   &format,
+				},
+			}
+			_ = s.manager.mediacoreCoordinator.Execute(session, cmd)
+		}
+	}
 }

@@ -47,14 +47,14 @@ export const DrawerAnatomy = defineStyleAnatomy({
     ]),
     content: cva([
         "UI-Drawer__content",
-        "fixed z-50 w-full gap-4 bg-[--background] p-6 shadow-lg overflow-y-auto",
+        "fixed z-50 w-full gap-4 bg-[--paper] p-6 shadow-lg overflow-y-auto",
         "transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-500 data-[state=open]:duration-500",
         "focus:outline-none focus-visible:outline-none",
         __isDesktop__ && "select-none",
     ], {
         variants: {
             side: {
-                mangaReader: "w-full inset-x-0 top-0 border data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+                mangaReader: "w-full inset-x-0 top-0 border data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom !bg-[#000]",
                 top: "w-full lg:w-[calc(100%_-_20px)] inset-x-0 top-0 border data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
                 bottom: "w-full lg:w-[calc(100%_-_20px)] inset-x-0 bottom-0 border data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
                 left: "inset-y-0 left-0 h-full lg:h-[calc(100%_-_20px)] border data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
@@ -235,7 +235,7 @@ export function Drawer(props: DrawerProps) {
                     className={cn(
                         DrawerAnatomy.content({ size, side: drawerSide }),
                         // __isDesktop__ && "pt-12",
-                        !mangaReader && "lg:m-[10px] rounded-[--radius]",
+                        !mangaReader && "lg:m-[10px] rounded-xl scroll-mt-2",
                         contentClass,
                     )}
                     style={{

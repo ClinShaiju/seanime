@@ -721,6 +721,17 @@
 //     })
 // }
 
+// export function useDebridRefreshStreamUrl() {
+//     return useServerMutation<string>({
+//         endpoint: API_ENDPOINTS.DEBRID.DebridRefreshStreamUrl.endpoint,
+//         method: API_ENDPOINTS.DEBRID.DebridRefreshStreamUrl.methods[0],
+//         mutationKey: [API_ENDPOINTS.DEBRID.DebridRefreshStreamUrl.key],
+//         onSuccess: async () => {
+// 
+//         },
+//     })
+// }
+
 // export function useDebridGetPrewarmStatus() {
 //     return useServerQuery<Array<DebridClient_PrewarmStatusItem>>({
 //         endpoint: API_ENDPOINTS.DEBRID.DebridGetPrewarmStatus.endpoint,
@@ -1941,6 +1952,19 @@
 // }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// mpvcore
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// export function useMpvCoreInSightGetCharacterDetails(malId: number) {
+//     return useServerQuery<MpvCore_InSightCharacterDetails>({
+//         endpoint: API_ENDPOINTS.MPVCORE.MpvCoreInSightGetCharacterDetails.endpoint.replace("{malId}", String(malId)),
+//         method: API_ENDPOINTS.MPVCORE.MpvCoreInSightGetCharacterDetails.methods[0],
+//         queryKey: [API_ENDPOINTS.MPVCORE.MpvCoreInSightGetCharacterDetails.key],
+//         enabled: true,
+//     })
+// }
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // nakama
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -3091,6 +3115,17 @@
 //         method: API_ENDPOINTS.VIDEOCORE.VideoCoreInSightGetCharacterDetails.methods[0],
 //         queryKey: [API_ENDPOINTS.VIDEOCORE.VideoCoreInSightGetCharacterDetails.key],
 //         enabled: true,
+//     })
+// }
+
+// export function useVideoCoreSaveScreenshot() {
+//     return useServerMutation<boolean, VideoCoreSaveScreenshot_Variables>({
+//         endpoint: API_ENDPOINTS.VIDEOCORE.VideoCoreSaveScreenshot.endpoint,
+//         method: API_ENDPOINTS.VIDEOCORE.VideoCoreSaveScreenshot.methods[0],
+//         mutationKey: [API_ENDPOINTS.VIDEOCORE.VideoCoreSaveScreenshot.key],
+//         onSuccess: async () => {
+// 
+//         },
 //     })
 // }
 

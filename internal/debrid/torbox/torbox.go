@@ -461,44 +461,65 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 		// ponytail: first poll is immediate (cached torrents report ready on poll #1), then back
 		// off 500ms→1s→2s→4s cap.
 		delay := time.Duration(0)
+		var errRetries int
+
+		checkTorrentReady := func() (string, bool, error) {
+			// Raw fetch (not GetTorrent) so we keep Files — priming fileIdCache below lets
+			// GetTorrentDownloadUrl skip its own /mylist re-fetch even on the first play.
+			rawTorrent, _err := t.getTorrent(opts.ID)
+			if _err != nil {
+				errRetries++
+				if errRetries >= 5 {
+					return "", false, fmt.Errorf("torbox: Failed to get torrent: %w", _err)
+				}
+				t.logger.Warn().Err(_err).Msg("torbox: Failed to get torrent status, retrying...")
+				return "", false, nil
+			}
+			errRetries = 0
+			torrent := toDebridTorrent(rawTorrent)
+
+			select {
+			case itemCh <- *torrent:
+			default:
+			}
+
+			if torrent.IsReady {
+				for _, f := range rawTorrent.Files {
+					if f.ShortName != "" {
+						t.fileIdCache.Store(opts.ID+"|"+f.ShortName, strconv.Itoa(f.ID))
+					}
+				}
+
+				// ponytail: no settle sleep — DownloadPresent=true means the file is available,
+				// so requestdl resolves immediately; the 429 backoff covers rate limits.
+				downloadUrl, dErr := t.GetTorrentDownloadUrl(debrid.DownloadTorrentOptions{
+					ID:     opts.ID,
+					FileId: opts.FileId, // Filename
+				})
+				if dErr != nil {
+					t.logger.Warn().Err(dErr).Msg("torbox: Failed to get download URL, retrying...")
+					return "", false, nil
+				}
+
+				return downloadUrl, true, nil
+			}
+
+			return "", false, nil
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
 				err = ctx.Err()
 				return
 			case <-time.After(delay):
-				// Raw fetch (not GetTorrent) so we keep Files — priming fileIdCache below lets
-				// GetTorrentDownloadUrl skip its own /mylist re-fetch even on the first play.
-				rawTorrent, _err := t.getTorrent(opts.ID)
-				if _err != nil {
-					t.logger.Error().Err(_err).Msg("torbox: Failed to get torrent")
-					err = fmt.Errorf("torbox: Failed to get torrent: %w", _err)
+				sUrl, ok, checkErr := checkTorrentReady()
+				if checkErr != nil {
+					err = checkErr
 					return
 				}
-				torrent := toDebridTorrent(rawTorrent)
-
-				itemCh <- *torrent
-
-				// Check if the torrent is ready
-				if torrent.IsReady {
-					for _, f := range rawTorrent.Files {
-						if f.ShortName != "" {
-							t.fileIdCache.Store(opts.ID+"|"+f.ShortName, strconv.Itoa(f.ID))
-						}
-					}
-
-					// ponytail: dropped the 1s settle sleep — DownloadPresent=true means the file is
-					// available, so requestdl resolves immediately; the 429 backoff covers rate limits.
-					downloadUrl, err := t.GetTorrentDownloadUrl(debrid.DownloadTorrentOptions{
-						ID:     opts.ID,
-						FileId: opts.FileId, // Filename
-					})
-					if err != nil {
-						t.logger.Error().Err(err).Msg("torbox: Failed to get download URL")
-						return
-					}
-
-					streamUrl = downloadUrl
+				if ok {
+					streamUrl = sUrl
 					return
 				}
 

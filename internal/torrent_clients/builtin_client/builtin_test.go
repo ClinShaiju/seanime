@@ -1,12 +1,16 @@
 package builtin_client
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"seanime/internal/database/db"
+	"seanime/internal/database/models"
 	"strings"
 	"testing"
 
+	"github.com/anacrolix/torrent/metainfo"
+	"github.com/anacrolix/torrent/storage"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
@@ -63,6 +67,78 @@ func TestClientPersistsTorrentState(t *testing.T) {
 	persisted, err := database.GetLocalTorrents()
 	require.NoError(t, err)
 	require.Empty(t, persisted)
+}
+
+func TestRemoveTorrentFallsBackToModelNameWhenRuntimeTorrentMissing(t *testing.T) {
+	logger := zerolog.Nop()
+	database, err := db.NewDatabase("", "seanime-test", &logger)
+	require.NoError(t, err)
+
+	destDir := t.TempDir()
+	rootName := "fallback-folder"
+	rootPath := filepath.Join(destDir, rootName)
+	require.NoError(t, os.MkdirAll(filepath.Join(rootPath, "nested"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(rootPath, "nested", "episode.mkv"), []byte("hello"), 0644))
+
+	hash := "0123456789abcdef0123456789abcdef01234567"
+	item := &models.LocalTorrent{
+		Hash:        hash,
+		Name:        rootName,
+		Destination: destDir,
+	}
+	require.NoError(t, database.UpsertLocalTorrent(item))
+
+	client := &Client{
+		logger:   &logger,
+		database: database,
+		torrents: map[string]*torrentEntry{
+			hash: {model: item},
+		},
+	}
+
+	require.NoError(t, client.RemoveTorrent(hash, true))
+	_, err = os.Stat(rootPath)
+	require.True(t, os.IsNotExist(err))
+
+	persisted, err := database.GetLocalTorrents()
+	require.NoError(t, err)
+	require.Empty(t, persisted)
+}
+
+func TestTorrentRootFromModelRejectsEscapingName(t *testing.T) {
+	destDir := t.TempDir()
+	_, err := torrentRootFromModel(destDir, "../outside")
+	require.Error(t, err)
+}
+
+func TestClassicStorageWritesHugeFileIncrementally(t *testing.T) {
+	dir := t.TempDir()
+	pc := storage.NewMapPieceCompletion()
+	store := newClassicFileStorage(dir, pc)
+	defer store.Close()
+
+	info := &metainfo.Info{
+		Name:        "huge-batch-file.mkv",
+		Length:      8 << 30,
+		PieceLength: 8 << 30,
+		Pieces:      make([]byte, metainfo.HashSize),
+	}
+	torrent, err := store.OpenTorrent(context.Background(), info, metainfo.Hash{})
+	require.NoError(t, err)
+
+	piece := torrent.Piece(info.Piece(0))
+	_, err = piece.WriteAt([]byte("test"), 0)
+	require.NoError(t, err)
+
+	path := filepath.Join(dir, "huge-batch-file.mkv")
+	stat, err := os.Stat(path)
+	require.NoError(t, err)
+	require.EqualValues(t, 4, stat.Size())
+
+	buf := make([]byte, 4)
+	_, err = piece.ReadAt(buf, 0)
+	require.NoError(t, err)
+	require.Equal(t, "test", string(buf))
 }
 
 func TestRemovePausedTorrent(t *testing.T) {

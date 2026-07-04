@@ -10,7 +10,6 @@ import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/components/ui/core/styling"
 import { Field } from "@/components/ui/form"
-import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { __isElectronDesktop__ } from "@/types/constants"
 import { useAtom } from "jotai/react"
@@ -83,7 +82,7 @@ export function ServerSettings(props: ServerSettingsProps) {
     })
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-8">
 
             {(!isApiWorking && !isFetchingApiStatus) && (
                 <Alert
@@ -96,11 +95,7 @@ export function ServerSettings(props: ServerSettingsProps) {
                 />
             )}
 
-            <SettingsCard>
-                {/*<p className="text-[--muted]">*/}
-                {/*    Only applies to desktop and integrated players.*/}
-                {/*</p>*/}
-
+            <SettingsCard title="Episodes">
                 <Field.Switch
                     side="right"
                     name="autoUpdateProgress"
@@ -109,7 +104,6 @@ export function ServerSettings(props: ServerSettingsProps) {
                     moreHelp="Only applies to desktop and integrated players."
                     icon={<TbProgressCheck className="" />}
                 />
-                {/*<Separator />*/}
                 <Field.Switch
                     side="right"
                     name="enableWatchContinuity"
@@ -130,47 +124,53 @@ export function ServerSettings(props: ServerSettingsProps) {
                         />
                     </div>
                 </AdminGate>
+            </SettingsCard>
 
-                <Separator />
+            <SettingsCard title="Anime">
+                {/*<p className="text-[--muted]">*/}
+                {/*    Only applies to desktop and integrated players.*/}
+                {/*</p>*/}
 
-                <div data-settings-hide-anime-spoilers>
-                    <Field.Switch
-                        side="right"
-                        label="Hide anime spoilers"
-                        help="Use spoiler-safe episode art and text across continue watching, entry episode lists, and missing episodes."
-                        name="hideAnimeSpoilers"
-                        icon={<LuEyeOff className="" />}
-                    />
-                </div>
-
-                {f.watch("hideAnimeSpoilers") && (
-                    <div className="space-y-1 pl-4 border-l border-[--border] ml-2">
+                <div className="space-y-3">
+                    <div data-settings-hide-anime-spoilers>
                         <Field.Switch
                             side="right"
-                            label="Hide thumbnails"
-                            name="hideAnimeSpoilerThumbnails"
-                        />
-
-                        <Field.Switch
-                            side="right"
-                            label="Hide titles"
-                            name="hideAnimeSpoilerTitles"
-                        />
-
-                        <Field.Switch
-                            side="right"
-                            label="Hide descriptions"
-                            name="hideAnimeSpoilerDescriptions"
-                        />
-
-                        <Field.Switch
-                            side="right"
-                            label="Skip next episode"
-                            help="Start hiding spoilers from the episode after the next one."
-                            name="hideAnimeSpoilerSkipNextEpisode"
+                            label="Hide anime spoilers"
+                            help="Use spoiler-safe episode art and text across continue watching, entry episode lists, and missing episodes."
+                            name="hideAnimeSpoilers"
+                            icon={<LuEyeOff className="" />}
                         />
                     </div>
-                )}
+
+                    {f.watch("hideAnimeSpoilers") && (
+                        <div className="space-y-1 pl-4 border-l border-[--border] ml-2">
+                            <Field.Switch
+                                side="right"
+                                label="Hide thumbnails"
+                                name="hideAnimeSpoilerThumbnails"
+                            />
+
+                            <Field.Switch
+                                side="right"
+                                label="Hide titles"
+                                name="hideAnimeSpoilerTitles"
+                            />
+
+                            <Field.Switch
+                                side="right"
+                                label="Hide descriptions"
+                                name="hideAnimeSpoilerDescriptions"
+                            />
+
+                            <Field.Switch
+                                side="right"
+                                label="Skip next episode"
+                                help="Start hiding spoilers from the episode after the next one."
+                                name="hideAnimeSpoilerSkipNextEpisode"
+                            />
+                        </div>
+                    )}
+                </div>
 
                 <Field.Switch
                     side="right"
@@ -181,23 +181,25 @@ export function ServerSettings(props: ServerSettingsProps) {
                 />
 
 
-                <Field.Switch
-                    side="right"
-                    name="enableAdultContent"
-                    label="Enable adult content"
-                    help="If disabled, adult content will be hidden from search results and your library."
-                    icon={<TbRating18Plus className="" />}
-                />
-                {f.watch("enableAdultContent") && <div className="space-y-1 pl-4 border-l border-[--border] ml-2">
+                <div className="space-y-3">
                     <Field.Switch
                         side="right"
-                        name="blurAdultContent"
-                        label="Blur adult content"
-                        fieldClass={cn(
-                            !f.watch("enableAdultContent") && "opacity-50",
-                        )}
+                        name="enableAdultContent"
+                        label="Enable adult content"
+                        help="If disabled, adult content will be hidden from search results and your library."
+                        icon={<TbRating18Plus className="" />}
                     />
-                </div>}
+                    {f.watch("enableAdultContent") && <div className="space-y-1 pl-4 border-l border-[--border] ml-2">
+                        <Field.Switch
+                            side="right"
+                            name="blurAdultContent"
+                            label="Blur adult content"
+                            fieldClass={cn(
+                                !f.watch("enableAdultContent") && "opacity-50",
+                            )}
+                        />
+                    </div>}
+                </div>
 
                 <Field.Switch
                     side="right"
@@ -207,21 +209,20 @@ export function ServerSettings(props: ServerSettingsProps) {
                     icon={<LuImageOff className="" />}
                 />
 
+            </SettingsCard>
+
+            <SettingsCard title="Extensions">
                 <AdminGate>
-                    <Separator />
-
-                    <div data-settings-enable-extension-secure-mode>
-                        <Field.Switch
-                            side="right"
-                            name="enableExtensionSecureMode"
-                            label="Enable Extension Secure Mode"
-                            help="If enabled, Seanime will prompt you for confirmation whenever an extension tries to perform a sensitive action, even if permissions have been granted."
-                            icon={<LuShield className="" />}
-                        />
-                    </div>
+                <div data-settings-enable-extension-secure-mode>
+                    <Field.Switch
+                        side="right"
+                        name="enableExtensionSecureMode"
+                        label="Enable Extension Secure Mode"
+                        help="If enabled, Seanime will prompt you for confirmation whenever an extension tries to perform a sensitive action, even if permissions have been granted."
+                        icon={<LuShield className="" />}
+                    />
+                </div>
                 </AdminGate>
-
-
             </SettingsCard>
 
             <SettingsCard
@@ -237,7 +238,6 @@ export function ServerSettings(props: ServerSettingsProps) {
                         icon={<LuUserPen className="" />}
                     />
                 </div>
-                <Separator />
                 <Button
                     size="sm"
                     intent="primary-subtle"
@@ -275,7 +275,100 @@ export function ServerSettings(props: ServerSettingsProps) {
 
             </SettingsCard>
 
-            <SettingsCard title="Keyboard shortcuts">
+            <AdminGate>
+            <SettingsCard title="Metadata Providers">
+                <div className="space-y-3">
+                    <Field.Switch
+                        side="right"
+                        name="disableCacheLayer"
+                        label="Disable AniList caching"
+                        help="If enabled, Seanime will stop caching AniList requests to disk."
+                        moreHelp="By default, all requests made to AniList are cached. This allows Seanime to keep being usable when AniList goes down. The cache directory is modifiable in the config file."
+                        icon={<LuDatabaseBackup className="" />}
+                    />
+                    {!f.watch("disableCacheLayer") && (
+                        <div className="space-y-1 pl-4 border-l border-[--border] ml-2">
+                            <Switch
+                                value={!isApiWorking}
+                                onValueChange={v => toggleCacheLayer()}
+                                disabled={isTogglingCacheLayer}
+                                label="Enable cache-only mode"
+                                moreHelp="Seanime will use cached data instead of making API requests."
+                            />
+                        </div>
+                    )}
+                </div>
+                <Field.Switch
+                    side="right"
+                    name="useFallbackMetadataProvider"
+                    label="Use fallback episode metadata"
+                    help="If enabled, Seanime will use an alternative source to fetch episode metadata."
+                    icon={<LuImages className="" />}
+                />
+            </SettingsCard>
+
+            <SettingsCard title="Updates">
+
+                {/*<Field.Switch*/}
+                {/*    side="right"*/}
+                {/*    name="disableAutoDownloaderNotifications"*/}
+                {/*    label="Disable Auto Downloader system notifications"*/}
+                {/*/>*/}
+                {/*<Field.Switch*/}
+                {/*    side="right"*/}
+                {/*    name="disableAutoScannerNotifications"*/}
+                {/*    label="Disable Auto Scanner system notifications"*/}
+                {/*/>*/}
+                <Field.Switch
+                    side="right"
+                    name="disableUpdateCheck"
+                    label={__isElectronDesktop__ ? "Do not fetch updates" : "Do not check for updates"}
+                    help={__isElectronDesktop__ ? (<span className="flex gap-2 items-center">
+                        <LuCircleAlert className="size-4 text-[--blue]" />
+                        <span>If enabled, new releases won't be displayed. Seanime Denshi may still auto-update in the background.</span>
+                    </span>) : "If enabled, Seanime will not check for new releases."}
+                    moreHelp={__isElectronDesktop__ ? "You cannot disable auto-updates for Seanime Denshi." : undefined}
+                    icon={<TbDownloadOff className="" />}
+                />
+                <Field.Select
+                    label="Update Channel"
+                    name="updateChannel"
+                    help={__isElectronDesktop__ ? "Also applies to Seanime Denshi auto-updates." : ""}
+                    options={[
+                        { label: "GitHub (Default)", value: "github" },
+                        { label: "Seanime", value: "seanime" },
+                        { label: "Seanime (Canary)", value: "seanime_nightly" },
+                    ]}
+                />
+                {serverStatus?.settings?.library?.updateChannel === "seanime" && (
+                    <Alert intent="info" description="You are currently using a release channel hosted on Seanime." />
+                )}
+                {serverStatus?.settings?.library?.updateChannel === "seanime_nightly" && (
+                    <Alert
+                        intent="warning"
+                        description="You are currently using the canary release channel hosted on Seanime. This channel may receive unstable updates without much testing."
+                    />
+                )}
+            </SettingsCard>
+
+            <SettingsCard title="Server">
+                <Field.Switch
+                    side="right"
+                    name="openWebURLOnStart"
+                    label="Open web UI on startup"
+                    icon={<TbBrowserShare className="" />}
+                />
+                <Field.Switch
+                    side="right"
+                    name="disableNotifications"
+                    label="Disable system notifications"
+                    moreHelp="Notifications shown by the OS"
+                    icon={<TbAlertSquareRoundedOff className="" />}
+                />
+            </SettingsCard>
+            </AdminGate>
+
+            <SettingsCard title="Keyboard Shortcuts">
                 <div className="space-y-4">
                     {[
                         {
@@ -362,95 +455,6 @@ export function ServerSettings(props: ServerSettingsProps) {
                     })}
                 </div>
             </SettingsCard>
-
-            <AdminGate>
-            <SettingsCard title="App">
-                {/*<Separator />*/}
-                <Field.Switch
-                    side="right"
-                    name="disableCacheLayer"
-                    label="Disable AniList caching"
-                    help="If enabled, Seanime will stop caching AniList requests to disk."
-                    moreHelp="By default, all requests made to AniList are cached. This allows Seanime to keep being usable when AniList goes down. The cache directory is modifiable in the config file."
-                    icon={<LuDatabaseBackup className="" />}
-                />
-                {!f.watch("disableCacheLayer") && (
-                    <div className="space-y-1 pl-4 border-l border-[--border] ml-2">
-                        <Switch
-                            value={!isApiWorking}
-                            onValueChange={v => toggleCacheLayer()}
-                            disabled={isTogglingCacheLayer}
-                            label="Enable cache-only mode"
-                            moreHelp="Seanime will use cached data instead of making API requests."
-                        />
-                    </div>
-                )}
-                <Field.Switch
-                    side="right"
-                    name="useFallbackMetadataProvider"
-                    label="Use fallback metadata provider"
-                    help="If enabled, Seanime will use an alternative source to fetch episode metadata."
-                    icon={<LuImages className="" />}
-                />
-                {/*<Separator />*/}
-                {/*<Field.Switch*/}
-                {/*    side="right"*/}
-                {/*    name="disableAutoDownloaderNotifications"*/}
-                {/*    label="Disable Auto Downloader system notifications"*/}
-                {/*/>*/}
-                {/*/!*<Separator />*!/*/}
-                {/*<Field.Switch*/}
-                {/*    side="right"*/}
-                {/*    name="disableAutoScannerNotifications"*/}
-                {/*    label="Disable Auto Scanner system notifications"*/}
-                {/*/>*/}
-                <Separator />
-                <Field.Switch
-                    side="right"
-                    name="disableUpdateCheck"
-                    label={__isElectronDesktop__ ? "Do not fetch updates" : "Do not check for updates"}
-                    help={__isElectronDesktop__ ? (<span className="flex gap-2 items-center">
-                        <LuCircleAlert className="size-4 text-[--blue]" />
-                        <span>If enabled, new releases won't be displayed. Seanime Denshi may still auto-update in the background.</span>
-                    </span>) : "If enabled, Seanime will not check for new releases."}
-                    moreHelp={__isElectronDesktop__ ? "You cannot disable auto-updates for Seanime Denshi." : undefined}
-                    icon={<TbDownloadOff className="" />}
-                />
-                <Field.Select
-                    label="Update Channel"
-                    name="updateChannel"
-                    help={__isElectronDesktop__ ? "Also applies to Seanime Denshi auto-updates." : ""}
-                    options={[
-                        { label: "GitHub (Default)", value: "github" },
-                        { label: "Seanime", value: "seanime" },
-                        { label: "Seanime (Canary)", value: "seanime_nightly" },
-                    ]}
-                />
-                {serverStatus?.settings?.library?.updateChannel === "seanime" && (
-                    <Alert intent="info" description="You are currently using a release channel hosted on Seanime." />
-                )}
-                {serverStatus?.settings?.library?.updateChannel === "seanime_nightly" && (
-                    <Alert
-                        intent="warning"
-                        description="You are currently using the canary release channel hosted on Seanime. This channel may receive unstable updates without much testing."
-                    />
-                )}
-                <Separator />
-                <Field.Switch
-                    side="right"
-                    name="openWebURLOnStart"
-                    label="Open web UI on startup"
-                    icon={<TbBrowserShare className="" />}
-                />
-                <Field.Switch
-                    side="right"
-                    name="disableNotifications"
-                    label="Disable system notifications"
-                    moreHelp="Notifications shown by the OS"
-                    icon={<TbAlertSquareRoundedOff className="" />}
-                />
-            </SettingsCard>
-            </AdminGate>
 
             {/*<Accordion*/}
             {/*    type="single"*/}

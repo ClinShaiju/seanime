@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"seanime/internal/library/anime"
 	"seanime/internal/mkvparser"
-	"seanime/internal/nativeplayer"
+	"seanime/internal/player"
 	httputil "seanime/internal/util/http"
 	"strconv"
 	"strings"
@@ -265,11 +265,11 @@ func (s *httpBaseStream) Terminate() {
 	s.BaseStream.Terminate()
 }
 
-// loadPlaybackInfo is called by concrete types, passing their own StreamType.
-func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (ret *nativeplayer.PlaybackInfo, err error) {
+// loadPlaybackInfo is called by concrete types, passing their own PlaybackType.
+func (s *httpBaseStream) loadPlaybackInfo(streamType player.PlaybackType) (ret *player.PlaybackInfo, err error) {
 	s.playbackInfoOnce.Do(func() {
 		if s.streamUrl == "" {
-			ret = &nativeplayer.PlaybackInfo{}
+			ret = &player.PlaybackInfo{}
 			err = fmt.Errorf("stream url is not set")
 			s.playbackInfoErr = err
 			return
@@ -288,17 +288,18 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 
 		// Direct CDN mode: the player pulls straight from the debrid CDN (no {{SERVER_URL}}
 		// template, no HMAC — the CDN URL carries its own token). Proxy URL otherwise.
-		playerUrl := "{{SERVER_URL}}/api/v1/directstream/stream?id=" + id + s.manager.GetHMACTokenQueryParam("/api/v1/directstream/stream", "&")
+		streamURL := "{{SERVER_URL}}/api/v1/directstream/stream?id=" + id + s.manager.GetHMACTokenQueryParam("/api/v1/directstream/stream", "&")
 		if s.directMode() {
-			playerUrl = s.clientStreamUrl
+			streamURL = s.clientStreamUrl
 		}
 
-		playbackInfo := nativeplayer.PlaybackInfo{
+		playbackInfo := player.PlaybackInfo{
 			ID:                id,
-			StreamType:        streamType,
+			PlaybackType:      streamType,
+			PlaybackURI:       streamURL,
 			StreamPath:        s.filepath,
 			MimeType:          contentType,
-			StreamUrl:         playerUrl,
+			StreamURL:         streamURL,
 			ContentLength:     s.contentLength, // loaded by LoadContentType
 			MkvMetadata:       nil,
 			MkvMetadataParser: mo.None[*mkvparser.MetadataParser](),
@@ -307,8 +308,10 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType nativeplayer.StreamType) (r
 			EntryListData:     entryListData,
 		}
 
-		// If the content type is an EBML content type, we can create a metadata parser
-		if isEbmlContent(s.LoadContentType()) || s.LoadContentType() == "application/octet-stream" || s.LoadContentType() == "application/force-download" {
+		// VideoCore needs server-side MKV metadata and subtitle extraction.
+		// MpvCore only needs the byte proxy; libmpv probes and demuxes the stream.
+		if s.shouldProcessMediaOnServer() &&
+			(isEbmlContent(s.LoadContentType()) || s.LoadContentType() == "application/octet-stream" || s.LoadContentType() == "application/force-download") {
 			// Reuse a prewarmed parser for this URL if one exists — its GetMetadata is sync.Once
 			// cached, so this skips the ~2-3s parse (font download) entirely. Subtitle/attachment
 			// serving creates its own readers, so the parser's closed original reader is irrelevant.

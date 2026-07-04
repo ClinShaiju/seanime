@@ -7,8 +7,8 @@ import (
 	"seanime/internal/events"
 	"seanime/internal/library/playbackmanager"
 	"seanime/internal/mediaplayers/mediaplayer"
+	"seanime/internal/player"
 	"seanime/internal/util"
-	"seanime/internal/videocore"
 	"strings"
 	"time"
 
@@ -215,7 +215,7 @@ type hostPlaybackHandleStatusOptions struct {
 	episodeNumber      int
 	aniDbEpisode       string
 	localFilePath      string
-	onlinestreamParams *videocore.OnlinestreamParams
+	onlinestreamParams *player.OnlinestreamParams
 	paused             bool
 	currentTime        float64
 	duration           float64
@@ -305,7 +305,7 @@ func (wpm *WatchPartyManager) hostPlaybackHandleStatus(opts hostPlaybackHandleSt
 func (wpm *WatchPartyManager) listenToPlaybackAsHost() {
 	id := "nakama:watch-party:host"
 	playbackSubscriber := wpm.manager.playbackManager.SubscribeToPlaybackStatus(id)
-	videoCoreSubscriber := wpm.manager.videoCore.Subscribe(id)
+	mediacoreSubscriber := wpm.manager.mediacoreCoordinator.Subscribe(id)
 
 	go func() {
 		defer util.HandlePanicInModuleThen("nakama/listenToPlaybackAsHost", func() {})
@@ -320,6 +320,9 @@ func (wpm *WatchPartyManager) listenToPlaybackAsHost() {
 				wpm.logger.Debug().Msg("nakama: Stopping playback manager listener")
 				return
 			case event := <-playbackSubscriber.EventCh:
+				if !wpm.manager.genericPlayer.isPlaybackManager() {
+					continue
+				}
 				_, ok := wpm.currentSession.Get()
 				if !ok {
 					continue
@@ -367,38 +370,45 @@ func (wpm *WatchPartyManager) listenToPlaybackAsHost() {
 	go func() {
 		defer util.HandlePanicInModuleThen("nakama/listenToPlaybackAsHost", func() {})
 		defer func() {
-			wpm.logger.Debug().Msg("nakama: Stopping video core listener")
-			go wpm.manager.videoCore.Unsubscribe(id)
+			wpm.logger.Debug().Msg("nakama: Stopping mediacore listener")
+			go wpm.manager.mediacoreCoordinator.Unsubscribe(id)
 		}()
 
 		for {
 			select {
 			case <-wpm.sessionCtx.Done():
-				wpm.logger.Debug().Msg("nakama: Stopping video core listener")
+				wpm.logger.Debug().Msg("nakama: Stopping mediacore listener")
 				return
-			case e := <-videoCoreSubscriber.Events():
+			case e := <-mediacoreSubscriber.Events():
+				target := e.GetSessionKey().Target
+				if target == player.TargetVideoCore && !wpm.manager.genericPlayer.isVideoCore() {
+					continue
+				}
+				if target == player.TargetMpvCore && !wpm.manager.genericPlayer.isMpvCore() {
+					continue
+				}
+
 				switch event := e.(type) {
-				case *videocore.VideoTerminatedEvent:
+				case *player.TerminatedEvent:
 					wpm.hostPlaybackStopped()
-				case *videocore.VideoStatusEvent:
-					state, ok := wpm.manager.videoCore.GetPlaybackState()
-					if !ok {
+				case *player.StatusEvent:
+					state, ok := wpm.manager.mediacoreCoordinator.GetActivePlaybackState()
+					if !ok || state.PlaybackInfo == nil || state.PlaybackInfo.Media == nil || state.PlaybackInfo.Episode == nil {
 						continue
 					}
 
 					streamType := WatchPartyStreamTypeFile
-					localFilePath := ""
-					if event.PlaybackType == videocore.PlaybackTypeLocalFile {
-						if state.PlaybackInfo.LocalFile == nil {
-							wpm.logger.Error().Msgf("nakama: Local file playback status received, but no local file found: %+v", state)
-							continue
+					localFilePath := state.PlaybackInfo.StreamPath
+					switch state.PlaybackInfo.PlaybackType {
+					case player.PlaybackTypeLocalFile:
+						if state.PlaybackInfo.LocalFile != nil {
+							localFilePath = state.PlaybackInfo.LocalFile.Path
 						}
-						localFilePath = state.PlaybackInfo.LocalFile.Path
-					} else if event.PlaybackType == videocore.PlaybackTypeTorrent {
+					case player.PlaybackTypeTorrent:
 						streamType = WatchPartyStreamTypeTorrent
-					} else if event.PlaybackType == videocore.PlaybackTypeDebrid {
+					case player.PlaybackTypeDebrid:
 						streamType = WatchPartyStreamTypeDebrid
-					} else if event.PlaybackType == videocore.PlaybackTypeOnlinestream {
+					case player.PlaybackTypeOnlinestream:
 						streamType = WatchPartyStreamTypeOnlinestream
 					}
 

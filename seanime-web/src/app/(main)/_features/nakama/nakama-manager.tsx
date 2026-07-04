@@ -1,3 +1,4 @@
+import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import {
     Nakama_NakamaStatus,
     Nakama_WatchRoom,
@@ -39,6 +40,7 @@ import { useRoomStreamJoin, useWatchRoomPlayerSync } from "./nakama-room-sync"
 import { WSEvents } from "@/lib/server/ws-events"
 import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { __isElectronDesktop__ } from "@/types/constants"
+import { useQueryClient } from "@tanstack/react-query"
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
 import React from "react"
 import { BiCog } from "react-icons/bi"
@@ -109,6 +111,7 @@ export function NakamaManager() {
     const roomStreamJoin = useRoomStreamJoin()
 
     const { sendMessage } = useWebsocketSender()
+    const queryClient = useQueryClient()
     const [isModalOpen, setIsModalOpen] = useAtom(nakamaModalOpenAtom)
     const [nakamaStatus, setNakamaStatus] = useAtom(nakamaStatusAtom)
     const clientId = useAtomValue(clientIdAtom)
@@ -152,6 +155,25 @@ export function NakamaManager() {
         type: WSEvents.NAKAMA_STATUS,
         onMessage: (data: Nakama_NakamaStatus | null) => {
             setNakamaStatus(data ?? null)
+        },
+    })
+
+    function refetchNakamaLibrary() {
+        refetchStatus()
+        queryClient.invalidateQueries({ queryKey: [API_ENDPOINTS.ANIME_COLLECTION.GetLibraryCollection.key] })
+    }
+
+    useWebsocketMessageListener({
+        type: WSEvents.NAKAMA_HOST_CONNECTED,
+        onMessage: () => {
+            refetchNakamaLibrary()
+        },
+    })
+
+    useWebsocketMessageListener({
+        type: WSEvents.NAKAMA_HOST_DISCONNECTED,
+        onMessage: () => {
+            refetchNakamaLibrary()
         },
     })
 
@@ -298,7 +320,7 @@ export function NakamaManager() {
         onConfirm: () => {
             handleCreateRoom()
         },
-        actionIntent: "white-glass",
+        actionIntent: "white-subtle",
     })
 
     return <>
@@ -488,7 +510,7 @@ export function NakamaManager() {
                                                     onClick={confirmRoom.open}
                                                     disabled={isCreatingRoom}
                                                     size="sm"
-                                                    intent="white-glass"
+                                                    intent="white-subtle"
                                                     leftIcon={<TbCloudPlus className="text-2xl" />}
                                                 >
                                                     {isCreatingRoom ? "Creating..." : "Create a Cloud Room"}

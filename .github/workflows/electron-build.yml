@@ -26,20 +26,26 @@ jobs:
             id: 'seanime-denshi-darwin-arm64'
             go_binary_id: 'seanime-server-darwin' # Artifact: go-seanime-server-darwin (contains both arm64 and x86_64)
             electron_args: '--mac --arm64'
+            mpv_prism_target: 'darwin-arm64'
           # For Linux
           - os: 'ubuntu-latest'
             id: 'seanime-denshi-linux-x64'
             go_binary_id: 'seanime-server-linux' # Artifact: go-seanime-server-linux (contains x86_64)
             electron_args: '--linux --x64'
+            mpv_prism_target: 'linux-x64'
           # For Windows
           - os: 'windows-latest'
             id: 'seanime-denshi-windows-x64'
             go_binary_id: 'seanime-server-windows' # Artifact: go-seanime-server-windows (contains x86_64)
             electron_args: '--win --x64'
+            mpv_prism_target: 'win32-x64'
             # Custom (codec-patched) Electron runtime. Asset lives on the
             # `electron-runtime` release tag of this repo. Leave blank on a
             # platform to use the stock Electron download instead.
-            custom_electron_asset: 'electron-dist-windows-x64.zip'
+            # DISABLED post-v3.9 merge: our patched dist is Electron 39.2.7 but
+            # upstream (and mpv-prism's native module ABI) is now 42.4.0.
+            # Rebuild the patched runtime against 42.4.0 before re-enabling.
+            custom_electron_asset: ''
 
     runs-on: ${{ matrix.os }}
     outputs:
@@ -164,13 +170,14 @@ jobs:
       - name: Install and build 📦️
         run: |
           cd seanime-denshi
-          npm install
+          npm ci
+          npm run sync:mpv-prism -- ${{ matrix.mpv_prism_target }}
           DIST_ARG=""
           if [ -n "${{ steps.custom-electron.outputs.dir }}" ]; then
             DIST_ARG="-c.electronDist=${{ steps.custom-electron.outputs.dir }}"
             echo "Using custom Electron dist: $DIST_ARG"
           fi
-          npm run build -- ${{ matrix.electron_args }} $DIST_ARG
+          npx electron-builder build ${{ matrix.electron_args }} $DIST_ARG
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

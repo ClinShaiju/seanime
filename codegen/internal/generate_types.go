@@ -18,6 +18,8 @@ const (
 
 // Structs that are not directly referenced by the API routes but are needed for the Typescript file.
 var additionalStructNames = []string{
+	"autoselect.StreamAutoSelectStatusPayload",
+	"autoselect.AutoSelectCandidate",
 	"torrentstream.TorrentLoadingStatus",
 	"torrentstream.TorrentStatus",
 	"debrid_client.StreamState",
@@ -32,6 +34,16 @@ var additionalStructNames = []string{
 	"videocore.ClientEventType",
 	"videocore.ServerEvent",
 	"videocore.PlaybackState",
+	"mpvcore.ClientEventType",
+	"mpvcore.ServerEvent",
+	"player.PlaybackInfo",
+	"player.PlaybackState",
+	"player.PlaybackStatus",
+	"player.PlaylistState",
+	"player.SubtitleTrack",
+	"player.SkipData",
+	"mpvcore.InSightData",
+	"player.OnlinestreamParams",
 	"plugin_ui.WebviewSlot",
 	"plugin_ui.WebviewOptions",
 	"videocore.InSightData",

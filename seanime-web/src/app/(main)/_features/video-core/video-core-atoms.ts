@@ -65,3 +65,6 @@ export const vc_globalVideoElement = atom<HTMLVideoElement | null>(null)
 export const vc_globalLastProgress = atom<{ mediaId: number, progressNumber: number, time: number } | null>(null)
 export const vc_skipOpeningTime = atom<number | null>(null)
 export const vc_skipEndingTime = atom<number | null>(null)
+
+export const vc_globalMiniPlayerAtom = atom(false)
+

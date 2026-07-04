@@ -45,6 +45,9 @@ func (s *ScopedWSEventManager) SubscribeToClientNativePlayerEvents(id string) *C
 func (s *ScopedWSEventManager) SubscribeToClientVideoCoreEvents(id string) *ClientEventSubscriber {
 	return s.inner.SubscribeToClientVideoCoreEvents(id)
 }
+func (s *ScopedWSEventManager) SubscribeToClientMpvCoreEvents(id string) *ClientEventSubscriber {
+	return s.inner.SubscribeToClientMpvCoreEvents(id)
+}
 func (s *ScopedWSEventManager) SubscribeToClientNakamaEvents(id string) *ClientEventSubscriber {
 	return s.inner.SubscribeToClientNakamaEvents(id)
 }
