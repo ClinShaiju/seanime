@@ -17,6 +17,8 @@ type (
 		nativePlayerSubscribers *result.Map[string, *ClientEventSubscriber]
 		mu                      sync.Mutex
 		sentEvents              []MockWSEvent
+		// ClientPlatforms, when set, backs GetClientPlatform (e.g. "denshi").
+		ClientPlatforms map[string]string
 	}
 
 	MockWSEvent struct {
@@ -76,6 +78,9 @@ func (m *MockWSEventManager) GetClientIds() []string {
 }
 
 func (m *MockWSEventManager) GetClientPlatform(clientId string) string {
+	if m.ClientPlatforms != nil {
+		return m.ClientPlatforms[clientId]
+	}
 	return ""
 }
 

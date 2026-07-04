@@ -123,7 +123,14 @@ func TestDirectStreamPlaybackTargetsRemainIndependent(t *testing.T) {
 	require.Equal(t, string(events.NativePlayerEventType), ws.Events()[len(ws.Events())-1].Type)
 	require.True(t, manager.CloseOpen("client"))
 
+	// MpvCore target only reaches clients that can host mpv-prism (Denshi); a plain
+	// web tab is downgraded to VideoCore.
 	manager.SetPlaybackTarget(PlaybackTargetMpvCore)
+	require.True(t, manager.BeginOpen("client", "mpv-core", nil))
+	require.Equal(t, string(events.NativePlayerEventType), ws.Events()[len(ws.Events())-1].Type)
+	require.True(t, manager.CloseOpen("client"))
+
+	ws.ClientPlatforms = map[string]string{"client": "denshi"}
 	require.True(t, manager.BeginOpen("client", "mpv-core", nil))
 	require.Equal(t, string(events.MpvCoreEventType), ws.Events()[len(ws.Events())-1].Type)
 }

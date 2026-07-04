@@ -406,6 +406,11 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		}
 	}
 
+	// Per-phase timings — the debrid path's equivalent of torrentstream's logDiagnostics.
+	// Summarized in one Info line when the stream is ready.
+	streamStartedAt := time.Now()
+	var mediaInfoDur, selectionDur, addTorrentDur time.Duration
+
 	s.setPreviousStreamOptions(opts)                 // this user's last stream (for cancel)
 	s.repository.setPreviousStreamOptions(opts)      // last-active (host/plugin accessors)
 
@@ -441,7 +446,9 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 	//
 	// Get the media info
 	//
+	mediaInfoStart := time.Now()
 	media, _, err := s.getMediaInfo(ctx, opts.MediaId)
+	mediaInfoDur = time.Since(mediaInfoStart)
 	if err != nil {
 		s.ev(opts).SendEvent(events.HideIndefiniteLoader, "debridstream")
 		return err
@@ -469,7 +476,9 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			Message:     "Selecting best torrent...",
 		})
 
+		selectionStart := time.Now()
 		pt, err := s.repository.findBestTorrent(ctx, provider, media, opts.EpisodeNumber, opts.UserID)
+		selectionDur = time.Since(selectionStart)
 		if err != nil {
 			if opts.PlaybackType == PlaybackTypeNativePlayer {
 				s.ds(opts).AbortOpen(opts.ClientId, err)
@@ -514,7 +523,9 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			if opts.FileIndex != nil {
 				chosenFileIndex = opts.FileIndex
 			}
+			selectionStart := time.Now()
 			pt, err := s.repository.findBestTorrentFromManualSelection(provider, selectedTorrent, media, opts.EpisodeNumber, chosenFileIndex)
+			selectionDur = time.Since(selectionStart)
 			if err != nil {
 				if opts.PlaybackType == PlaybackTypeNativePlayer {
 					s.ds(opts).AbortOpen(opts.ClientId, err)
@@ -562,11 +573,13 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			})
 
 			// Add the torrent to the debrid service
+			addTorrentStart := time.Now()
 			torrentItemId, err = provider.AddTorrent(debrid.AddTorrentOptions{
 				MagnetLink:   selectedTorrent.MagnetLink,
 				InfoHash:     selectedTorrent.InfoHash,
 				SelectFileId: fileId, // RD-only, download only the selected file
 			})
+			addTorrentDur = time.Since(addTorrentStart)
 			if err != nil {
 				s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
 					Status:      StreamStatusFailed,
@@ -609,6 +622,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 		s.repository.logger.Debug().Msg("debridstream: Listening to torrent status")
 
+		var urlResolveDur, fileCheckDur time.Duration
 		var streamUrl string
 		if directStreamUrl != "" {
 			// Pre-resolved direct stream — no download to await.
@@ -640,10 +654,12 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 			// Await the stream URL
 			// For Torbox, this will wait until the entire torrent is downloaded
+			urlResolveStart := time.Now()
 			url, err := provider.GetTorrentStreamUrl(ctx, debrid.StreamTorrentOptions{
 				ID:     torrentItemId,
 				FileId: fileId,
 			}, itemCh)
+			urlResolveDur = time.Since(urlResolveStart)
 
 			go func() {
 				close(itemCh)
@@ -685,6 +701,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 
 		// Default prevented, we check if we can stream the file
 		if skipCheckEvent.DefaultPrevented {
+			fileCheckStart := time.Now()
 			s.repository.logger.Debug().Msg("debridstream: Stream URL received, checking stream file")
 			s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
 				Status:      StreamStatusDownloading,
@@ -726,9 +743,17 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 					break streamUrlCheckLoop
 				}
 			}
+			fileCheckDur = time.Since(fileCheckStart)
 		}
 
-		s.repository.logger.Debug().Msg("debridstream: Stream is ready")
+		s.repository.logger.Info().
+			Dur("mediaInfo", mediaInfoDur).
+			Dur("selection", selectionDur).
+			Dur("addTorrent", addTorrentDur).
+			Dur("urlResolve", urlResolveDur).
+			Dur("fileCheck", fileCheckDur).
+			Dur("total", time.Since(streamStartedAt)).
+			Msg("debridstream: Stream is ready")
 
 		// Signal to the client that the torrent is ready to stream
 		s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
@@ -1434,6 +1459,9 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		// Direct-URL entry (no torrent item to re-resolve from): the only thing we can do with a
 		// stale link is check it's alive. Dead → drop the entry and fail distinctly so the user's
 		// retry runs a cold resolve instead of handing the player a dead URL.
+		if opts.PlaybackType == PlaybackTypeNativePlayer {
+			s.ds(opts).UpdateOpenStep(opts.ClientId, "Checking stream link...")
+		}
 		if !probeStreamURL(ctx, streamUrl, prewarmProbeTimeoutPlay) {
 			s.preloadMu.Lock()
 			delete(s.preloads, preloadKey(opts))
@@ -1450,6 +1478,11 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		}
 	}
 	if cached.torrentItemId != "" && time.Since(cached.urlResolvedAt) > urlRefreshTTL {
+		// This is the preload path's slow phase (provider status polls can retry for
+		// seconds on API hiccups) — tell the player instead of sitting on one message.
+		if opts.PlaybackType == PlaybackTypeNativePlayer {
+			s.ds(opts).UpdateOpenStep(opts.ClientId, "Refreshing stream link...")
+		}
 		if provider, perr := s.repository.GetProvider(); perr == nil {
 			itemCh := make(chan debrid.TorrentItem, 1)
 			go func() {
@@ -1506,6 +1539,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		if !s.ds(opts).IsOpenActive(opts.ClientId) {
 			return nil
 		}
+		s.ds(opts).UpdateOpenStep(opts.ClientId, "Preparing video...")
 		clientStreamUrl := ""
 		if s.directCdnEligible(opts) {
 			clientStreamUrl = s.resolveClientCdnUrl(cached.torrentItemId, cached.fileId, streamUrl)

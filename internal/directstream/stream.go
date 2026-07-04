@@ -85,7 +85,18 @@ func (m *Manager) getStreamHandler() http.Handler {
 }
 
 func (m *Manager) BeginOpen(clientId string, step string, onCancel func()) bool {
-	return m.BeginOpenWithTarget(clientId, step, onCancel, m.GetPlaybackTarget())
+	return m.BeginOpenWithTarget(clientId, step, onCancel, m.targetForClient(clientId))
+}
+
+// targetForClient downgrades the session-default MpvCore target for clients that can't
+// host mpv-prism: only Denshi (ws platform "denshi") has it; a plain web tab signaled via
+// MpvCore would mount a player with no prism bridge and never start.
+func (m *Manager) targetForClient(clientId string) PlaybackTarget {
+	target := m.GetPlaybackTarget()
+	if target == PlaybackTargetMpvCore && m.wsEventManager.GetClientPlatform(clientId) != "denshi" {
+		return PlaybackTargetVideoCore
+	}
+	return target
 }
 
 func (m *Manager) BeginOpenWithTarget(clientId string, step string, onCancel func(), target PlaybackTarget) bool {
