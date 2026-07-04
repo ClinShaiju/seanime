@@ -19,11 +19,11 @@ import {
     MediaCoreBufferingOverlay,
     MediaCoreErrorOverlay,
     MediaCoreFeedbackOverlay,
-    MediaCoreLoadingOverlay,
 } from "@/app/(main)/_features/media-core/media-core-overlays"
 import { MediaCoreTopSectionView } from "@/app/(main)/_features/media-core/media-core-playback-info"
 import { mediaCorePreferencesAtom } from "@/app/(main)/_features/media-core/media-core-preferences"
 import { startVideoCoreMiniPlayerTransition } from "@/app/(main)/_features/video-core/video-core"
+import { VideoCoreLoadingScreen } from "@/app/(main)/_features/video-core/video-core-loading-screen"
 import { useVideoCoreInSight, vc_inSight_open, VideoCoreInSight } from "@/app/(main)/_features/video-core/video-core-in-sight"
 
 import { useVideoCorePlaylist, useVideoCorePlaylistSetup } from "@/app/(main)/_features/video-core/video-core-playlist"
@@ -1882,23 +1882,25 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                                 </MediaCoreControlBarView>
                             </>
                         ) : (
-                            <MediaCoreLoadingOverlay
-                                loadingState={state.loadingState}
-                                isMiniPlayer={state.miniPlayer}
-                                inline={false}
-                                fullscreen={isFullscreen}
-                                terminateButton={
-                                    <MpvCoreFloatingButtons
-                                        part="loading"
-                                        fullscreen={isFullscreen}
-                                        miniPlayer={state.miniPlayer}
-                                        onEnterMiniPlayer={() => setMiniPlayer(true)}
-                                        onExpand={() => setMiniPlayer(false)}
-                                        onTerminate={() => terminate("user terminated player")}
-                                        onExitFullscreen={() => toggleFullscreen(false)}
-                                    />
-                                }
-                            />
+                            <div
+                                data-mpv-element="loading-overlay"
+                                className="w-full h-full absolute bg-black rounded-md overflow-hidden"
+                            >
+                                <VideoCoreLoadingScreen
+                                    loadingState={state.loadingState}
+                                    showArtwork={!state.miniPlayer}
+                                    media={state.playbackInfo?.media}
+                                />
+                                <MpvCoreFloatingButtons
+                                    part="loading"
+                                    fullscreen={isFullscreen}
+                                    miniPlayer={state.miniPlayer}
+                                    onEnterMiniPlayer={() => setMiniPlayer(true)}
+                                    onExpand={() => setMiniPlayer(false)}
+                                    onTerminate={() => terminate("user terminated player")}
+                                    onExitFullscreen={() => toggleFullscreen(false)}
+                                />
+                            </div>
                         )}
                     </MpvPrismVideo>
                     {!state.miniPlayer && <VideoCoreInSight />}
