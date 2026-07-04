@@ -51,8 +51,17 @@ export function VideoCoreLoadingScreen({ loadingState, showArtwork, media }: {
     // Absorb the debrid stream status (the floating pill's data) into this screen —
     // its message is more detailed than the coarse open steps ("Adding torrent...",
     // "Downloading torrent: 45%"), and the pill hides itself while we're mounted.
+    // The two channels arrive interleaved on independent websocket paths, so a fixed
+    // precedence shows stale text — display whichever updated most recently.
     const debridState = useAtomValue(__debridstream_stateAtom)
-    const statusText = debridState?.message || loadingState
+    const debridMsg = debridState?.message || null
+    const [statusText, setStatusText] = React.useState<string | null>(loadingState)
+    React.useEffect(() => {
+        if (debridMsg) setStatusText(debridMsg)
+    }, [debridMsg])
+    React.useEffect(() => {
+        setStatusText(loadingState)
+    }, [loadingState])
     const torrentName = debridState?.torrentName
 
     const setLoadingScreenVisible = useSetAtom(vc_loadingScreenVisibleAtom)
