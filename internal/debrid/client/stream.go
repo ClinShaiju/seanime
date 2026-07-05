@@ -639,7 +639,11 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			go func() {
 				for item := range itemCh {
 					if opts.PlaybackType == PlaybackTypeNativePlayer {
-						if !s.ds(opts).UpdateOpenStep(opts.ClientId, fmt.Sprintf("Awaiting stream: %d%%", item.CompletionPercentage)) {
+						// Same phrasing as the debrid-state event below — the loading screen merges
+						// both channels by recency, so differing text ("Awaiting stream" vs
+						// "Downloading torrent") ping-pongs per poll. The call is kept for its return
+						// value, which is the open cancellation check.
+						if !s.ds(opts).UpdateOpenStep(opts.ClientId, fmt.Sprintf("Downloading torrent: %d%%", item.CompletionPercentage)) {
 							return
 						}
 					}
@@ -1450,6 +1454,26 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	streamCtx, cancelCtx := context.WithCancel(context.Background())
 	s.setDownloadCancel(cancelCtx)
 
+	// Mirror the native-player open steps onto the debrid-state channel (the pill / mobile
+	// overlay). Without this the pill is blank for a preloaded stream: its own "Adding/Downloading
+	// torrent" events never fire here (the torrent was resolved during prewarm), so the loading
+	// screen and the pill/server view drift apart.
+	torrentName := "-"
+	if cached.torrent != nil {
+		torrentName = cached.torrent.Name
+	}
+	emitState := func(msg string) {
+		if opts.PlaybackType != PlaybackTypeNativePlayer {
+			return
+		}
+		s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
+			Status:      StreamStatusDownloading,
+			TorrentName: torrentName,
+			Message:     msg,
+		})
+	}
+	emitState("Loading preloaded stream...")
+
 	streamUrl := cached.streamUrl
 	// Debrid stream URLs (CDN tokens) expire far sooner than the torrent. If this cached URL
 	// is stale, re-resolve it from the already-added torrentItemId — cheap, and crucially it
@@ -1461,6 +1485,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		// retry runs a cold resolve instead of handing the player a dead URL.
 		if opts.PlaybackType == PlaybackTypeNativePlayer {
 			s.ds(opts).UpdateOpenStep(opts.ClientId, "Checking stream link...")
+			emitState("Checking stream link...")
 		}
 		if !probeStreamURL(ctx, streamUrl, prewarmProbeTimeoutPlay) {
 			s.preloadMu.Lock()
@@ -1482,6 +1507,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		// seconds on API hiccups) — tell the player instead of sitting on one message.
 		if opts.PlaybackType == PlaybackTypeNativePlayer {
 			s.ds(opts).UpdateOpenStep(opts.ClientId, "Refreshing stream link...")
+			emitState("Refreshing stream link...")
 		}
 		if provider, perr := s.repository.GetProvider(); perr == nil {
 			itemCh := make(chan debrid.TorrentItem, 1)
@@ -1540,6 +1566,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 			return nil
 		}
 		s.ds(opts).UpdateOpenStep(opts.ClientId, "Preparing video...")
+		emitState("Preparing video...")
 		clientStreamUrl := ""
 		if s.directCdnEligible(opts) {
 			clientStreamUrl = s.resolveClientCdnUrl(cached.torrentItemId, cached.fileId, streamUrl)
@@ -1560,6 +1587,14 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 			s.repository.logger.Error().Err(err).Msg("debridstream: Failed to play preloaded stream")
 			return err
 		}
+		// Clear the pill: the native player's own loading screen ("Starting video...") now owns
+		// the display, and without a terminal event the mirrored downloading-state would linger
+		// and pop back as a stale pill once the loading screen unmounts.
+		s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
+			Status:      StreamStatusReady,
+			TorrentName: torrentName,
+			Message:     "Ready to stream the file",
+		})
 
 	case PlaybackTypeExternalPlayer:
 		// The client (e.g. mobile mpv) opens this URL itself.

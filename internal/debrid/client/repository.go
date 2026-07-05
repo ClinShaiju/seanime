@@ -412,6 +412,26 @@ func (r *Repository) StartStream(ctx context.Context, opts *StartStreamOptions) 
 	return r.smFor(opts.UserID).startStream(ctx, opts)
 }
 
+// WarmStreamSearch fills the auto-select SEARCH cache for an episode ahead of an expected
+// play (fired when a user opens an anime entry page). Costs one aggregator round trip and
+// ZERO debrid API calls — a play/preload that follows reuses (or singleflight-joins) the
+// search instead of paying it on the visible startup path.
+func (r *Repository) WarmStreamSearch(mediaId int, episodeNumber int, userID uint) {
+	if r.settings == nil || !r.settings.Enabled || r.autoSelect == nil {
+		return
+	}
+	go func() {
+		defer util.HandlePanicInModuleThen("debrid/client/WarmStreamSearch", func() {})
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		media, _, err := r.smFor(userID).getMediaInfo(ctx, mediaId)
+		if err != nil {
+			return
+		}
+		r.autoSelect.WarmSearch(ctx, media, episodeNumber, r.resolveAutoSelectProfile(userID))
+	}()
+}
+
 // PreloadStream resolves and caches the next episode's stream URL for instant playback.
 func (r *Repository) PreloadStream(ctx context.Context, opts *StartStreamOptions) error {
 	return r.smFor(opts.UserID).preloadStream(ctx, opts)

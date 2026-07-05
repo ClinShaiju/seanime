@@ -119,10 +119,15 @@ export function DebridStreamOverlay() {
         </>
     )
 
+    // The player loading screen renders this same debrid status itself — hide the pill (and its
+    // expanded modal) entirely while it's up. The pill returns for the normal Denshi UI once the
+    // loading screen unmounts (playback started, or browsing).
+    if (loadingScreenVisible) return null
+
     return (
         <>
 
-            {minimized && !loadingScreenVisible && (
+            {minimized && (
                 <div className="fixed z-[100] bottom-8 w-full h-fit flex justify-center">
                     <div
                         className="shadow-2xl p-4 bg-gray-900 border text-white rounded-3xl cursor-pointer hover:border-gray-600"

@@ -22,7 +22,55 @@ func (s *AutoSelect) Search(ctx context.Context, media *anilist.BaseAnime, episo
 	if media == nil {
 		return nil, fmt.Errorf("media cannot be nil")
 	}
-	return s.search(ctx, media.ToCompleteAnime(), episodeNumber, profile)
+	return s.searchCached(ctx, media.ToCompleteAnime(), episodeNumber, profile)
+}
+
+// searchCacheTTL keeps aggregator results shareable across a warm, a preload and the
+// actual play of the same episode. Short on purpose: torrent lists change slowly and
+// staleness only affects ranking inputs, never resolved links.
+const searchCacheTTL = 3 * time.Minute
+
+// WarmSearch fills the search cache for an episode ahead of an expected play. It costs
+// one aggregator round trip and NO debrid API calls, so it's safe to fire speculatively.
+func (s *AutoSelect) WarmSearch(ctx context.Context, media *anilist.CompleteAnime, episodeNumber int, profile *anime.AutoSelectProfile) {
+	_, _ = s.searchCached(ctx, media, episodeNumber, profile)
+}
+
+// searchCached wraps search with a TTL cache + singleflight: concurrent callers for the
+// same key (e.g. an entry-page warm racing the play click) share ONE provider search.
+func (s *AutoSelect) searchCached(ctx context.Context, media *anilist.CompleteAnime, episodeNumber int, profile *anime.AutoSelectProfile) ([]*hibiketorrent.AnimeTorrent, error) {
+	key := fmt.Sprintf("%d|%d|%+v", media.GetID(), episodeNumber, profile)
+	if cached, ok := s.searchCache.Get(key); ok {
+		s.logger.Debug().Int("count", len(cached)).Msg("autoselect: Search cache hit")
+		return copyTorrents(cached), nil
+	}
+	v, err, _ := s.searchGroup.Do(key, func() (interface{}, error) {
+		// A raced caller may find the cache filled by the previous flight.
+		if cached, ok := s.searchCache.Get(key); ok {
+			return cached, nil
+		}
+		torrents, err := s.search(ctx, media, episodeNumber, profile)
+		if err != nil {
+			return nil, err
+		}
+		s.searchCache.SetT(key, torrents, searchCacheTTL)
+		return torrents, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return copyTorrents(v.([]*hibiketorrent.AnimeTorrent)), nil
+}
+
+// copyTorrents hands each caller its own element copies — candidate selection mutates
+// MagnetLink/InfoHash on elements, which must not race across shared cache readers.
+func copyTorrents(in []*hibiketorrent.AnimeTorrent) []*hibiketorrent.AnimeTorrent {
+	out := make([]*hibiketorrent.AnimeTorrent, len(in))
+	for i, t := range in {
+		c := *t
+		out[i] = &c
+	}
+	return out
 }
 
 func (s *AutoSelect) search(ctx context.Context, media *anilist.CompleteAnime, episodeNumber int, profile *anime.AutoSelectProfile) ([]*hibiketorrent.AnimeTorrent, error) {

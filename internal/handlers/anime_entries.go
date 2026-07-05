@@ -124,6 +124,13 @@ func (h *Handler) HandleGetAnimeEntry(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
+	// Opening an entry page is the earliest reliable play signal — warm the auto-select
+	// SEARCH cache for the next-up episode in the background (one aggregator round trip,
+	// no debrid API calls) so a play click moments later skips/joins the search.
+	if entry != nil && entry.NextEpisode != nil {
+		h.App.DebridClientRepository.WarmStreamSearch(mId, entry.NextEpisode.EpisodeNumber, h.dataUserID(c))
+	}
+
 	return h.RespondWithData(c, entry)
 }
 

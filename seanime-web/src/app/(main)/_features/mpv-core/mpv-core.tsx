@@ -9,7 +9,7 @@ import { useMpvPrismPlayer } from "@mpv-prism/react"
 import { useAtom } from "jotai"
 import React from "react"
 import { MpvCorePlayerInner } from "./mpv-core-player-inner"
-import { mpvCore_stateAtom, type MpvCoreAnime4KQuality, type MpvCoreSettings } from "./mpv-core.atoms"
+import { mc_settings, mpvCore_stateAtom, type MpvCoreAnime4KQuality, type MpvCoreSettings } from "./mpv-core.atoms"
 
 export type MpvCoreEnvelope = { type: MpvCore_ServerEvent, payload: unknown }
 
@@ -508,6 +508,30 @@ export function mc_parseCustomMpvConfig(config: string): { parsed: Record<string
 export function MpvCore() {
     const [state, setState] = useAtom(mpvCore_stateAtom)
     const serverStatus = useServerStatus()
+    const [mpvSettings] = useAtom(mc_settings)
+
+    // Keep the player mounted (native libmpv instance warm) for the app's lifetime in
+    // Denshi when MpvPrism is the active player: prewarmed/preloaded streams resolve
+    // server-side near-instantly, so a per-session cold player creation would be the
+    // only thing left on the visible startup path.
+    const keepWarm = __isElectronDesktop__ && !!window.electron?.mpvCore
+        && !!serverStatus?.settings?.mediaPlayer?.mpvPrismEnabled
+
+    // mpv config / deband are baked in at player creation (MpvCorePlayerInner captures
+    // them on mount). While IDLE, a settings change remounts the warm player via key so
+    // the next session picks it up — never while a session is active.
+    const [warmEpoch, setWarmEpoch] = React.useState(0)
+    const appliedConfigRef = React.useRef({ config: mpvSettings.customMpvConfig, deband: mpvSettings.deband })
+    React.useEffect(() => {
+        if (state.active) return
+        if (
+            appliedConfigRef.current.config !== mpvSettings.customMpvConfig ||
+            appliedConfigRef.current.deband !== mpvSettings.deband
+        ) {
+            appliedConfigRef.current = { config: mpvSettings.customMpvConfig, deband: mpvSettings.deband }
+            setWarmEpoch(current => current + 1)
+        }
+    }, [state.active, mpvSettings.customMpvConfig, mpvSettings.deband])
 
     React.useEffect(() => {
         if (!__isElectronDesktop__ || !window.electron?.mpvCore) return
@@ -542,7 +566,7 @@ export function MpvCore() {
         deps: [],
     })
 
-    if (!state.active) return null
+    if (!state.active && !keepWarm) return null
 
-    return <MpvCorePlayerInner />
+    return <MpvCorePlayerInner key={warmEpoch} />
 }

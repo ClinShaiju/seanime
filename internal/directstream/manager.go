@@ -181,13 +181,21 @@ func (m *Manager) PrewarmStreamMetadata(streamUrl string) {
 	m.parserCache.SetT(streamUrl, parser, metadataCacheTTL)
 	m.Logger.Debug().Str("url", streamUrl).Msg("directstream: Prewarmed stream metadata")
 
-	// Warm the playable-start region on the debrid CDN so the play-time first range fetch isn't a
-	// cold round-trip. Throwaway read — zero local disk, just primes the CDN edge / wakes the file.
+	// Warm the playable-start region on the debrid CDN — and KEEP the bytes (URL-keyed RAM
+	// cache) so the play-time probe-window warm fills the FileStream cache from RAM instead
+	// of re-pulling the same ~28MiB from the CDN on the startup critical path.
 	warmBytes := int64(warmFallbackBytes)
-	if info != nil && md != nil {
-		warmBytes = computeWarmBytes(info.ContentLength, md.Duration)
+	var contentLength int64
+	if info != nil {
+		contentLength = info.ContentLength
+		if md != nil {
+			warmBytes = computeWarmBytes(info.ContentLength, md.Duration)
+		}
 	}
-	go warmStreamStart(streamUrl, warmBytes)
+	if warmBytes < warmHeadBytes {
+		warmBytes = warmHeadBytes // never capture less than the play-time head window
+	}
+	go capturePrewarmWindows(m.Logger, streamUrl, contentLength, warmBytes)
 }
 
 // DropStreamMetadata evicts the cached MKV parser + HEAD info for a stream URL. Called when an
@@ -201,6 +209,7 @@ func (m *Manager) DropStreamMetadata(streamUrl string) {
 	}
 	m.parserCache.Delete(streamUrl)
 	m.streamInfoCache.Delete(streamUrl)
+	prewarmWindowCache.Delete(streamUrl)
 }
 
 const (
@@ -252,10 +261,42 @@ func computeWarmBytes(contentLength int64, durationSec float64) int64 {
 	return n
 }
 
-func warmStreamStart(streamUrl string, warmBytes int64) {
-	defer util.HandlePanicInModuleThen("directstream/warmStreamStart", func() {})
-	if warmBytes <= 0 {
+// prewarmWindowCache keeps the probe-window bytes captured at prewarm time, keyed by stream
+// URL, start-offset → bytes. warmRange fills the play-time FileStream cache from here instead
+// of re-downloading, taking the CDN off the startup critical path for preloaded episodes.
+// RAM: ~28-52MiB per entry, bounded by the preload slot caps (same argument as parserCache,
+// which already holds the font attachments in RAM) + eviction in DropStreamMetadata.
+var prewarmWindowCache = result.NewCache[string, map[int64][]byte]()
+
+// prewarmWindowTTL is shorter than metadataCacheTTL: the bytes only pay off if the episode is
+// played soon after the prewarm (the binge path), and they're the heavy part of the RAM.
+const prewarmWindowTTL = time.Hour
+
+// prewarmedWindowBytes returns the captured bytes for the window starting at start (≥ length),
+// or nil.
+func prewarmedWindowBytes(streamUrl string, start, length int64) []byte {
+	windows, ok := prewarmWindowCache.Get(streamUrl)
+	if !ok {
+		return nil
+	}
+	data := windows[start]
+	if int64(len(data)) < length {
+		return nil
+	}
+	return data[:length]
+}
+
+// capturePrewarmWindows downloads the play-time probe windows (head ≥ warmHeadBytes, tail
+// warmTailBytes when contentLength is known) and keeps them in RAM. Replaces the old
+// throwaway warmStreamStart read — same CDN-edge warming, but the bytes are retained.
+// Best-effort, no retries; a miss just means the play-time warm pulls from the CDN as before.
+func capturePrewarmWindows(logger *zerolog.Logger, streamUrl string, contentLength, headBytes int64) {
+	defer util.HandlePanicInModuleThen("directstream/capturePrewarmWindows", func() {})
+	if headBytes <= 0 {
 		return
+	}
+	if contentLength > 0 && headBytes > contentLength {
+		headBytes = contentLength
 	}
 	// Non-blocking: if the token is busy, someone is actively streaming this very link — warming
 	// it is pointless, and a parked goroutine would later steal the freed slot from a real seek.
@@ -264,17 +305,44 @@ func warmStreamStart(streamUrl string, warmBytes int64) {
 		return
 	}
 	defer release()
+
+	windows := make(map[int64][]byte)
+	if head := fetchRangeBytes(streamUrl, 0, headBytes); head != nil {
+		windows[0] = head
+	}
+	if tailStart := contentLength - warmTailBytes; contentLength > 0 && tailStart > headBytes {
+		if tail := fetchRangeBytes(streamUrl, tailStart, warmTailBytes); tail != nil {
+			windows[tailStart] = tail
+		}
+	}
+	if len(windows) == 0 {
+		return
+	}
+	prewarmWindowCache.SetT(streamUrl, windows, prewarmWindowTTL)
+	logger.Debug().Str("url", streamUrl).Int("windows", len(windows)).Msg("directstream: Captured prewarm windows")
+}
+
+// fetchRangeBytes downloads [start, start+length) in one request; nil on any error or short body
+// (a truncated window must not be cached — the play-time serve would stall waiting for the rest).
+func fetchRangeBytes(streamUrl string, start, length int64) []byte {
 	req, err := http.NewRequest(http.MethodGet, streamUrl, nil)
 	if err != nil {
-		return
+		return nil
 	}
-	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", warmBytes-1))
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, start+length-1))
 	resp, err := videoProxyClient.Do(req)
 	if err != nil {
-		return
+		return nil
 	}
 	defer resp.Body.Close()
-	_, _ = io.CopyN(io.Discard, resp.Body, warmBytes)
+	if resp.StatusCode >= 300 {
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, length))
+	if err != nil || int64(len(data)) < length {
+		return nil
+	}
+	return data
 }
 
 type PlaybackTarget string

@@ -167,8 +167,22 @@ behavior change until a client opts in.
   episode-end tracking fires. Then a two-user watch-room (distinct accounts — same
   account rooms are known-broken): both direct, each on its own CDN link, sync
   holds through seeks. Watch server log for 429s on all links.
+  **MpvCore additions (v3.9):** subs/fonts checks above are VideoCore-only — MpvCore
+  demuxes subs itself (`shouldProcessMediaOnServer()` false, no server subtitle walk).
+  Add: (a) MpvCore-direct session — subs render, seek works, mpv pulls raw CDN URL
+  (no CORS involved, libmpv fetch); (b) seekbar thumbnails during MpvCore-direct
+  playback: the proxy's `?thumbnail=true` reads come off the server's copy of the
+  SAME single TorBox link mpv plays from — watch for 429s while scrubbing;
+  (c) web tab under a MpvPrism-enabled session gets VideoCore signaling
+  (`targetForClient` downgrade, directstream/stream.go) — verify browser playback
+  still works with the setting on.
 - [ ] **T12. Measure.** Compare VPS egress + seek latency before/after (one episode
   each way). Confirm the win is real before making direct the Denshi default.
+  **MpvCore additions:** MpvCore-direct should be near-zero server egress (no video,
+  no subtitle walk — best case). But measure MpvCore **proxy** mode separately: mpv's
+  default demuxer readahead is far more aggressive than an HTML5 `<video>`, so
+  proxied MpvCore sessions may pull materially more bytes through the VPS than
+  VideoCore did.
 
 ## Pre-implementation map (recon 2026-07-01, anchors verified at 33c0197a)
 

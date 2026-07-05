@@ -465,12 +465,16 @@ func (mc *MpvCore) listenToClientEvents() {
 				continue
 			}
 			if event.Type == ClientEventLoadedMetadata {
+				// Startup milestone (with can-play below): with "Signaling player that
+				// stream is ready" these give the journal timeline for "Starting video...".
+				mc.logger.Debug().Msg("mpvcore: Client reported loaded-metadata")
 				mc.setStatus(p)
 				mc.PushEvent(&LoadedMetadataEvent{CurrentTime: p.CurrentTime, Duration: p.Duration, Paused: p.Paused})
 			} else {
 				mc.updateStatus(p)
 				switch event.Type {
 				case ClientEventCanPlay:
+					mc.logger.Debug().Msg("mpvcore: Client reported can-play")
 					mc.PushEvent(&CanPlayEvent{CurrentTime: p.CurrentTime, Duration: p.Duration, Paused: p.Paused})
 				case ClientEventPaused:
 					mc.PushEvent(&PausedEvent{CurrentTime: p.CurrentTime, Duration: p.Duration})
@@ -483,6 +487,16 @@ func (mc *MpvCore) listenToClientEvents() {
 				case ClientEventCompleted:
 					mc.PushEvent(&CompletedEvent{CurrentTime: p.CurrentTime, Duration: p.Duration})
 				}
+			}
+		case ClientEventStartupTiming:
+			var p startupTimingPayload
+			if event.UnmarshalAs(&p) == nil {
+				mc.logger.Debug().
+					Float64("presentMs", p.PresentMs).
+					Float64("loadMs", p.LoadMs).
+					Float64("fileLoadedMs", p.FileLoadedMs).
+					Float64("restartMs", p.RestartMs).
+					Msg("mpvcore: Client startup timing")
 			}
 		case ClientEventEnded:
 			var p endedPayload

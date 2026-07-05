@@ -42,6 +42,13 @@ type httpBaseStream struct {
 	// at a time); reset at the start of each buffered serve.
 	fillOff  atomic.Int64
 	serveOff atomic.Int64
+
+	// warmOnce guards the MpvCore probe-window warm (httpstream_warm.go).
+	warmOnce sync.Once
+	// warmHeadFailed/warmTailFailed let the capped window serve stop waiting for a warm
+	// that will never complete (client then reconnects and gets redirected to the CDN).
+	warmHeadFailed atomic.Bool
+	warmTailFailed atomic.Bool
 }
 
 var videoProxyClient = &http.Client{
@@ -288,9 +295,16 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType player.PlaybackType) (ret *
 
 		// Direct CDN mode: the player pulls straight from the debrid CDN (no {{SERVER_URL}}
 		// template, no HMAC — the CDN URL carries its own token). Proxy URL otherwise.
+		// Exception: MpvCore stays on the proxy even in direct mode — its MKV probe
+		// (header + fonts + Cues) is served from the warmed cache (see httpstream_warm.go).
 		streamURL := "{{SERVER_URL}}/api/v1/directstream/stream?id=" + id + s.manager.GetHMACTokenQueryParam("/api/v1/directstream/stream", "&")
-		if s.directMode() {
+		if s.directMode() && !s.mpvCoreProxied() {
 			streamURL = s.clientStreamUrl
+		}
+
+		// Warm the probe windows ahead of the player's first request.
+		if s.playbackTarget == PlaybackTargetMpvCore {
+			s.warmOnce.Do(s.warmProbeWindows)
 		}
 
 		playbackInfo := player.PlaybackInfo{
@@ -446,6 +460,21 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 				go s.StartSubtitleStreamP(outer, s.manager.playbackCtx, subReader, ra.Start, 0)
 			} else {
 				_ = subReader.Close()
+			}
+		}
+
+		// MpvCore in direct mode: serve only the warm probe windows from the server and
+		// 302 everything else to the raw CDN — the player adopts the redirect target, so
+		// after the first handoff the server is out of the video data path (cdnHandoff).
+		// In plain proxy mode: serve any cached prefix from disk, live-tee the remainder.
+		if s.playbackTarget == PlaybackTargetMpvCore {
+			if s.cdnHandoff() {
+				s.serveHandoff(w, r, ra)
+				return
+			}
+			if span := s.httpStream.CachedSpanFrom(ra.Start); span > 0 {
+				s.serveStitched(w, r, ra, span)
+				return
 			}
 		}
 

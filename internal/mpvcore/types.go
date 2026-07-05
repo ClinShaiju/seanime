@@ -56,6 +56,7 @@ const (
 	ClientEventSubtitleTrackChanged ClientEventType = "subtitle-track-changed"
 	ClientEventPlaylistState        ClientEventType = "playlist-state"
 	ClientEventSkipData             ClientEventType = "skip-data"
+	ClientEventStartupTiming        ClientEventType = "startup-timing"
 )
 
 type ServerEvent string
@@ -109,6 +110,15 @@ type playbackLoadedPayload struct {
 
 type endedPayload struct {
 	AutoNext bool `json:"autoNext"`
+}
+
+// startupTimingPayload: ms since the client received "watch" for each startup phase
+// (-1 = mark missing). Logged to the journal to split the "Starting video..." gap.
+type startupTimingPayload struct {
+	PresentMs    float64 `json:"presentMs"`    // presenter attach ready
+	LoadMs       float64 `json:"loadMs"`       // player.load() resolved
+	FileLoadedMs float64 `json:"fileLoadedMs"` // mpv file-loaded (header parsed)
+	RestartMs    float64 `json:"restartMs"`    // playback-restart (first frames)
 }
 
 type errorPayload struct {

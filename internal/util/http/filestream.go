@@ -216,6 +216,19 @@ func (fs *FileStream) IsRangeAvailable(start, end int64) bool {
 	return fs.isRangeAvailable(start, end)
 }
 
+// CachedSpanFrom returns the number of contiguous cached bytes starting at offset
+// (0 if the offset itself isn't cached).
+func (fs *FileStream) CachedSpanFrom(offset int64) int64 {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	for _, p := range fs.pieces {
+		if p.start <= offset && p.end >= offset {
+			return p.end - offset + 1
+		}
+	}
+	return 0
+}
+
 // WriteCacheAt writes downloaded bytes into the cache file at offset WITHOUT teeing to any client —
 // used by the read-ahead producer to fill the cache ahead of the player. Updates the piece map so
 // blocked readers wake.

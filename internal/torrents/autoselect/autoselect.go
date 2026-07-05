@@ -13,10 +13,12 @@ import (
 	torrent_analyzer "seanime/internal/torrents/analyzer"
 	itorrent "seanime/internal/torrents/torrent"
 	"seanime/internal/util"
+	"seanime/internal/util/result"
 	"sync"
 
 	"github.com/anacrolix/torrent"
 	"github.com/rs/zerolog"
+	"golang.org/x/sync/singleflight"
 )
 
 type SelectionMode string
@@ -39,6 +41,11 @@ type (
 		onEvent           func(string)
 		onStatus          func(StreamAutoSelectStatusPayload)
 		statusMu          sync.Mutex
+		// searchGroup + searchCache make provider searches shareable: a warm, a preload
+		// and the play of the same episode coalesce into ONE aggregator round trip, and
+		// repeats within the TTL are free. See searchCached.
+		searchGroup singleflight.Group
+		searchCache *result.Cache[string, []*hibiketorrent.AnimeTorrent]
 	}
 
 	NewAutoSelectOptions struct {
@@ -92,6 +99,7 @@ func New(opts *NewAutoSelectOptions) *AutoSelect {
 		platform:          opts.Platform,
 		onEvent:           opts.OnEvent,
 		onStatus:          opts.OnStatus,
+		searchCache:       result.NewCache[string, []*hibiketorrent.AnimeTorrent](),
 	}
 }
 
@@ -198,7 +206,7 @@ func (s *AutoSelect) FindBestTorrent(
 
 	// 1. Search
 	s.log("Searching for torrents")
-	torrents, err := s.search(ctx, media, episodeNumber, profile)
+	torrents, err := s.searchCached(ctx, media, episodeNumber, profile)
 	if err != nil {
 		s.log(fmt.Sprintf("Search failed: %v", err))
 		return nil, err

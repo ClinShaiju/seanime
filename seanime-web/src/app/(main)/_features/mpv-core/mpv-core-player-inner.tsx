@@ -269,6 +269,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const completedRef = React.useRef(false)
     const metadataReadyRef = React.useRef(false)
     const canPlayRef = React.useRef(false)
+    // Startup phase marks (ms via performance.now), reported once per session as
+    // "startup-timing" so the server journal shows the client-side startup split.
+    const startupMarksRef = React.useRef<{ watch?: number, present?: number, load?: number, fileLoaded?: number }>({})
     const currentTimeRef = React.useRef(0)
     const durationRef = React.useRef(0)
     const pausedRef = React.useRef(true)
@@ -698,6 +701,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                         resetMiniPlayerTimerRef.current = null
                     }
                     terminatingRef.current = false
+                    startupMarksRef.current = { watch: performance.now() }
                     setState(draft => {
                         draft.active = true
                         draft.miniPlayer = false
@@ -796,11 +800,13 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
             try {
                 await player.awaitPresentationReady()
                 if (token !== sessionTokenRef.current) return
+                startupMarksRef.current.present = performance.now()
                 await player.stop().catch(() => undefined)
                 if (token !== sessionTokenRef.current) return
                 suppressEndRef.current = false
                 await player.load(mc_resolveSource(info.playbackUri))
                 if (token !== sessionTokenRef.current) return
+                startupMarksRef.current.load = performance.now()
                 sendEvent("playback-loaded", { id: info.id, clientId })
                 await Promise.all([
                     player.setVolume(volume * 100),
@@ -811,6 +817,10 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 ])
                 if (!autoPlay || info.initialState?.paused) {
                     await player.pause()
+                } else {
+                    // Warm player: mpv's pause property is sticky across loadfile on the same
+                    // instance (keep-open EOF pause, stop-while-paused), so reset it explicitly.
+                    await player.play()
                 }
             }
             catch (error) {
@@ -901,6 +911,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     })
     useMpvPrismEvent(player, "state", event => {
         if (event.state === "file-loaded") {
+            if (startupMarksRef.current.fileLoaded == null) startupMarksRef.current.fileLoaded = performance.now()
             const token = sessionTokenRef.current;
             (async () => {
                 const info = infoRef.current
@@ -957,6 +968,17 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
             if (!canPlayRef.current && infoRef.current) {
                 canPlayRef.current = true
                 sendEvent("can-play", statusPayload())
+                const marks = startupMarksRef.current
+                if (marks.watch != null) {
+                    startupMarksRef.current = {}
+                    const since = (mark?: number) => mark != null ? Math.round(mark - marks.watch!) : -1
+                    sendEvent("startup-timing", {
+                        presentMs: since(marks.present),
+                        loadMs: since(marks.load),
+                        fileLoadedMs: since(marks.fileLoaded),
+                        restartMs: since(performance.now()),
+                    })
+                }
             }
             const now = Date.now()
             if (now - lastSeekEventRef.current > 250 && metadataReadyRef.current) {
@@ -1042,6 +1064,18 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     React.useEffect(() => {
         if (!state.active) closePipWindow()
     }, [state.active])
+
+    React.useEffect(() => {
+        if (state.active) return
+        // The warm player stays mounted after a session ends — ensure mpv itself is
+        // stopped even on deactivation paths that don't go through terminate()
+        // (play pill / stream overlay set active=false directly and used to rely on
+        // unmount tearing the player down).
+        sessionTokenRef.current += 1
+        suppressEndRef.current = true
+        infoRef.current = null
+        player?.stop().catch(() => undefined)
+    }, [state.active, player])
 
     React.useEffect(() => {
         if (!state.active) return

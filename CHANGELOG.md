@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.9.1
+
+- ⚡️ Denshi: Faster MpvCore startup — warm player kept alive and prewarm tiers for the direct-stream path
+- ⚡️ Debrid Streaming: Loading screen status now tracks real progress (preloaded streams report their steps instead of a static label)
+- ⚡️ Debrid Streaming: Removed duplicate "Awaiting stream" / "Downloading torrent" flicker on cold starts
+- ⚡️ Torrent Streaming: Search and entry-open latency refinements
+- 🦺 Debrid Streaming: The status pill no longer overlaps the player loading screen
+
 ## v3.9.0
 
 - 🎉 Denshi: New libmpv-based Built-in Player (Experimental)
