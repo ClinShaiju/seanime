@@ -27,10 +27,38 @@ func TestProfileHashFor(t *testing.T) {
 	}
 }
 
-// TestCleanupWatchedPrewarms guards the progress-aware cleanup rule: entries below progress are
-// dropped (they flame-badged already-watched episodes for 24h), the last-watched episode is kept
-// for instant replay, next-up and other shows are untouched, and the in-play entry is never
-// touched regardless of episode number.
+// TestUserTags guards the shared-row refcounting round-trip: tags survive encode/parse, merge is
+// idempotent, and removal of the last stakeholder yields an empty set (row-delete signal).
+func TestUserTags(t *testing.T) {
+	tags := mergeUserTag(nil, 1)
+	tags = mergeUserTag(tags, 3)
+	tags = mergeUserTag(tags, 1) // idempotent
+	if len(tags) != 2 || !containsUserTag(tags, 1) || !containsUserTag(tags, 3) {
+		t.Fatalf("merge produced %v, want [1 3]", tags)
+	}
+	rt := parseUserTags(encodeUserTags(tags))
+	if len(rt) != 2 || !containsUserTag(rt, 1) || !containsUserTag(rt, 3) {
+		t.Fatalf("encode/parse round-trip produced %v", rt)
+	}
+	rt = removeUserTag(rt, 1)
+	if len(rt) != 1 || containsUserTag(rt, 1) {
+		t.Fatalf("remove(1) produced %v", rt)
+	}
+	if rest := removeUserTag(rt, 3); len(rest) != 0 {
+		t.Fatalf("removing last stakeholder should empty the set, got %v", rest)
+	}
+	if parseUserTags("") != nil || parseUserTags("garbage") != nil {
+		t.Fatal("empty/garbage tags must parse to nil (legacy rows)")
+	}
+	if encodeUserTags(nil) != "" {
+		t.Fatal("empty tag set must encode to empty string")
+	}
+}
+
+// TestCleanupWatchedPrewarms guards the progress-aware cleanup rule: entries below keepFromEp are
+// dropped (they flame-badged already-watched episodes for 24h), entries at/above it are kept
+// (the core tick passes progress-1, the "n-2 rule"), other shows are untouched, and the in-play
+// entry is never touched regardless of episode number.
 func TestCleanupWatchedPrewarms(t *testing.T) {
 	repo := &Repository{streamManagers: result.NewMap[uint, *StreamManager]()}
 	sm := NewStreamManager(repo)

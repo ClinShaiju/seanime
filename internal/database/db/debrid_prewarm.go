@@ -43,10 +43,8 @@ func (db *Database) DeleteDebridPrewarmByID(id uint) error {
 	return db.gormdb.Delete(&models.DebridPrewarm{}, id).Error
 }
 
-// DeleteDebridPrewarmsBelow removes shared prewarm rows for a media whose episode is below
-// keepFromEp (progress-aware cleanup of already-watched episodes).
-func (db *Database) DeleteDebridPrewarmsBelow(accountHash string, mediaId, keepFromEp int) error {
-	return db.gormdb.
-		Where("account_hash = ? AND media_id = ? AND episode_number < ?", accountHash, mediaId, keepFromEp).
-		Delete(&models.DebridPrewarm{}).Error
+// UpdateDebridPrewarmUserTags rewrites one row's stakeholder tag set (progress-aware cleanup
+// unrefs a user instead of deleting rows other users still need).
+func (db *Database) UpdateDebridPrewarmUserTags(id uint, userTags string) error {
+	return db.gormdb.Model(&models.DebridPrewarm{}).Where("id = ?", id).Update("user_tags", userTags).Error
 }

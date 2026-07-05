@@ -214,10 +214,12 @@ func (a *App) buildPrewarmOptsForSession(s *UserSession) []*debrid_client.StartS
 	}
 	cands, mediaById := a.buildPrewarmCandidates(collection, s.Continuity())
 	// Progress-aware cleanup: drop prewarm state (memory + shared DB rows) for episodes this
-	// user has already watched. Progress is in hand here, so this is the cheap place to do it.
+	// user has already watched. keepFromEp = progress-1 (the "n-2 rule"): keep the last-watched
+	// episode AND its predecessor — AniList progress syncs at ~80% of an episode, so a plain
+	// <progress cutoff deleted the previous episode's cache minutes into watching the next one.
 	for _, c := range cands {
-		if c.progress > 0 {
-			a.DebridClientRepository.CleanupWatchedPrewarms(s.UserID, c.mediaId, c.progress)
+		if c.progress > 1 {
+			a.DebridClientRepository.CleanupWatchedPrewarms(s.UserID, c.mediaId, c.progress-1)
 		}
 	}
 	targets := selectPrewarmTargets(cands, prewarmContinueWatchingCount, prewarmJustAiredCount)

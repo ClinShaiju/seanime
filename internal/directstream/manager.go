@@ -198,6 +198,18 @@ func (m *Manager) PrewarmStreamMetadata(streamUrl string) {
 	go capturePrewarmWindows(m.Logger, streamUrl, contentLength, warmBytes)
 }
 
+// HasStreamMetadata reports whether the MKV parser cache currently holds this URL — i.e. the
+// stream is genuinely metadata-warm RIGHT NOW. The prewarm badge uses this instead of the
+// recorded PrewarmMetadata intent: the warm can be shed by the CDN budget, expire (2h TTL),
+// or become unreachable when the stream URL rotates, and the badge must not claim otherwise.
+func (m *Manager) HasStreamMetadata(streamUrl string) bool {
+	if streamUrl == "" {
+		return false
+	}
+	_, ok := m.parserCache.Get(streamUrl)
+	return ok
+}
+
 // DropStreamMetadata evicts the cached MKV parser + HEAD info for a stream URL. Called when an
 // episode finishes (a different episode starts, or the stream is cancelled) so the font/attachment
 // bytes the parser holds in RAM are released immediately instead of lingering until the 2h TTL.

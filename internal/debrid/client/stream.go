@@ -280,7 +280,10 @@ func selectionTTLForMedia(media *anilist.BaseAnime) time.Duration {
 
 // preloadKey identifies a preload slot by the episode it targets.
 func preloadKey(opts *StartStreamOptions) string {
-	return fmt.Sprintf("%d|%d|%s", opts.MediaId, opts.EpisodeNumber, opts.AniDBEpisode)
+	// Selection intent (auto vs manual) is part of the key: a manual-pick preload must not
+	// occupy the auto-select slot — it made the tick skip the real prewarm as "already fresh"
+	// while the auto-select play then missed on the intent match (warm badge, cold play).
+	return fmt.Sprintf("%d|%d|%s|%t", opts.MediaId, opts.EpisodeNumber, opts.AniDBEpisode, opts.AutoSelect)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -296,10 +299,8 @@ const (
 // ds resolves the DirectStream manager for this stream's user (per-session), or the
 // global (admin) one when no per-user resolver/user is set.
 func (s *StreamManager) ds(opts *StartStreamOptions) *directstream.Manager {
-	if s.repository.sessionModulesFunc != nil && opts != nil {
-		if dm, _ := s.repository.sessionModulesFunc(opts.UserID); dm != nil {
-			return dm
-		}
+	if opts != nil {
+		return s.repository.dsFor(opts.UserID)
 	}
 	return s.repository.directStreamManager
 }
@@ -320,12 +321,20 @@ func (s *StreamManager) pb(opts *StartStreamOptions) *playbackmanager.PlaybackMa
 // This is what stops a non-admin's "Selecting/Adding torrent…" overlay from leaking to
 // the admin (and ensures it actually reaches the streaming user).
 func (s *StreamManager) ev(opts *StartStreamOptions) events.WSEventManagerInterface {
-	if s.repository.sessionEventsFunc != nil && opts != nil {
-		if em := s.repository.sessionEventsFunc(opts.UserID); em != nil {
-			return em
-		}
+	if opts != nil {
+		return s.repository.evFor(opts.UserID)
 	}
 	return s.repository.wsEventManager
+}
+
+// invalidatePrewarmBadges tells this user's clients to refetch the prewarm badge set. Fired
+// whenever prewarm state actually CHANGES server-side (entry stored, dropped, cleaned up) —
+// the old client-side invalidate-on-preload-POST raced the async resolve and always refetched
+// before anything was warm, which is why badges only ever updated on page remounts.
+func (s *StreamManager) invalidatePrewarmBadges(opts *StartStreamOptions) {
+	if em := s.ev(opts); em != nil {
+		em.SendEvent(events.InvalidateQueries, []string{events.DebridGetPrewarmStatusEndpoint})
+	}
 }
 
 // startStream is called by the client to start streaming a torrent
@@ -363,6 +372,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 	// Reuse a preloaded stream if one matches this episode (native player + external player link).
 	if canReusePreloadedStream(opts.PlaybackType) {
 		key := preloadKey(opts)
+		droppedPrev := false
 		s.preloadMu.Lock()
 		// A different episode is starting → the previously-consumed one has ended; drop its kept
 		// entry (replays of the SAME episode keep theirs, so this leaves a same-key hit intact).
@@ -372,6 +382,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 				if dm := s.ds(opts); dm != nil {
 					dm.DropStreamMetadata(prev.streamUrl)
 				}
+				droppedPrev = true
 			}
 			delete(s.preloads, s.lastConsumedKey)
 			s.lastConsumedKey = ""
@@ -389,19 +400,27 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			s.lastConsumedKey = key
 		}
 		s.preloadMu.Unlock()
-		if hit {
-			return s.playPreloadedStream(ctx, opts, cached)
+		if droppedPrev {
+			s.invalidatePrewarmBadges(opts)
 		}
-		// In-memory miss — try the shared, account-partitioned DB before a cold resolve (cross-user
-		// reuse + post-restart survival). Auto-select only (a manual pick is never shared); the probe
-		// uses a short fast-fail timeout so a dead link falls through cheaply (a live link validates in
-		// <1s). hydrate re-resolves/drops safely on a dead or removed torrent item.
-		if opts.AutoSelect {
+		if hit {
+			if err := s.playPreloadedStream(ctx, opts, cached); !errors.Is(err, errPreloadedLinkDead) {
+				return err
+			}
+			// Dead preloaded link → fall through to the cold resolve below (the open session,
+			// if any, stays alive and the cold path re-enters it).
+		} else if opts.AutoSelect {
+			// In-memory miss — try the shared, account-partitioned DB before a cold resolve
+			// (cross-user reuse + post-restart survival). Auto-select only (a manual pick is
+			// never shared); the probe uses a fast-fail timeout so a dead link falls through
+			// cheaply. hydrate re-resolves/drops safely on a dead or removed torrent item.
 			if entry, ok := s.hydratePrewarmFromDB(ctx, opts, prewarmProbeTimeoutPlay); ok {
 				s.preloadMu.Lock()
 				s.lastConsumedKey = key
 				s.preloadMu.Unlock()
-				return s.playPreloadedStream(ctx, opts, entry)
+				if err := s.playPreloadedStream(ctx, opts, entry); !errors.Is(err, errPreloadedLinkDead) {
+					return err
+				}
 			}
 		}
 	}
@@ -759,6 +778,12 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 			Dur("total", time.Since(streamStartedAt)).
 			Msg("debridstream: Stream is ready")
 
+		// A cold resolve succeeded — clear the preload negative cache for this episode so the
+		// background prewarm doesn't keep skipping a target that provably resolves now.
+		s.preloadMu.Lock()
+		delete(s.preloadFailedAt, preloadKey(opts))
+		s.preloadMu.Unlock()
+
 		// Signal to the client that the torrent is ready to stream
 		s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
 			Status:      StreamStatusReady,
@@ -957,15 +982,22 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 	// replay). Other shows' continue-watching prewarms stay warm; stale entries self-evict via TTL.
 	// Full reset (provider change/shutdown) uses ClearAllPreloads.
 	var endedStreamUrl string
+	droppedEntry := false
 	s.preloadMu.Lock()
 	if s.lastConsumedKey != "" {
 		if prev, ok := s.preloads[s.lastConsumedKey]; ok {
 			endedStreamUrl = prev.streamUrl
+			droppedEntry = true
 		}
 		delete(s.preloads, s.lastConsumedKey)
 		s.lastConsumedKey = ""
 	}
 	s.preloadMu.Unlock()
+	if droppedEntry {
+		if em := s.repository.evFor(opts.UserID); em != nil {
+			em.SendEvent(events.InvalidateQueries, []string{events.DebridGetPrewarmStatusEndpoint})
+		}
+	}
 
 	// Resolve the directStream of the user who owns the stream being cancelled — THIS
 	// manager's own last stream (per-user), not the repository's last-active copy.
@@ -1077,8 +1109,14 @@ func (s *StreamManager) clearAllPreloadsLocked() {
 // are NOT capped here — they're bounded at the source (3 shows + next-ep) and self-expire via TTL —
 // so the browse/search/discover hover firehose can never evict them. Caller holds preloadMu.
 func (s *StreamManager) evictIfNeededLocked(priority bool) {
-	// Drop any TTL-expired entries first (either class) so the map can't grow unbounded over a binge.
+	// Drop any TTL-expired entries first (either class) so the map can't grow unbounded over a
+	// binge. Never the consumed entry: it's the stream being PLAYED (its URL is refreshed on
+	// consume, so selection-TTL expiry mid-playback is meaningless) and share/cancel paths
+	// still read it.
 	for k, v := range s.preloads {
+		if k == s.lastConsumedKey {
+			continue
+		}
 		if time.Since(v.resolvedAt) > v.ttl {
 			delete(s.preloads, k)
 		}
@@ -1092,8 +1130,8 @@ func (s *StreamManager) evictIfNeededLocked(priority bool) {
 		var oldestKey string
 		var oldest time.Time
 		for k, v := range s.preloads {
-			if v.priority {
-				continue // never count or evict priority entries
+			if v.priority || k == s.lastConsumedKey {
+				continue // never count or evict priority entries or the one being played
 			}
 			count++
 			if oldestKey == "" || v.resolvedAt.Before(oldest) {
@@ -1144,11 +1182,14 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 			existing.priority = true
 		}
 		// An incoming metadata-prewarm request must still warm metadata even though the URL is
-		// already resolved — otherwise a tier-1 target satisfied by an earlier metadata-less
-		// preload stays "hot"-badged with a cold parser. Idempotent (parser cache + CDN budget).
+		// already resolved. Re-issued EVERY time (not just on a false→true upgrade): the parser
+		// cache expires (2h) and sheds under CDN budget, so warmth must be re-established each
+		// tick or the tier-1 target quietly goes cold. Free on a parser-cache hit.
 		warmUrl := ""
-		if opts.PrewarmMetadata && existing.opts != nil && !existing.opts.PrewarmMetadata && existing.streamUrl != "" {
-			existing.opts.PrewarmMetadata = true
+		if opts.PrewarmMetadata && existing.streamUrl != "" {
+			if existing.opts != nil {
+				existing.opts.PrewarmMetadata = true
+			}
 			warmUrl = existing.streamUrl
 		}
 		s.preloadMu.Unlock()
@@ -1309,9 +1350,11 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 			s.repository.logger.Info().Str("torrent", selectedTorrent.Name).Msg("debridstream: Preloaded stream ready")
 		}
 		s.preloadMu.Unlock()
-		// Share to the account-wide DB (best-effort) so other users on the same key / a restart reuse it.
+		// Share to the account-wide DB (best-effort) so other users on the same key / a restart
+		// reuse it, and tell this user's clients the badge set changed.
 		if stored != nil {
 			s.persistPrewarm(opts, stored)
+			s.invalidatePrewarmBadges(opts)
 		}
 
 		// Pre-parse MKV metadata for high-certainty targets (next-episode preloads) so the
@@ -1423,6 +1466,11 @@ func (s *StreamManager) loadPersistedActiveStream(userID uint) {
 	s.repository.logger.Debug().Int("mediaId", p.Opts.MediaId).Msg("debridstream: Restored persisted active stream for instant reconnect")
 }
 
+// errPreloadedLinkDead signals that a preloaded stream's CDN link is dead and could not be
+// refreshed. startStream treats it as "fall back to a cold resolve" — the user's click still
+// plays, just without the head start — instead of surfacing an error and burning the click.
+var errPreloadedLinkDead = errors.New("debridstream: preloaded stream link dead")
+
 func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStreamOptions, cached *preloadedDebridStream) (err error) {
 	defer util.HandlePanicInModuleWithError("debrid/client/playPreloadedStream", &err)
 
@@ -1474,41 +1522,58 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	}
 	emitState("Loading preloaded stream...")
 
+	// Snapshot the mutable entry fields under the lock (refresh paths mutate them).
+	s.preloadMu.Lock()
 	streamUrl := cached.streamUrl
+	urlResolvedAt := cached.urlResolvedAt
+	torrentItemId := cached.torrentItemId
+	s.preloadMu.Unlock()
+
+	// dropDeadPreload releases a dead entry and reports the sentinel so startStream falls back
+	// to a cold resolve — the click still plays, just cold. The open session stays alive (no
+	// AbortOpen): the cold path re-enters it with its own steps.
+	dropDeadPreload := func() error {
+		s.preloadMu.Lock()
+		delete(s.preloads, preloadKey(opts))
+		if s.lastConsumedKey == preloadKey(opts) {
+			s.lastConsumedKey = ""
+		}
+		s.preloadMu.Unlock()
+		cancelCtx()
+		s.setDownloadCancel(nil)
+		if opts.PlaybackType == PlaybackTypeNativePlayer {
+			s.ds(opts).UpdateOpenStep(opts.ClientId, "Link expired, re-resolving...")
+			emitState("Link expired, re-resolving...")
+		}
+		s.invalidatePrewarmBadges(opts)
+		s.repository.logger.Warn().Int("mediaId", opts.MediaId).Int("episode", opts.EpisodeNumber).
+			Msg("debridstream: Preloaded link dead, falling back to cold resolve")
+		return errPreloadedLinkDead
+	}
+
 	// Debrid stream URLs (CDN tokens) expire far sooner than the torrent. If this cached URL
 	// is stale, re-resolve it from the already-added torrentItemId — cheap, and crucially it
 	// does NOT call createtorrent (the 60/hour-limited endpoint), so the SELECTION stays cached
 	// for a day while the URL is kept valid.
-	if cached.torrentItemId == "" && time.Since(cached.urlResolvedAt) > urlRefreshTTL {
+	if torrentItemId == "" && time.Since(urlResolvedAt) > urlRefreshTTL {
 		// Direct-URL entry (no torrent item to re-resolve from): the only thing we can do with a
-		// stale link is check it's alive. Dead → drop the entry and fail distinctly so the user's
-		// retry runs a cold resolve instead of handing the player a dead URL.
+		// stale link is check it's alive. Dead → transparent cold-resolve fallback.
 		if opts.PlaybackType == PlaybackTypeNativePlayer {
 			s.ds(opts).UpdateOpenStep(opts.ClientId, "Checking stream link...")
 			emitState("Checking stream link...")
 		}
 		if !probeStreamURL(ctx, streamUrl, prewarmProbeTimeoutPlay) {
-			s.preloadMu.Lock()
-			delete(s.preloads, preloadKey(opts))
-			if s.lastConsumedKey == preloadKey(opts) {
-				s.lastConsumedKey = ""
-			}
-			s.preloadMu.Unlock()
-			cancelCtx()
-			s.setDownloadCancel(nil)
-			if opts.PlaybackType == PlaybackTypeNativePlayer {
-				s.ds(opts).AbortOpen(opts.ClientId, fmt.Errorf("preloaded stream link expired"))
-			}
-			return fmt.Errorf("debridstream: Preloaded direct stream link expired, retry to re-resolve")
+			return dropDeadPreload()
 		}
 	}
-	if cached.torrentItemId != "" && time.Since(cached.urlResolvedAt) > urlRefreshTTL {
+	if torrentItemId != "" && time.Since(urlResolvedAt) > urlRefreshTTL {
 		// This is the preload path's slow phase (provider status polls can retry for
 		// seconds on API hiccups) — tell the player instead of sitting on one message.
 		if opts.PlaybackType == PlaybackTypeNativePlayer {
 			s.ds(opts).UpdateOpenStep(opts.ClientId, "Refreshing stream link...")
 			emitState("Refreshing stream link...")
 		}
+		refreshed := false
 		if provider, perr := s.repository.GetProvider(); perr == nil {
 			itemCh := make(chan debrid.TorrentItem, 1)
 			go func() {
@@ -1516,21 +1581,28 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 				}
 			}()
 			freshUrl, rerr := provider.GetTorrentStreamUrl(streamCtx, debrid.StreamTorrentOptions{
-				ID:     cached.torrentItemId,
+				ID:     torrentItemId,
 				FileId: cached.fileId,
 			}, itemCh)
 			close(itemCh)
 			if rerr == nil && freshUrl != "" {
 				streamUrl = freshUrl
+				refreshed = true
+				urlResolvedAt = time.Now()
 				s.preloadMu.Lock()
 				cached.streamUrl = freshUrl
-				cached.urlResolvedAt = time.Now()
+				cached.urlResolvedAt = urlResolvedAt
 				s.preloadMu.Unlock()
 				s.repository.logger.Debug().Msg("debridstream: Refreshed expired preloaded URL (no createtorrent)")
 				s.persistPrewarm(opts, cached) // share the refreshed URL to the account-wide DB
 			} else if rerr != nil {
-				s.repository.logger.Warn().Err(rerr).Msg("debridstream: Could not refresh preloaded URL; using cached")
+				s.repository.logger.Warn().Err(rerr).Msg("debridstream: Could not refresh preloaded URL")
 			}
+		}
+		// Refresh failed → the stale cached link is the only candidate; verify it before
+		// handing it to the player. Dead → cold fallback instead of a dead first frame.
+		if !refreshed && !probeStreamURL(ctx, streamUrl, prewarmProbeTimeoutPlay) {
+			return dropDeadPreload()
 		}
 	}
 
@@ -1558,7 +1630,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 	s.setCurrentStreamUrl(streamUrl)
 	s.setCurrentFileId(cached.fileId) // shareable selection for watch-room peers
 	// Re-snapshot (URL may have been refreshed above) so a restart can replay it instantly.
-	s.persistActiveStream(opts, streamUrl, cached.torrentItemId, cached.fileId, cached.filepath, media, cached.torrent, cached.urlResolvedAt)
+	s.persistActiveStream(opts, streamUrl, torrentItemId, cached.fileId, cached.filepath, media, cached.torrent, urlResolvedAt)
 
 	switch opts.PlaybackType {
 	case PlaybackTypeNativePlayer:
@@ -1792,6 +1864,7 @@ func (s *StreamManager) fanOutBatchPreloads(
 		if stored != nil {
 			s.repository.logger.Info().Int("episode", ep).Str("torrent", torrent.Name).Msg("debridstream: Batch fan-out preloaded sibling episode")
 			s.persistPrewarm(derived, stored)
+			s.invalidatePrewarmBadges(derived)
 		}
 	}
 }

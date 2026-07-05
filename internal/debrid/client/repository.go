@@ -408,6 +408,29 @@ func (r *Repository) smFor(userID uint) *StreamManager {
 	return sm
 }
 
+// dsFor resolves the DirectStream manager for a user (per-session), or the global (admin)
+// one when no per-user resolver is set. Repository-level twin of StreamManager.ds for
+// callers that only have a userID (prewarm badge reads, cleanup).
+func (r *Repository) dsFor(userID uint) *directstream.Manager {
+	if r.sessionModulesFunc != nil {
+		if dm, _ := r.sessionModulesFunc(userID); dm != nil {
+			return dm
+		}
+	}
+	return r.directStreamManager
+}
+
+// evFor resolves the WS event manager scoped to a user, or the repo default. Repository-level
+// twin of StreamManager.ev for callers that only have a userID.
+func (r *Repository) evFor(userID uint) events.WSEventManagerInterface {
+	if r.sessionEventsFunc != nil {
+		if em := r.sessionEventsFunc(userID); em != nil {
+			return em
+		}
+	}
+	return r.wsEventManager
+}
+
 func (r *Repository) StartStream(ctx context.Context, opts *StartStreamOptions) error {
 	return r.smFor(opts.UserID).startStream(ctx, opts)
 }

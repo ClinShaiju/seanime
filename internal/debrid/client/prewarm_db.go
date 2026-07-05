@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"seanime/internal/database/models"
 	"seanime/internal/debrid/debrid"
+	"seanime/internal/events"
 	"seanime/internal/library/anime"
 	"seanime/internal/util"
 	"time"
@@ -19,8 +20,10 @@ const (
 	// prewarmProbeTimeout bounds the link-validity probe on the background prewarm path (nobody is
 	// waiting). prewarmProbeTimeoutPlay is the snappier bound on the play path so a dead link fails
 	// fast to the cold-resolve fallback instead of stalling the click; a live link answers in <1s.
+	// 4s (was 2s): a congested TorBox CDN routinely takes >2s to first byte, and a false "dead"
+	// costs a full cold resolve — worse than 2 extra seconds of probe.
 	prewarmProbeTimeout     = 6 * time.Second
-	prewarmProbeTimeoutPlay = 2 * time.Second
+	prewarmProbeTimeoutPlay = 4 * time.Second
 )
 
 // accountHash partitions shared prewarm rows by TorBox account. The raw API key is never stored —
@@ -50,6 +53,60 @@ func profileHashFor(p *anime.AutoSelectProfile) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// UserTags is a JSON array of user ids ("[1,3]") recording which users hold a stake in a shared
+// prewarm row. Progress cleanup removes only the cleaning user's tag and deletes the row when no
+// tags remain, so one user's progress can't wipe rows a slower user still needs.
+
+func parseUserTags(s string) []uint {
+	if s == "" {
+		return nil
+	}
+	var tags []uint
+	if json.Unmarshal([]byte(s), &tags) != nil {
+		return nil
+	}
+	return tags
+}
+
+func encodeUserTags(tags []uint) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(tags)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func mergeUserTag(tags []uint, id uint) []uint {
+	for _, t := range tags {
+		if t == id {
+			return tags
+		}
+	}
+	return append(tags, id)
+}
+
+func removeUserTag(tags []uint, id uint) []uint {
+	out := tags[:0]
+	for _, t := range tags {
+		if t != id {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func containsUserTag(tags []uint, id uint) bool {
+	for _, t := range tags {
+		if t == id {
+			return true
+		}
+	}
+	return false
+}
+
 // persistPrewarm writes (or refreshes) the shared, account-partitioned DB row for a resolved
 // prewarm/stream, so any user on the same account reuses it and it survives a restart. Best-effort;
 // reuses the persistedActiveStream blob format. Never reorders selection — it only records what was
@@ -66,8 +123,15 @@ func (s *StreamManager) persistPrewarm(opts *StartStreamOptions, e *preloadedDeb
 	if acct == "" {
 		return
 	}
+	// The blob records the entry's ORIGINAL opts, not the caller's: a play-time URL refresh
+	// re-persists with the play request's opts, which used to silently rewrite the row's
+	// recorded intent (PrewarmMetadata=true rows were downgraded on their first play).
+	blobOpts := e.opts
+	if blobOpts == nil {
+		blobOpts = opts
+	}
 	blob := persistedActiveStream{
-		Opts: opts, StreamUrl: e.streamUrl, FileId: e.fileId, Filepath: e.filepath,
+		Opts: blobOpts, StreamUrl: e.streamUrl, FileId: e.fileId, Filepath: e.filepath,
 		Media: e.media, Torrent: e.torrent, TorrentItemId: e.torrentItemId,
 		ResolvedAt: e.resolvedAt, UrlResolvedAt: e.urlResolvedAt, TtlNanos: int64(e.ttl),
 	}
@@ -75,12 +139,20 @@ func (s *StreamManager) persistPrewarm(opts *StartStreamOptions, e *preloadedDeb
 	if err != nil {
 		return
 	}
+	// Tag the acting user as a stakeholder (merged with existing tags — an upsert replaces the
+	// whole row, and dropping another user's tag would re-expose their rows to cross-user cleanup).
+	profileHash := profileHashFor(s.repository.resolveAutoSelectProfile(opts.UserID))
+	tags := []uint{opts.UserID}
+	if existing, ok := s.repository.db.GetDebridPrewarm(acct, opts.MediaId, opts.EpisodeNumber, opts.AniDBEpisode, profileHash); ok {
+		tags = mergeUserTag(parseUserTags(existing.UserTags), opts.UserID)
+	}
 	_ = s.repository.db.UpsertDebridPrewarm(&models.DebridPrewarm{
 		AccountHash:   acct,
 		MediaId:       opts.MediaId,
 		EpisodeNumber: opts.EpisodeNumber,
 		AniDBEpisode:  opts.AniDBEpisode,
-		ProfileHash:   profileHashFor(s.repository.resolveAutoSelectProfile(opts.UserID)),
+		ProfileHash:   profileHash,
+		UserTags:      encodeUserTags(tags),
 		Data:          string(data),
 		ResolvedAt:    e.resolvedAt,
 		UrlResolvedAt: e.urlResolvedAt,
@@ -138,11 +210,15 @@ func (s *StreamManager) hydratePrewarmFromDB(ctx context.Context, opts *StartStr
 	entry := &preloadedDebridStream{
 		opts: opts, streamUrl: streamUrl, fileId: p.FileId, filepath: p.Filepath,
 		media: p.Media, torrent: p.Torrent, torrentItemId: p.TorrentItemId,
-		resolvedAt: p.ResolvedAt, urlResolvedAt: urlResolvedAt, ttl: ttl, priority: opts.Priority,
+		// priority=true always: a hydrated row is continue-watching-class (only auto-select
+		// prewarms are persisted) and bounded by the row TTLs. With opts.Priority (false on the
+		// play path) + the row's old resolvedAt, the CURRENTLY PLAYING entry was the speculative
+		// budget's first eviction candidate.
+		resolvedAt: p.ResolvedAt, urlResolvedAt: urlResolvedAt, ttl: ttl, priority: true,
 	}
 	key := preloadKey(opts)
 	s.preloadMu.Lock()
-	s.evictIfNeededLocked(opts.Priority) // hydrates count against the speculative cap too
+	s.evictIfNeededLocked(true) // priority-class store: TTL sweep only, no speculative eviction
 	s.preloads[key] = entry
 	s.preloadMu.Unlock()
 
@@ -150,6 +226,7 @@ func (s *StreamManager) hydratePrewarmFromDB(ctx context.Context, opts *StartStr
 	if streamUrl != p.StreamUrl {
 		s.persistPrewarm(opts, entry)
 	}
+	s.invalidatePrewarmBadges(opts) // a fresh in-memory entry exists now — refresh badges
 	s.repository.logger.Debug().Int("mediaId", opts.MediaId).Int("episode", opts.EpisodeNumber).Msg("debridstream: Hydrated prewarm from shared DB (no re-resolve)")
 	return entry, true
 }
@@ -227,14 +304,15 @@ func (r *Repository) SweepExpiredPrewarms() {
 }
 
 // CleanupWatchedPrewarms drops prewarm state for episodes the user has already watched:
-// in-memory entries and shared DB rows with episode_number < keepFromEp (pass progress — the
-// last-watched episode is kept for instant replay, everything ≥ next-up is untouched). Called
-// from the continue-watching tick, where progress is already in hand. Without this, binge
-// leftovers sat for the full 24h TTL and flame-badged episodes already watched.
-// ponytail: progress-cleanup is per-account, not per-user; add user_tags refcounting if
-// multi-user progress divergence ever matters.
+// in-memory entries and shared DB rows with episode_number < keepFromEp. The caller (core tick)
+// passes progress-1, i.e. the "n-2 rule": the last-watched episode AND its predecessor stay
+// (AniList progress syncs at ~80% of an episode, so a plain <progress cutoff wiped the previous
+// episode's cache minutes into the next one). Shared DB rows are per-user refcounted via
+// UserTags: this user's tag is removed and the row is deleted only when no stakeholders remain,
+// so one user's progress can't wipe rows a slower user on the same account still needs.
 func (r *Repository) CleanupWatchedPrewarms(userID uint, mediaId, keepFromEp int) {
 	defer util.HandlePanicInModuleThen("debrid/client/CleanupWatchedPrewarms", func() {})
+	changed := false
 	// In-memory entries — only if the user's StreamManager exists (don't create one to clean it).
 	if sm, ok := r.streamManagers.Get(userID); ok {
 		sm.preloadMu.Lock()
@@ -243,26 +321,48 @@ func (r *Repository) CleanupWatchedPrewarms(userID uint, mediaId, keepFromEp int
 				continue
 			}
 			if k == sm.lastConsumedKey {
-				continue // currently/last playing — cancelStream owns its lifecycle
+				continue // currently/last playing — its consume/transition path owns its lifecycle
 			}
 			// Release any prewarmed MKV metadata (font attachments in RAM) with the entry.
 			if dm := sm.ds(e.opts); dm != nil {
 				dm.DropStreamMetadata(e.streamUrl)
 			}
 			delete(sm.preloads, k)
+			changed = true
 		}
 		sm.preloadMu.Unlock()
 	}
 	if r.db != nil {
 		if acct := r.accountHash(); acct != "" {
-			_ = r.db.DeleteDebridPrewarmsBelow(acct, mediaId, keepFromEp)
+			if rows, err := r.db.ListDebridPrewarms(); err == nil {
+				for _, row := range rows {
+					if row.AccountHash != acct || row.MediaId != mediaId || row.EpisodeNumber >= keepFromEp {
+						continue
+					}
+					tags := removeUserTag(parseUserTags(row.UserTags), userID)
+					if len(tags) == 0 {
+						// Untagged (legacy) or this was the last stakeholder → drop the row.
+						_ = r.db.DeleteDebridPrewarmByID(row.ID)
+					} else {
+						// Another user is still behind this episode — unref only.
+						_ = r.db.UpdateDebridPrewarmUserTags(row.ID, encodeUserTags(tags))
+					}
+					changed = true // either way this user's badge for the row goes away
+				}
+			}
+		}
+	}
+	if changed {
+		if em := r.evFor(userID); em != nil {
+			em.SendEvent(events.InvalidateQueries, []string{events.DebridGetPrewarmStatusEndpoint})
 		}
 	}
 }
 
 // PrewarmStatusItem reports that a given episode is prewarmed (will play instantly). Metadata=true
-// means it's also metadata/CDN-warmed (the tier-1 target — instant first frame too). Consumed by the
-// UI to badge episodes; read-only, never triggers a resolve.
+// means its MKV metadata is parsed and cached RIGHT NOW (instant first frame) — a live check
+// against the parser cache, not the recorded prewarm intent, so the badge can't claim warmth the
+// play won't get. Consumed by the UI to badge episodes; read-only, never triggers a resolve.
 type PrewarmStatusItem struct {
 	MediaId       int    `json:"mediaId"`
 	EpisodeNumber int    `json:"episodeNumber"`
@@ -271,13 +371,19 @@ type PrewarmStatusItem struct {
 }
 
 // GetPrewarmStatus returns the set of episodes that are prewarmed for the user: their own in-memory
-// preloads plus the fresh shared-DB rows for their account+profile (which they'd reuse instantly).
-// Pure read — no resolve, no manager creation.
+// preloads plus the fresh shared-DB rows for their account+profile that they hold a stake in.
+// Pure read — no resolve, no stream-manager creation.
 func (r *Repository) GetPrewarmStatus(userID uint) []PrewarmStatusItem {
 	defer util.HandlePanicInModuleThen("debrid/client/GetPrewarmStatus", func() {})
 	out := []PrewarmStatusItem{}
 	if r.settings == nil || !r.settings.PreloadNextStream || r.provider.IsAbsent() {
 		return out
+	}
+
+	// Metadata warmth = the user's directstream parser cache holds the entry's CURRENT URL.
+	dm := r.dsFor(userID)
+	metaWarm := func(streamUrl string) bool {
+		return dm != nil && dm.HasStreamMetadata(streamUrl)
 	}
 
 	type key struct{ media, ep int }
@@ -301,12 +407,14 @@ func (r *Repository) GetPrewarmStatus(userID uint) []PrewarmStatusItem {
 			if e == nil || e.opts == nil || time.Since(e.resolvedAt) > e.ttl {
 				continue
 			}
-			add(e.opts.MediaId, e.opts.EpisodeNumber, e.opts.AniDBEpisode, e.opts.PrewarmMetadata)
+			add(e.opts.MediaId, e.opts.EpisodeNumber, e.opts.AniDBEpisode, metaWarm(e.streamUrl))
 		}
 		sm.preloadMu.Unlock()
 	}
 
-	// Shared DB: fresh rows for this account + profile.
+	// Shared DB: fresh rows for this account + profile that this user holds a stake in (tagged,
+	// or legacy untagged). Rows held only by OTHER users are skipped — they'd still hydrate
+	// instantly at play, but badging them re-flames episodes this user already watched.
 	if r.db != nil {
 		if acct := r.accountHash(); acct != "" {
 			profile := profileHashFor(r.resolveAutoSelectProfile(userID))
@@ -315,16 +423,18 @@ func (r *Repository) GetPrewarmStatus(userID uint) []PrewarmStatusItem {
 					if row.AccountHash != acct || row.ProfileHash != profile {
 						continue
 					}
+					if tags := parseUserTags(row.UserTags); len(tags) > 0 && !containsUserTag(tags, userID) {
+						continue
+					}
 					ttl := time.Duration(row.TtlNanos)
 					if ttl <= 0 || time.Since(row.ResolvedAt) > ttl {
 						continue
 					}
-					meta := false
 					var p persistedActiveStream
-					if json.Unmarshal([]byte(row.Data), &p) == nil && p.Opts != nil {
-						meta = p.Opts.PrewarmMetadata
+					if json.Unmarshal([]byte(row.Data), &p) != nil {
+						continue
 					}
-					add(row.MediaId, row.EpisodeNumber, row.AniDBEpisode, meta)
+					add(row.MediaId, row.EpisodeNumber, row.AniDBEpisode, metaWarm(p.StreamUrl))
 				}
 			}
 		}
