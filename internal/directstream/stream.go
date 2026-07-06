@@ -253,6 +253,19 @@ func (m *Manager) updateOpenStepLocked(clientId string, step string) bool {
 		m.preparingClientID = clientId
 	}
 
+	// Only the FIRST step of a preparation opens the player. Later steps used to re-call
+	// openAndAwait to refresh the loading-screen text, but each call re-sends
+	// ServerEventOpenAndAwait (the client tears down its in-flight fetch and restarts) AND
+	// wipes the coordinator's playback state. Preloaded streams issue several steps, so they
+	// thrashed the player and dragged out "Starting video...". Subsequent steps are now no-ops
+	// on the wire.
+	// ponytail: server-only fix; drops mid-open loading-text refresh. To restore per-step text,
+	// make the client's OpenAndAwait handler idempotent for the same preparation (Denshi rebuild).
+	if m.openSignaled {
+		return true
+	}
+	m.openSignaled = true
+
 	m.Logger.Debug().Msgf("directstream: Signaling native player that a new stream is starting")
 	m.openAndAwait(clientId, step, m.preparingTarget)
 	return true
@@ -274,6 +287,7 @@ func (m *Manager) clearPreparationLocked() {
 	m.preparingClientID = ""
 	m.preparingTarget = ""
 	m.preparationCanceled = false
+	m.openSignaled = false
 	m.preparationCancelFunc = nil
 }
 

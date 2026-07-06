@@ -574,9 +574,38 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 		w.WriteHeader(resp.StatusCode)
 
 		if err := s.httpStream.WriteAndFlush(resp.Body, w, ra.Start); err != nil {
-			s.logger.Warn().Err(err).Str("range", rangeHeader).Msg("directstream(http): WriteAndFlush error")
+			if isBenignStreamWriteErr(err) {
+				// Client went away mid-write (seek / close / buffer-full) — normal for seekable video.
+				s.logger.Trace().Err(err).Str("range", rangeHeader).Msg("directstream(http): client disconnected during write")
+			} else {
+				s.logger.Warn().Err(err).Str("range", rangeHeader).Msg("directstream(http): WriteAndFlush error")
+			}
 		}
 	})
+}
+
+// isBenignStreamWriteErr reports whether a WriteAndFlush error is just the client going away
+// (seek, close, buffer-full) rather than a real server-side fault. These are routine for
+// seekable HTTP video — the player constantly opens range requests and abandons them — so they
+// must not be logged at WARN.
+func isBenignStreamWriteErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"context canceled",
+		"broken pipe",
+		"connection reset",
+		"reset by peer",
+		"PROTOCOL_ERROR",
+		"use of closed network connection",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // initializeStream creates the HTTP cache for this stream if it doesn't exist

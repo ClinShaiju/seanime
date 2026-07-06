@@ -335,6 +335,11 @@ func (s *httpBaseStream) serveStitched(w http.ResponseWriter, r *http.Request, r
 	}
 
 	if err := s.httpStream.WriteAndFlush(resp.Body, w, remStart); err != nil {
-		s.logger.Warn().Err(err).Msg("directstream(http): Stitched WriteAndFlush error")
+		if isBenignStreamWriteErr(err) {
+			// Client went away mid-write (seek / close / buffer-full) — normal for seekable video.
+			s.logger.Trace().Err(err).Msg("directstream(http): client disconnected during stitched write")
+		} else {
+			s.logger.Warn().Err(err).Msg("directstream(http): Stitched WriteAndFlush error")
+		}
 	}
 }

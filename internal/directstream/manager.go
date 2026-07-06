@@ -65,6 +65,7 @@ type (
 		preparingTarget        PlaybackTarget
 		preparationCanceled    bool
 		preparationCancelFunc  func()
+		openSignaled           bool
 		currentPlaybackTarget  PlaybackTarget
 		defaultPlaybackTarget  PlaybackTarget
 
