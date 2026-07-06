@@ -33,7 +33,7 @@ chat transcript; memory entries: `mpv-prism-startup-serialization`, `mpv-prism-o
 **Do not commit** `seanime-denshi/src/main.js` — it carries TEMP mpv-prism diagnostics
 (console pipe + debug-video localStorage flag), marked as such in-file.
 
-Build matrix: server changes → `scripts/deploy-vps.sh`; player changes exist only in a Denshi
+Build matrix: server changes → `scripts/deploy-server.sh`; player changes exist only in a Denshi
 build (`scripts/build-denshi-local.sh`) — browser has no MpvCore, Denshi bundles its own web UI.
 
 ## 2. STEP 1 — Measure (do this before building anything below)

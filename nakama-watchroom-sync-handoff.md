@@ -11,7 +11,7 @@ Nakama **same-instance "watch rooms"**: a pool of local users on one Seanime bac
 - **Denshi** — Electron desktop client. Serves a web bundle (`web-denshi`, built from `seanime-web`). Playback uses the **native player** (`native-player.tsx`, a `<VideoCore>` wrapping an `<video>`). `playbackType=nativeplayer`.
 - **Tenji** — React-Native/Expo iOS client at `H:/Projects/seanime-tenji` (fork `ClinShaiju/seanime-tenji`). Playback uses **MPV**. For debrid it consumes `external-player-open-url` and navigates to its player. `playbackType=externalPlayerLink`.
 
-Both talk to the **same Go backend** (VPS `opc@170.9.228.45` → https://seanime.clinshaiju.dev).
+Both talk to the **same Go backend** (home Pi `clin@home.clinshaiju.dev` → https://seanime.clinshaiju.dev).
 
 ## 2. Current architecture (3 deliberate decisions — keep them)
 
@@ -63,7 +63,7 @@ The shared `join-stream` starts the stream **server-side** but the **client play
   It's **still present in the deployed Denshi-22:56 + the last Tenji EAS build**, so you can read it from the live log immediately without rebuilding.
 - **Read the log:**
   ```bash
-  ssh -i ~/.ssh/seanime_oracle.key -o IdentitiesOnly=yes opc@170.9.228.45 \
+  ssh pi \
     'sudo journalctl -u seanime --since "6 min ago" --no-pager | grep -iE "CLIENT-DEBUG|relay sender|join-stream|debridstream >"'
   ```
   Relay line format: `relay sender=<clientId> controller=<bool> paused=<bool> t=<pos> stopped=<bool> media=<id> ep=<n> -> N follower(s)`.
