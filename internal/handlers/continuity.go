@@ -69,6 +69,8 @@ func (h *Handler) HandleGetContinuityWatchHistory(c echo.Context) error {
 		return h.RespondWithData(c, ret)
 	}
 
-	resp := h.userSession(c).Continuity().GetWatchHistory()
+	// Durable last-watched store (survives completion) so the library "Most recent watch"
+	// sort orders the whole collection, not just the handful of in-progress resume items.
+	resp := h.userSession(c).Continuity().GetLastWatched()
 	return h.RespondWithData(c, resp)
 }

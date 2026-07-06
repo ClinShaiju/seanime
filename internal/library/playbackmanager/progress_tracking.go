@@ -87,6 +87,8 @@ func (pm *PlaybackManager) handleTrackingStarted(status *mediaplayer.PlaybackSta
 	pm.currentMediaListEntry = mo.Some(currentMediaListEntry)
 	pm.currentLocalFile = mo.Some(currentLocalFile)
 	pm.currentLocalFileWrapperEntry = mo.Some(currentLocalFileWrapperEntry)
+	// Record last-watched on open so a crash before the first periodic/close save still logs it.
+	pm.continuityManager.RecordLastWatchedOpen(currentLocalFile.MediaId, currentLocalFile.GetEpisodeNumber())
 	// Get the playback state after swapping in the new local-file metadata.
 	_ps := pm.getLocalFilePlaybackState(status)
 	// Log
@@ -335,6 +337,9 @@ func (pm *PlaybackManager) handleStreamingTrackingStarted(status *mediaplayer.Pl
 		MediaId:       pm.currentStreamMedia.MustGet().GetID(),
 		Filepath:      "",
 	})
+
+	// Record last-watched on open so a crash before the first periodic/close save still logs it.
+	pm.continuityManager.RecordLastWatchedOpen(pm.currentStreamMedia.MustGet().GetID(), pm.currentStreamEpisode.MustGet().GetProgressNumber())
 	pm.lastLiveProgressSave = time.Now() // first periodic save lands ~liveProgressSaveInterval in
 
 	// ------- Discord ------- //

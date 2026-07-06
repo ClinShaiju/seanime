@@ -258,6 +258,56 @@ func TestGetExternalPlayerEpisodeWatchHistoryItemLocalFile(t *testing.T) {
 	require.NotNil(t, byFilename.Item)
 }
 
+func TestLastWatchedSurvivesCompletion(t *testing.T) {
+	manager, _ := newHistoryTestManager(t)
+	manager.SetSettings(&Settings{WatchContinuityEnabled: true})
+
+	// Watch to completion (ratio >= IgnoreRatioThreshold): the resume store purges this on
+	// read, but the durable last-watched store must keep it so recency sorting still works.
+	require.NoError(t, manager.UpdateWatchHistoryItem(&UpdateWatchHistoryItemOptions{
+		Kind:          OnlinestreamKind,
+		MediaId:       42,
+		EpisodeNumber: 12,
+		CurrentTime:   99,
+		Duration:      100,
+	}))
+
+	// Purge the resume item by reading it (ratio 0.99 >= 0.9 → deleted, returns not-found).
+	require.False(t, manager.GetWatchHistoryItem(42).Found)
+
+	lw := manager.GetLastWatched()
+	require.Contains(t, lw, 42)
+	require.Equal(t, 12, lw[42].EpisodeNumber)
+	require.False(t, lw[42].TimeUpdated.IsZero())
+}
+
+func TestRecordLastWatchedOpenBumpsWithoutClobberingResume(t *testing.T) {
+	manager, _ := newHistoryTestManager(t)
+	manager.SetSettings(&Settings{WatchContinuityEnabled: true})
+
+	// Existing resume position mirrored into durable store.
+	require.NoError(t, manager.UpdateWatchHistoryItem(&UpdateWatchHistoryItemOptions{
+		Kind:          OnlinestreamKind,
+		MediaId:       7,
+		EpisodeNumber: 3,
+		CurrentTime:   300,
+		Duration:      1400,
+	}))
+	before := manager.GetLastWatched()[7].TimeUpdated
+
+	time.Sleep(2 * time.Millisecond)
+	// Reopening the same episode bumps the timestamp but preserves the resume position.
+	manager.RecordLastWatchedOpen(7, 3)
+	after := manager.GetLastWatched()[7]
+	require.True(t, after.TimeUpdated.After(before))
+	require.Equal(t, 300.0, after.CurrentTime, "open must not clobber resume position")
+
+	// Disabled setting records nothing new.
+	manager.SetSettings(&Settings{WatchContinuityEnabled: false})
+	manager.RecordLastWatchedOpen(999, 1)
+	require.NotContains(t, manager.GetLastWatched(), 999)
+}
+
 func newHistoryTestManager(t *testing.T) (*Manager, *filecache.Cacher) {
 	t.Helper()
 

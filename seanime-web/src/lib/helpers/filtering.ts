@@ -56,8 +56,10 @@ type ContinueWatchingSorting =
     | "START_DATE_DESC"
     | "LAST_WATCHED"
     | "LAST_WATCHED_DESC"
+    | "UP_NEXT_DESC"
 
 export const CONTINUE_WATCHING_SORTING_OPTIONS = [
+    { label: "Up next (recent + newly aired)", value: "UP_NEXT_DESC" },
     { label: "Aired recently", value: "AIRDATE_DESC" },
     { label: "Aired oldest", value: "AIRDATE" },
     { label: "Highest episode number", value: "EPISODE_NUMBER_DESC" },
@@ -492,6 +494,38 @@ export function filterMangaCollectionEntries<T extends Anime_LibraryCollectionEn
     return arr
 }
 
+/**
+ * Stremio-style "up next" boost. Given a continue-watching entry (its next-up unwatched aired
+ * episode), returns that episode's airdate to float the show to the front of a last-watched
+ * sort — but only when the user is at most 1 aired episode behind. Returns null when there's
+ * nothing newly aired, or when the last 2 aired episodes are both unwatched (fell behind → not
+ * a priority, don't resurface).
+ */
+function getUpNextBoostDate(
+    cwEntry: Anime_Episode | undefined,
+    progress: number,
+    media: AL_BaseAnime | null | undefined,
+): string | null {
+    const airDate = cwEntry?.episodeMetadata?.airDate
+    if (!cwEntry || !airDate) return null
+    // Ignore not-yet-aired episodes (defensive; the continue-watching list is aired-only).
+    if (new Date(airDate).getTime() > Date.now()) return null
+    // Latest aired episode number: (next unaired − 1) while airing, else the total episode count.
+    const latestAired = media?.nextAiringEpisode?.episode
+        ? media.nextAiringEpisode.episode - 1
+        : (media?.episodes || cwEntry.episodeNumber)
+    // ≥2 unwatched aired episodes ⇒ the last two aired are both unwatched ⇒ don't bring to front.
+    if (latestAired - progress >= 2) return null
+    return airDate
+}
+
+// Picks the effective sort key for "up next": the newly-aired episode's airdate raises the
+// show's position but never lowers it (max of last-watched and the boost airdate).
+function upNextSortKey(lastWatched: string | undefined, boost: string | null): string {
+    const base = lastWatched || new Date(1000, 1, 1).toISOString()
+    return boost && boost > base ? boost : base
+}
+
 export function sortContinueWatchingEntries(
     entries: Anime_Episode[] | null | undefined,
     sorting: ContinueWatchingSorting,
@@ -547,6 +581,15 @@ export function sortContinueWatchingEntries(
     if (sorting === "LAST_WATCHED_DESC")
         arr = sortBy(arr, n => watchHistory?.[n.baseAnime?.id!]?.timeUpdated || new Date(1000, 1, 1).toISOString())
             .reverse()
+
+    // Sort by "up next" (Stremio-style): most-recently-watched first, but a freshly-aired
+    // episode floats its show to the front — unless the user is 2+ aired episodes behind.
+    if (sorting === "UP_NEXT_DESC")
+        arr = sortBy(arr, n => {
+            const progress = libraryEntries?.find(e => e.media?.id === n.baseAnime?.id)?.listData?.progress || 0
+            const boost = getUpNextBoostDate(n, progress, n.baseAnime)
+            return upNextSortKey(watchHistory?.[n.baseAnime?.id!]?.timeUpdated, boost)
+        }).reverse()
 
     return arr
 }

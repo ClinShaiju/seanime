@@ -261,6 +261,10 @@ func (c *Coordinator) Watch(target player.Target, clientID string, info *player.
 	}
 	c.populatePluginInfoFields(info)
 	c.restoreContinuity(info)
+	// Record last-watched on open so a crash before the first periodic/close save still logs it.
+	if c.continuityManager != nil && info.Media != nil && info.Episode != nil {
+		c.continuityManager.RecordLastWatchedOpen(info.Media.GetID(), info.Episode.GetEpisodeNumber())
+	}
 	c.mu.Lock()
 	c.activeTarget = target
 	c.session = player.SessionKey{

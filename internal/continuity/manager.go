@@ -21,6 +21,10 @@ type (
 		fileCacher                  *filecache.Cacher
 		db                          *db.Database
 		watchHistoryFileCacheBucket *filecache.Bucket
+		// lastWatchedFileCacheBucket is a durable per-media "last watched" store. Unlike
+		// watchHistoryFileCacheBucket (a resume store that purges completed/barely-started
+		// items), this is never purged on read, so it can order the whole library by recency.
+		lastWatchedFileCacheBucket *filecache.Bucket
 
 		externalPlayerEpisodeDetails mo.Option[*ExternalPlayerEpisodeDetails]
 
@@ -63,12 +67,15 @@ func NewManager(opts *NewManagerOptions) *Manager {
 		bucketName = opts.BucketName
 	}
 	watchHistoryFileCacheBucket := filecache.NewBucket(bucketName, time.Hour*24*99999)
+	// Derive the durable bucket from the resume bucket so per-user isolation is inherited.
+	lastWatchedFileCacheBucket := filecache.NewBucket(bucketName+"_lw", time.Hour*24*99999)
 
 	ret := &Manager{
 		fileCacher:                  opts.FileCacher,
 		logger:                      opts.Logger,
 		db:                          opts.Database,
 		watchHistoryFileCacheBucket: &watchHistoryFileCacheBucket,
+		lastWatchedFileCacheBucket:  &lastWatchedFileCacheBucket,
 		settings: &Settings{
 			WatchContinuityEnabled: false,
 		},

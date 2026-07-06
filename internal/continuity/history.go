@@ -16,6 +16,10 @@ const (
 	MaxWatchHistoryItems   = 100
 	IgnoreRatioThreshold   = 0.9
 	WatchHistoryBucketName = "watch_history"
+	// MaxLastWatchedItems caps the durable last-watched store. Larger than the resume cap
+	// because this outlives completion (one row per show ever watched).
+	// ponytail: 1000 rows (~a few hundred bytes each); bump if a whale library needs more.
+	MaxLastWatchedItems = 1000
 )
 
 type (
@@ -83,6 +87,64 @@ func (m *Manager) GetWatchHistory() WatchHistory {
 	return ret
 }
 
+// GetLastWatched returns the durable last-watched store: one item per show ever watched,
+// keyed by MediaId, never purged on completion. Used for library recency sorting and prewarm
+// candidate recency (the resume store GetWatchHistory can't do this — it drops finished shows).
+func (m *Manager) GetLastWatched() WatchHistory {
+	defer util.HandlePanicInModuleThen("continuity/GetLastWatched", func() {})
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	items, err := filecache.GetAll[*WatchHistoryItem](m.fileCacher, *m.lastWatchedFileCacheBucket)
+	if err != nil {
+		m.logger.Error().Err(err).Msg("continuity: Failed to get last-watched history")
+		return nil
+	}
+
+	ret := make(WatchHistory)
+	for _, item := range items {
+		ret[item.MediaId] = item
+	}
+
+	return ret
+}
+
+// RecordLastWatchedOpen bumps the durable last-watched timestamp when an episode is opened, so a
+// crash before the first periodic/close save still records that the user watched it. It only
+// touches the timestamp (and episode) — any existing resume position is preserved so the
+// continue-watching % badge doesn't flicker on reopen.
+func (m *Manager) RecordLastWatchedOpen(mediaId, episodeNumber int) {
+	defer util.HandlePanicInModuleThen("continuity/RecordLastWatchedOpen", func() {})
+
+	if mediaId == 0 {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.settings.WatchContinuityEnabled {
+		return
+	}
+
+	now := time.Now()
+	var existing *WatchHistoryItem
+	found, _ := m.fileCacher.Get(*m.lastWatchedFileCacheBucket, strconv.Itoa(mediaId), &existing)
+	if found && existing != nil && existing.EpisodeNumber == episodeNumber {
+		existing.TimeUpdated = now
+		m.setLastWatched(existing)
+		return
+	}
+
+	m.setLastWatched(&WatchHistoryItem{
+		MediaId:       mediaId,
+		EpisodeNumber: episodeNumber,
+		TimeAdded:     now,
+		TimeUpdated:   now,
+	})
+}
+
 func (m *Manager) GetWatchHistoryItem(mediaId int) *WatchHistoryItemResponse {
 	defer util.HandlePanicInModuleThen("continuity/GetWatchHistoryItem", func() {})
 
@@ -132,6 +194,9 @@ func (m *Manager) UpdateWatchHistoryItem(opts *UpdateWatchHistoryItemOptions) (e
 	if err != nil {
 		return fmt.Errorf("continuity: Failed to save watch history item: %w", err)
 	}
+
+	// Mirror into the durable last-watched store (this is the "close" / periodic-save path).
+	m.setLastWatched(i)
 
 	_ = hook.GlobalHookManager.OnWatchHistoryItemUpdated().Trigger(&WatchHistoryItemUpdatedEvent{
 		WatchHistoryItem: i,
@@ -340,6 +405,9 @@ func (m *Manager) UpdateExternalPlayerEpisodeWatchHistoryItem(currentTime, durat
 	// Save the i
 	_ = m.fileCacher.Set(*m.watchHistoryFileCacheBucket, strconv.Itoa(opts.MediaId), i)
 
+	// Mirror into the durable last-watched store (external-player "close" / periodic-save path).
+	m.setLastWatched(i)
+
 	// If the item was added, check if we need to remove the oldest item
 	if added {
 		_ = m.trimWatchHistoryItems()
@@ -386,6 +454,43 @@ func (m *Manager) getWatchHistory(mediaId int) (ret *WatchHistoryItem, exists bo
 	}
 
 	return
+}
+
+// setLastWatched upserts an item into the durable last-watched store. Caller must hold m.mu.
+// Gated on WatchContinuityEnabled so the durable store only reflects enabled sessions.
+func (m *Manager) setLastWatched(i *WatchHistoryItem) {
+	if i == nil || m.lastWatchedFileCacheBucket == nil || !m.settings.WatchContinuityEnabled {
+		return
+	}
+	if err := m.fileCacher.Set(*m.lastWatchedFileCacheBucket, strconv.Itoa(i.MediaId), i); err != nil {
+		m.logger.Error().Err(err).Msg("continuity: Failed to save last-watched item")
+		return
+	}
+	_ = m.trimLastWatchedItems()
+}
+
+// trimLastWatchedItems FIFO-evicts the oldest durable item past MaxLastWatchedItems.
+func (m *Manager) trimLastWatchedItems() error {
+	defer util.HandlePanicInModuleThen("continuity/TrimLastWatchedItems", func() {})
+
+	items, err := filecache.GetAll[*WatchHistoryItem](m.fileCacher, *m.lastWatchedFileCacheBucket)
+	if err != nil {
+		return fmt.Errorf("continuity: Failed to get last-watched items: %w", err)
+	}
+
+	if len(items) > MaxLastWatchedItems {
+		var oldestKey string
+		for key := range items {
+			if oldestKey == "" || items[key].TimeUpdated.Before(items[oldestKey].TimeUpdated) {
+				oldestKey = key
+			}
+		}
+		if err = m.fileCacher.Delete(*m.lastWatchedFileCacheBucket, oldestKey); err != nil {
+			return fmt.Errorf("continuity: Failed to remove oldest last-watched item: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // removes the oldest WatchHistoryItem from the file cache.
