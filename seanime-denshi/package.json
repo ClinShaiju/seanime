@@ -13,7 +13,7 @@
     "build:linux": "npm run sync:mpv-prism -- linux-x64 && electron-builder build --linux --x64"
   },
   "dependencies": {
-    "@mpv-prism/electron": "https://seanime.app/assets/mpv-prism/0.1.1/packages/mpv-prism-electron-0.1.1.tgz",
+    "@mpv-prism/electron": "https://seanime.app/assets/mpv-prism/0.1.0/packages/mpv-prism-electron-0.1.0.tgz",
     "castv2": "^0.1.10",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.7.3",
