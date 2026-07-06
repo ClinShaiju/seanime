@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	prewarmContinueWatchingCount = 3                // next-up episode of the last N watched shows
-	prewarmJustAiredCount        = 3                // + new episode of up to N currently-airing shows
+	prewarmWatchedMetaCount = 3                // next-up episode of the last N watched NON-airing shows (metadata preload)
+	prewarmAiringCount      = 3                // + next-up episode of up to N currently-airing shows (URL-only, keep link alive)
 	prewarmInitialDelay          = 30 * time.Second // let the collection + debrid settings load first
 	prewarmInterval              = 10 * time.Minute // re-check targets well within the selection/URL TTLs
 	// prewarmRecencyCutoff drops candidates the user hasn't touched in a while — sessions live for
@@ -34,10 +34,12 @@ type prewarmCandidate struct {
 	releasing bool      // show is currently airing (for the just-aired axis)
 }
 
-// prewarmTarget is a selected show + the next episode number to prewarm.
+// prewarmTarget is a selected show + the next episode to prewarm. metadata=true does the full
+// metadata parse + CDN warm; false resolves the CDN link only.
 type prewarmTarget struct {
-	mediaId int
-	nextEp  int
+	mediaId  int
+	nextEp   int
+	metadata bool
 }
 
 // selectPrewarmTargets picks next-up episodes to prewarm, from two axes (pure function, no I/O):
@@ -48,48 +50,67 @@ type prewarmTarget struct {
 //
 // Axis-1 order is preserved first, so opts[0] stays the most-recent watched (the tier-1 metadata
 // target). progress is used only to pick which episode, never as a ranking signal.
-func selectPrewarmTargets(cands []prewarmCandidate, maxWatched, maxJustAired int) []prewarmTarget {
+// selectPrewarmTargets picks next-up episodes to prewarm, in two buckets (pure function, no I/O):
+//
+//  1. Watched-metadata: up to maxWatchedMeta most-recently-watched NON-airing shows. A backlog/finished
+//     binge is stable, so we do the full metadata parse + CDN warm (target.metadata=true) — instant
+//     first frame.
+//  2. Airing keep-alive: up to maxAiring currently-RELEASING shows with a next-up episode available.
+//     Only the CDN link is resolved (target.metadata=false): airing links churn, so the point is to keep
+//     the next-to-watch link fresh, not to pay the font/metadata cost on an episode that may re-resolve.
+//
+// A show is in exactly one bucket (airing xor not). progress picks the episode, never ranks.
+func selectPrewarmTargets(cands []prewarmCandidate, maxWatchedMeta, maxAiring int) []prewarmTarget {
 	sort.SliceStable(cands, func(i, j int) bool {
 		return cands[i].updated.After(cands[j].updated) // most recent first
 	})
 
-	targets := make([]prewarmTarget, 0, maxWatched+maxJustAired)
+	targets := make([]prewarmTarget, 0, maxWatchedMeta+maxAiring)
 	picked := make(map[int]bool)
 
-	// Axis 1: most-recently-watched in-progress shows.
-	for _, c := range cands {
-		if len(targets) >= maxWatched {
-			break
-		}
+	// nextUp is the episode to preload for a candidate, or false if there's nothing to preload
+	// (never started, or caught up to what's aired/available).
+	nextUp := func(c prewarmCandidate) (int, bool) {
 		if c.progress < 1 {
-			continue // never started
+			return 0, false
 		}
 		nextEp := c.progress + 1
 		if c.epCount > 0 && nextEp > c.epCount {
-			continue // caught up to what's aired/available
+			return 0, false
 		}
-		targets = append(targets, prewarmTarget{mediaId: c.mediaId, nextEp: nextEp})
-		picked[c.mediaId] = true
+		return nextEp, true
 	}
 
-	// Axis 2: just-aired — releasing shows whose latest episode just dropped (one ahead of progress),
-	// not already picked above. progress+1 == epCount precisely means "I'm caught up except the
-	// newest", i.e. a fresh episode without needing air-time math.
-	justAired := 0
+	// Bucket 1: most-recently-watched non-airing shows -> metadata preload.
+	meta := 0
 	for _, c := range cands {
-		if justAired >= maxJustAired {
+		if meta >= maxWatchedMeta {
 			break
 		}
-		if picked[c.mediaId] || !c.releasing || c.progress < 1 {
+		if c.releasing {
 			continue
 		}
-		nextEp := c.progress + 1
-		if c.epCount <= 0 || nextEp != c.epCount {
-			continue // only the just-available latest episode, not an older backlog ep
+		if nextEp, ok := nextUp(c); ok {
+			targets = append(targets, prewarmTarget{mediaId: c.mediaId, nextEp: nextEp, metadata: true})
+			picked[c.mediaId] = true
+			meta++
 		}
-		targets = append(targets, prewarmTarget{mediaId: c.mediaId, nextEp: nextEp})
-		picked[c.mediaId] = true
-		justAired++
+	}
+
+	// Bucket 2: currently-airing shows -> URL-only, keep the next-to-watch link alive (no metadata).
+	airing := 0
+	for _, c := range cands {
+		if airing >= maxAiring {
+			break
+		}
+		if !c.releasing || picked[c.mediaId] {
+			continue
+		}
+		if nextEp, ok := nextUp(c); ok {
+			targets = append(targets, prewarmTarget{mediaId: c.mediaId, nextEp: nextEp, metadata: false})
+			picked[c.mediaId] = true
+			airing++
+		}
 	}
 	return targets
 }
@@ -131,7 +152,9 @@ func (a *App) buildPrewarmCandidates(collection *anilist.AnimeCollection, cont *
 		}
 	}
 
-	history := cont.GetWatchHistory()
+	// Durable last-watched store: recency survives episode completion, so a just-finished
+	// binge still prewarms its next-up episode (the resume store would have dropped it).
+	history := cont.GetLastWatched()
 	cands := make([]prewarmCandidate, 0, len(history))
 	mediaById := make(map[int]*anilist.BaseAnime, len(history))
 	for mediaId, item := range history {
@@ -222,7 +245,7 @@ func (a *App) buildPrewarmOptsForSession(s *UserSession) []*debrid_client.StartS
 			a.DebridClientRepository.CleanupWatchedPrewarms(s.UserID, c.mediaId, c.progress-1)
 		}
 	}
-	targets := selectPrewarmTargets(cands, prewarmContinueWatchingCount, prewarmJustAiredCount)
+	targets := selectPrewarmTargets(cands, prewarmWatchedMetaCount, prewarmAiringCount)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -255,18 +278,11 @@ func (a *App) buildPrewarmOptsForSession(s *UserSession) []*debrid_client.StartS
 			// Priority: this is the continue-watching next-up set the user actually clicks — it must
 			// survive the speculative browse/search/discover hover firehose (uncapped, not evicted).
 			Priority: true,
-			// Default URL-only; the tier-1 target (most-recent show, set after the loop) also
-			// pre-parses MKV metadata + warms the CDN. Keeping it to ONE target/user (was 3) + the
-			// prewarm queue + the directstream CDN-warm limiter is what makes this safe — the
-			// per-user×3 simultaneous font fan-out is what 429'd the CDN before.
-			PrewarmMetadata: false,
+			// Metadata parse + CDN warm only for the non-airing watched targets (bucket 1, up to
+			// prewarmWatchedMetaCount). Airing targets stay URL-only (keep the link fresh without the
+			// font fan-out). The prewarm queue + directstream CDN-warm limiter bound the metadata burst.
+			PrewarmMetadata: t.metadata,
 		})
-	}
-	// Tier-1 metadata prewarm (M1/M2): opts are recency-ordered (selectPrewarmTargets sorts
-	// most-recent first), so opts[0] is the show the user is most likely to resume next. Enable the
-	// full metadata-parse + CDN-warm for it alone — the "instant first frame" win without the burst.
-	if len(opts) > 0 {
-		opts[0].PrewarmMetadata = true
 	}
 	return opts
 }
