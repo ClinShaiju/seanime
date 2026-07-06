@@ -1,4 +1,20 @@
-const { app, BrowserWindow, Menu, Tray, ipcMain, shell, dialog, remote, net, protocol, nativeImage, screen, session, webContents } = require("electron")
+const {
+    app,
+    BrowserWindow,
+    Menu,
+    Tray,
+    ipcMain,
+    shell,
+    dialog,
+    remote,
+    net,
+    protocol,
+    nativeImage,
+    screen,
+    session,
+    webContents,
+    powerSaveBlocker
+} = require("electron")
 const path = require("path")
 const { spawn } = require("child_process")
 const fs = require("fs")
@@ -10,6 +26,13 @@ import("strip-ansi").then(module => {
 const { autoUpdater } = require("electron-updater")
 const log = require("electron-log/main")
 log.initialize()
+
+const _mpvPrismLogging = [
+    "MPV_PRISM_DEBUG_VIDEO",
+    "MPV_PRISM_DEBUG_NATIVE",
+    "MPV_PRISM_MPV_LOG_FILE",
+    "MPV_PRISM_NATIVE_LOG_FILE",
+].some(name => process.env[name] && process.env[name] !== "0")
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Settings
@@ -23,6 +46,7 @@ const DENSHI_SETTINGS_DEFAULTS = {
     windowBounds: null,
     windowMaximized: true,
     serverUrl: "", // External server URL. Empty = run and use the bundled sidecar.
+    mpvPrismLogging: false,
 }
 
 const MAIN_WINDOW_DEFAULT_BOUNDS = {
@@ -611,6 +635,69 @@ function getMpvCoreConfigDirectory() {
 
 function getMpvCoreConfigFilePath() {
     return path.join(getMpvCoreConfigDirectory(), "mpv.conf")
+}
+
+function getMpvCoreMpvLogPath() {
+    const p = path.join(app.getPath("userData"), "mpv-prism-libmpv.log")
+    return process.platform === "win32" ? p.replace(/\\/g, "/") : p
+}
+
+function getMpvCoreNativeLogPath() {
+    const p = path.join(app.getPath("userData"), "mpv-prism-native.log")
+    return process.platform === "win32" ? p.replace(/\\/g, "/") : p
+}
+
+function _createFile(filePath) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.closeSync(fs.openSync(filePath, "a"))
+}
+
+function setMpvCoreLoggingEnabled(enabled) {
+    if (denshiSettings.mpvPrismLogging !== enabled) {
+        denshiSettings.mpvPrismLogging = enabled
+        saveDenshiSettings(denshiSettings)
+
+        if (process.platform === "win32") {
+            dialog.showMessageBox({
+                type: "question",
+                buttons: ["Restart Now", "Later"],
+                defaultId: 0,
+                title: "Restart Required",
+                message: "A restart is required for MpvCore logging changes to take effect. Would you like to restart now?",
+                cancelId: 1,
+            }).then(({ response }) => {
+                if (response === 0) {
+                    app.relaunch()
+                    app.exit(0)
+                }
+            })
+        }
+    }
+
+    const shouldEnable = enabled || _mpvPrismLogging
+    if (!shouldEnable) {
+        delete process.env.MPV_PRISM_DEBUG_VIDEO
+        delete process.env.MPV_PRISM_DEBUG_NATIVE
+        delete process.env.MPV_PRISM_MPV_LOG_FILE
+        delete process.env.MPV_PRISM_NATIVE_LOG_FILE
+        log.info("[MpvCore] Logging disabled")
+        return false
+    }
+
+    process.env.MPV_PRISM_DEBUG_VIDEO ||= "1"
+    process.env.MPV_PRISM_DEBUG_NATIVE ||= "1"
+    process.env.MPV_PRISM_MPV_LOG_FILE ||= getMpvCoreMpvLogPath()
+    process.env.MPV_PRISM_NATIVE_LOG_FILE ||= getMpvCoreNativeLogPath()
+
+    _createFile(process.env.MPV_PRISM_MPV_LOG_FILE)
+    _createFile(process.env.MPV_PRISM_NATIVE_LOG_FILE)
+
+    log.info("[MpvCore] Logging enabled:", JSON.stringify({
+        forced: _mpvPrismLogging,
+        mpvLogFile: process.env.MPV_PRISM_MPV_LOG_FILE,
+        nativeLogFile: process.env.MPV_PRISM_NATIVE_LOG_FILE,
+    }))
+    return true
 }
 
 function getEmbeddedShadersDirectory() {
@@ -1469,6 +1556,13 @@ async function fetchGithubStatus() {
 app.whenReady().then(async () => {
     logStartupEvent("App ready")
 
+    // Load denshi settings early so environment variables are registered prior to DLL import
+    denshiSettings = loadDenshiSettings()
+
+    if (_mpvPrismLogging || denshiSettings.mpvPrismLogging) {
+        setMpvCoreLoggingEnabled(true)
+    }
+
     try {
         const { registerMpvPrismIpc } = await import("@mpv-prism/electron/main")
         mpvPrismMain = registerMpvPrismIpc({
@@ -1484,9 +1578,6 @@ app.whenReady().then(async () => {
         app.quit()
         return
     }
-
-    // Load denshi settings early
-    denshiSettings = loadDenshiSettings()
     if (_development) {
         denshiSettings.openInBackground = false
     }
@@ -1645,18 +1736,7 @@ app.whenReady().then(async () => {
     })
 
     ipcMain.handle("mpvcore:setLoggingEnabled", async (_, enabled) => {
-        if (enabled) {
-            process.env.MPV_PRISM_DEBUG_VIDEO = "1"
-            process.env.MPV_PRISM_DEBUG_NATIVE = "1"
-            process.env.MPV_PRISM_MPV_LOG_FILE = path.join(app.getPath("userData"), "mpv-prism-libmpv.log")
-            process.env.MPV_PRISM_NATIVE_LOG_FILE = path.join(app.getPath("userData"), "mpv-prism-native.log")
-        } else {
-            delete process.env.MPV_PRISM_DEBUG_VIDEO
-            delete process.env.MPV_PRISM_DEBUG_NATIVE
-            delete process.env.MPV_PRISM_MPV_LOG_FILE
-            delete process.env.MPV_PRISM_NATIVE_LOG_FILE
-        }
-        return true
+        return setMpvCoreLoggingEnabled(enabled)
     })
 
     ipcMain.handle("mpvcore:get-anime4k-directory", async () => {
@@ -1932,6 +2012,29 @@ app.whenReady().then(async () => {
         }
 
         return { ...denshiSettings }
+    })
+
+    // Power save blocker
+    ipcMain.handle("power-save-blocker:start", () => {
+        try {
+            const id = powerSaveBlocker.start("prevent-display-sleep")
+            log.info("[Denshi] Started power save blocker:", id)
+            return id
+        } catch (e) {
+            log.error("[Denshi] Failed to start power save blocker:", e)
+            throw e
+        }
+    })
+
+    ipcMain.handle("power-save-blocker:stop", (_, id) => {
+        try {
+            if (typeof id === "number" && powerSaveBlocker.isStarted(id)) {
+                powerSaveBlocker.stop(id)
+                log.info("[Denshi] Stopped power save blocker:", id)
+            }
+        } catch (e) {
+            log.error("[Denshi] Failed to stop power save blocker:", e)
+        }
     })
 
     // Chromecast
