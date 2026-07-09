@@ -8,6 +8,7 @@ import { useAtom } from "jotai/react"
 import { atomWithStorage } from "jotai/utils"
 import React, { useState } from "react"
 import { LiaMicrophoneSolid } from "react-icons/lia"
+import { LuGauge, LuHourglass } from "react-icons/lu"
 import { PiChatCircleDotsDuotone } from "react-icons/pi"
 import { TbArrowsSort, TbFilter, TbSortAscending, TbSortDescending, TbSparkles } from "react-icons/tb"
 
@@ -29,6 +30,60 @@ export type TorrentFilters = {
     audioOpus: boolean,
     audioEac3: boolean,
     audioFlac: boolean,
+    cached: boolean,     // debrid: instantly available
+    uncached: boolean,   // debrid: must be downloaded first (surfaces uncached packs buried by cache-first order)
+}
+
+// Cache markers sources (AIOStreams, MediaFusion, ...) embed in result names. Mirrors the
+// backend parseDebridCacheFlag (internal/debrid/client/cache_flags.go) so the client filter
+// agrees with server ranking — important because RealDebrid/AllDebrid have no working
+// instant-availability API and the name flag is the only cache signal.
+const CACHE_BOLT_MARKER = "⚡"       // cached / instant
+const CACHE_HOURGLASS_MARKER = "⏳" // uncached
+const CACHE_DOWNARROW_MARKER = "⬇"  // uncached
+
+function debridServiceCode(providerId: string | undefined): string {
+    switch (providerId) {
+        case "torbox":
+            return "tb"
+        case "realdebrid":
+            return "rd"
+        case "alldebrid":
+            return "ad"
+        default:
+            return ""
+    }
+}
+
+export type TorrentCacheStatus = "cached" | "uncached" | "unknown"
+
+// getTorrentCacheStatus resolves a result's debrid cache state from its name flag (primary
+// for aggregator results) with an instant-availability fallback (infohash-keyed, for
+// providers whose API still works). "unknown" when neither gives a clear answer.
+export function getTorrentCacheStatus(
+    torrent: { name?: string, infoHash?: string } | undefined,
+    debridInstantAvailability: Record<string, unknown>,
+    debridProviderId: string | undefined,
+): TorrentCacheStatus {
+    if (!torrent) return "unknown"
+    if (torrent.infoHash && debridInstantAvailability[torrent.infoHash]) return "cached"
+
+    const name = torrent.name ?? ""
+    if (!name) return "unknown"
+    const lower = name.toLowerCase()
+
+    const code = debridServiceCode(debridProviderId)
+    if (code) {
+        if (lower.includes(`[${code}+]`) || lower.includes(`${code}+`)) return "cached"
+        if (lower.includes(`${code} download`)) return "uncached"
+    }
+
+    const hasBolt = name.includes(CACHE_BOLT_MARKER)
+    const hasUncached = name.includes(CACHE_HOURGLASS_MARKER) || name.includes(CACHE_DOWNARROW_MARKER)
+    if (hasBolt && !hasUncached) return "cached"
+    if (hasUncached && !hasBolt) return "uncached"
+
+    return "unknown"
 }
 
 // Helper to get sort icon for a field
@@ -196,20 +251,33 @@ function anyFilterActive(filters: TorrentFilters) {
     return Object.values(filters).some(value => value === true)
 }
 
-// Generic filter function that works with both torrent types
+// Generic filter function that works with both torrent types.
+// getCacheStatus (optional) enables the debrid cached/uncached filters, which are name-flag
+// based and so work without torrentMetadata.
 export function filterItems<T extends TorrentLike | PreviewLike>(
     items: T[],
     torrentMetadata: Record<string, Torrent_TorrentMetadata> | undefined,
     filters: TorrentFilters,
+    getCacheStatus?: (torrent: TorrentLike) => TorrentCacheStatus,
 ): T[] {
-    if (!torrentMetadata || !anyFilterActive(filters)) {
+    if (!anyFilterActive(filters)) {
         return items
     }
 
     return items.filter(item => {
         // Handle both direct torrents and preview torrents
         const torrent = "torrent" in item ? item.torrent : item as TorrentLike
-        if (!torrent?.infoHash || !torrentMetadata[torrent.infoHash]) return true
+        if (!torrent) return true
+
+        // Debrid cache filter — independent of torrentMetadata. Mutually exclusive in the UI,
+        // but if both are somehow set treat it as no cache constraint (avoid an empty list).
+        if ((filters.cached || filters.uncached) && !(filters.cached && filters.uncached) && getCacheStatus) {
+            const status = getCacheStatus(torrent)
+            if (filters.cached && status !== "cached") return false
+            if (filters.uncached && status !== "uncached") return false
+        }
+
+        if (!torrent.infoHash || !torrentMetadata?.[torrent.infoHash]) return true
 
         const metadata = torrentMetadata[torrent.infoHash]
 
@@ -276,14 +344,19 @@ export function useTorrentFiltering() {
         audioAac: false,
         audioEac3: false,
         audioAc3: false,
+        cached: false,
+        uncached: false,
     })
 
     const handleFilterChange = (filterName: keyof TorrentFilters, value: boolean | "indeterminate") => {
         if (typeof value === "boolean") {
-            setFilters(prev => ({
-                ...prev,
-                [filterName]: value,
-            }))
+            setFilters(prev => {
+                const next = { ...prev, [filterName]: value }
+                // Cached and Uncached are mutually exclusive.
+                if (filterName === "cached" && value) next.uncached = false
+                if (filterName === "uncached" && value) next.cached = false
+                return next
+            })
         }
     }
 
@@ -305,6 +378,7 @@ export const TorrentFilterSortControls: React.FC<{
     onSortChange: (field: SortField) => void,
     onFilterChange: (filterName: keyof TorrentFilters, value: boolean | "indeterminate") => void,
     allowAutoSort?: boolean,
+    showCacheFilters?: boolean,
 }> = ({
     resultCount,
     sortField,
@@ -313,6 +387,7 @@ export const TorrentFilterSortControls: React.FC<{
     onSortChange,
     onFilterChange,
     allowAutoSort = false,
+    showCacheFilters = false,
 }) => {
     const isAnyFilterActive = anyFilterActive(filters)
 
@@ -335,6 +410,27 @@ export const TorrentFilterSortControls: React.FC<{
                         Filters are based on torrent names and can miss some results.
                     </p>
                     <div className="space-y-1">
+                        {showCacheFilters && <>
+                            <div className="grid grid-cols-2 gap-2">
+                                <Checkbox
+                                    label={<div className="flex items-center gap-1">
+                                        <LuGauge className="text-lg text-[--indigo]" /> Cached
+                                    </div>}
+                                    value={filters.cached}
+                                    onValueChange={(value) => onFilterChange("cached", value)}
+                                    size="sm"
+                                />
+                                <Checkbox
+                                    label={<div className="flex items-center gap-1">
+                                        <LuHourglass className="text-lg text-[--muted]" /> Uncached
+                                    </div>}
+                                    value={filters.uncached}
+                                    onValueChange={(value) => onFilterChange("uncached", value)}
+                                    size="sm"
+                                />
+                            </div>
+                            <Separator className="!my-2" />
+                        </>}
                         <Checkbox
                             label={<div className="flex items-center gap-1">
                                 <PiChatCircleDotsDuotone className="text-lg text-[--blue]" /> Multi Subs

@@ -643,6 +643,16 @@ func (s *UserSession) RefreshAnimeCollection() (*anilist.AnimeCollection, error)
 	if err != nil {
 		return nil, err
 	}
+	// Fan the refreshed collection out to this user's per-session stateful modules. Without this
+	// the session's directStream/playback never learn the collection (or serve a stale one after
+	// the user adds media to their list) — the cause of "cannot play local file, anime collection
+	// is not set". nil-guarded because modules are built lazily on first playback.
+	if s.directStream != nil {
+		s.directStream.SetAnimeCollection(ret)
+	}
+	if s.playback != nil {
+		s.playback.SetAnimeCollection(ret)
+	}
 	s.app.WSEventManager.SendEventToUser(s.UserID, events.RefreshedAnilistAnimeCollection, nil)
 	return ret, nil
 }

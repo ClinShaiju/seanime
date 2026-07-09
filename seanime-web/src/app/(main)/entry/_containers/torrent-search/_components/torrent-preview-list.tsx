@@ -8,11 +8,13 @@ import {
 import { useAnimeListTorrentProviderExtensions } from "@/api/hooks/extensions.hooks"
 import {
     filterItems,
+    getTorrentCacheStatus,
     sortItems,
     TorrentFilterSortControls,
     useTorrentFiltering,
     useTorrentSorting,
 } from "@/app/(main)/entry/_containers/torrent-search/_components/torrent-common-helpers"
+import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { TorrentList, TorrentListItem } from "@/app/(main)/entry/_containers/torrent-search/_components/torrent-preview-item"
 import { TorrentSelectionType } from "@/app/(main)/entry/_containers/torrent-search/torrent-search-drawer"
 import { LuffyError } from "@/components/shared/luffy-error"
@@ -55,6 +57,15 @@ export const TorrentPreviewList = React.memo((
     const { sortField, sortDirection, handleSortChange } = useTorrentSorting(allowAutoSort)
     const { filters, handleFilterChange } = useTorrentFiltering()
     const { data: extensions } = useAnimeListTorrentProviderExtensions()
+    const serverStatus = useServerStatus()
+
+    // Debrid cache filter is only meaningful for debrid/download selection.
+    const showCacheFilters = type === "download" || type === "debridstream-select" || type === "debridstream-select-file"
+    const cacheStatusOf = React.useCallback(
+        (t: { name?: string, infoHash?: string }) =>
+            getTorrentCacheStatus(t, debridInstantAvailability, serverStatus?.debridSettings?.provider),
+        [debridInstantAvailability, serverStatus?.debridSettings?.provider],
+    )
 
     if (isLoading) return <div className="space-y-2">
         <Skeleton className="h-[96px]" />
@@ -68,7 +79,7 @@ export const TorrentPreviewList = React.memo((
     }
 
     // Apply filters using the generic helper
-    const filteredPreviews = filterItems(previews, torrentMetadata, filters)
+    const filteredPreviews = filterItems(previews, torrentMetadata, filters, cacheStatusOf)
 
     // Sort the previews based on current sort settings using the generic helper
     const sortedPreviews = sortItems(filteredPreviews, sortField, sortDirection)
@@ -84,6 +95,7 @@ export const TorrentPreviewList = React.memo((
                 onSortChange={handleSortChange}
                 onFilterChange={handleFilterChange}
                 allowAutoSort={allowAutoSort}
+                showCacheFilters={showCacheFilters}
             />
             <ScrollAreaBox
                 className={cn(

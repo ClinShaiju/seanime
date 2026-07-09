@@ -1,10 +1,20 @@
 package anime
 
 import (
+	"regexp"
 	"seanime/internal/library/filesystem"
 
 	"github.com/5rahim/habari"
 )
+
+// seasonEpisodeDashRe matches a "S<season>-<episode>" token (e.g. "S1-10") and is used to
+// rewrite it to "S<season>E<episode>" before habari parses a *filename*. habari reads
+// "S1-10" as a season range [1,10] with no episode (only leading-zero forms like "S1-05"
+// squeak through), so double-digit episodes on releases that use a dash separator get no
+// episode number. A single video file is never a multi-season pack, so the rewrite is safe
+// here. It deliberately does NOT match "S1-S3" (real season range: the char after '-' is a
+// letter) and is applied to filenames only, never directory names (which can be true ranges).
+var seasonEpisodeDashRe = regexp.MustCompile(`(?i)(^|[^a-z])s(\d{1,2})-(\d{1,3})([^\d]|$)`)
 
 const (
 	LocalFileTypeMain    LocalFileType = "main"    // Main episodes that are trackable
@@ -70,8 +80,9 @@ func NewLocalFile(opath, dirPath string) *LocalFile {
 }
 
 func newLocalFile(opath string, info *filesystem.SeparatedFilePath) *LocalFile {
-	// Parse filename
-	fElements := habari.Parse(info.Filename)
+	// Parse filename. Normalize "S<n>-<ep>" → "S<n>E<ep>" first so dash-separated double-digit
+	// episodes (e.g. "S1-10") aren't misread by habari as a season range. Filename only.
+	fElements := habari.Parse(seasonEpisodeDashRe.ReplaceAllString(info.Filename, `${1}S${2}E${3}${4}`))
 	parsedInfo := NewLocalFileParsedData(info.Filename, fElements)
 
 	// Parse dir names

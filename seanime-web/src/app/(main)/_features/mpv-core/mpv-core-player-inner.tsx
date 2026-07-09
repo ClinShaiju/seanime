@@ -846,7 +846,16 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 await player.stop().catch(() => undefined)
                 if (token !== sessionTokenRef.current) return
                 suppressEndRef.current = false
-                await player.load(mc_resolveSource(info.playbackUri))
+                // Local files carry both a server-local path (playbackUri, e.g. /home/clin/...) and
+                // an HTTP streamUrl. When the player runs on a different machine than the server
+                // (Denshi pointed at a remote Pi), that path doesn't exist here and mpv fails to load
+                // with no HTTP request — so stream local files over HTTP, like the browser VideoCore.
+                // ponytail: co-located desktop now also streams local files via localhost HTTP
+                // (negligible), trading a micro-optimization for removing the remote-path failure class.
+                const loadSource = info.playbackType === "localfile"
+                    ? (info.streamUrl || info.playbackUri)
+                    : info.playbackUri
+                await player.load(mc_resolveSource(loadSource))
                 if (token !== sessionTokenRef.current) return
                 startupMarksRef.current.load = performance.now()
                 sendEvent("playback-loaded", { id: info.id, clientId })

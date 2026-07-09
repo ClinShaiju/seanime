@@ -816,6 +816,27 @@ func TestAutoSelect_Honzuki_AdoptedDaughter_SeasonFromTitle(t *testing.T) {
 	assert.Equal(t, s04.Name, names[0], "the declared-S04 release (season match) ranks first")
 }
 
+// A single multi-season pack ("S1 - S4") covers every season in the span, but habari parses the
+// range as just the endpoints {1,4} (it drops the dash). The old exact-membership test therefore
+// hit mid-range requests (S2, S3) with the season-mismatch penalty and buried the pack below even a
+// 480p single — the Hayate the Combat Butler report. Every season in the span must now pick the pack.
+func TestAutoSelect_MultiSeasonRangePack_CoversMidSeasons(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}
+
+	batch := &hibiketorrent.AnimeTorrent{Name: "[Anime Time] Hayate no Gotoku! S1 - S4 + Movie + OVA [BD][1080p][HEVC 10bit x265][Batch]", InfoHash: "b", Seeders: 40, IsBatch: true}
+	single := &hibiketorrent.AnimeTorrent{Name: "Hayate no Gotoku!! - 03 [480p]", InfoHash: "s", Seeders: 2}
+
+	for _, expSeason := range []int{1, 2, 3, 4} {
+		ranked := s.Rank([]*hibiketorrent.AnimeTorrent{batch, single}, profile, expSeason, 3, 2009, nil)
+		assert.Equalf(t, batch.Name, ranked[0].Name, "S1-S4 pack must cover season %d", expSeason)
+	}
+
+	// A wrong-season request outside the span is still a mismatch.
+	ranked := s.Rank([]*hibiketorrent.AnimeTorrent{batch, single}, profile, 5, 3, 2009, nil)
+	assert.Equal(t, single.Name, ranked[0].Name, "season 5 is outside the S1-S4 span → pack must not win")
+}
+
 // Year guard: even with season logic off (expectedSeason=0), a release whose enclosed year is far
 // from the entry's start year is a different cour and must be buried. Catches the wrong cour when
 // the season label is missing/foreign-numbered.

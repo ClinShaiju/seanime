@@ -327,16 +327,21 @@ func (h *Handler) HandleTorrentClientDownload(c echo.Context) error {
 		return h.RespondWithError(c, errors.New("could not contact torrent client, verify your settings or make sure it's running"))
 	}
 
-	var completeAnime *anilist.CompleteAnime
 	var err error
-	completeAnime, err = h.App.AnilistPlatformRef.Get().GetAnimeWithRelations(c.Request().Context(), b.Media.ID)
-	if err != nil {
-		completeAnime = b.Media.ToCompleteAnime()
-	}
 
 	if b.SmartSelect.Enabled {
 		if len(b.Torrents) > 1 {
 			return h.RespondWithError(c, errors.New("smart select is not supported for multiple torrents"))
+		}
+		// Media is only needed to map episodes to files for smart select. A plain download
+		// (e.g. "paste magnet → download to library, let the scanner match it") has no media.
+		if b.Media == nil {
+			return h.RespondWithError(c, errors.New("media is required for smart select"))
+		}
+
+		completeAnime, relErr := h.App.AnilistPlatformRef.Get().GetAnimeWithRelations(c.Request().Context(), b.Media.ID)
+		if relErr != nil {
+			completeAnime = b.Media.ToCompleteAnime()
 		}
 
 		// smart select

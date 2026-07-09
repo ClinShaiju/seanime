@@ -8,11 +8,13 @@ import {
 import { useAnimeListTorrentProviderExtensions } from "@/api/hooks/extensions.hooks"
 import {
     filterItems,
+    getTorrentCacheStatus,
     sortItems,
     TorrentFilterSortControls,
     useTorrentFiltering,
     useTorrentSorting,
 } from "@/app/(main)/entry/_containers/torrent-search/_components/torrent-common-helpers"
+import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { TorrentSelectionType } from "@/app/(main)/entry/_containers/torrent-search/torrent-search-drawer"
 import { LuffyError } from "@/components/shared/luffy-error"
 import { ScrollAreaBox } from "@/components/shared/scroll-area-box"
@@ -67,9 +69,17 @@ export const TorrentTable = memo((
     const { sortField, sortDirection, handleSortChange } = useTorrentSorting(allowAutoSort)
     const { filters, handleFilterChange } = useTorrentFiltering()
     const { data: extensions } = useAnimeListTorrentProviderExtensions()
+    const serverStatus = useServerStatus()
+
+    const showCacheFilters = type === "download" || type === "debridstream-select" || type === "debridstream-select-file"
+    const cacheStatusOf = React.useCallback(
+        (t: { name?: string, infoHash?: string }) =>
+            getTorrentCacheStatus(t, debridInstantAvailability, serverStatus?.debridSettings?.provider),
+        [debridInstantAvailability, serverStatus?.debridSettings?.provider],
+    )
 
     // Apply filters using the generic helper
-    const filteredTorrents = filterItems(torrents, torrentMetadata, filters)
+    const filteredTorrents = filterItems(torrents, torrentMetadata, filters, cacheStatusOf)
 
     // Sort the torrents after filtering using the generic helper
     const sortedTorrents = sortItems(filteredTorrents, sortField, sortDirection)
@@ -93,6 +103,7 @@ export const TorrentTable = memo((
                         onSortChange={handleSortChange}
                         onFilterChange={handleFilterChange}
                         allowAutoSort={allowAutoSort}
+                        showCacheFilters={showCacheFilters}
                     />
                     <ScrollAreaBox className={searchAcrossProviders ? "h-[calc(100dvh_-_30rem)]" : "h-[calc(100dvh_-_26rem)]"}>
                         <TorrentList>

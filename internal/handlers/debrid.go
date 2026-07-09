@@ -102,12 +102,19 @@ func (h *Handler) HandleDebridAddTorrents(c echo.Context) error {
 
 		torrent.MagnetLink = magnet
 
+		// Media is optional: a "download to library, let the scanner match it" flow has no media,
+		// so associate with media id 0 rather than dereferencing a nil pointer.
+		mediaID := 0
+		if b.Media != nil {
+			mediaID = b.Media.ID
+		}
+
 		// Add the torrent to the debrid service
 		_, err = h.App.DebridClientRepository.AddAndQueueTorrent(debrid.AddTorrentOptions{
 			MagnetLink:   magnet,
 			InfoHash:     torrent.InfoHash,
 			SelectFileId: "all",
-		}, b.Destination, b.Media.ID)
+		}, b.Destination, mediaID)
 		if err != nil {
 			// If there is only one torrent, return the error
 			if len(b.Torrents) == 1 {

@@ -218,6 +218,30 @@ func declaredSeasons(c *candidate) []int {
 	return out
 }
 
+// seasonCovered reports whether the requested season is covered by a release's declared seasons.
+// For a multi-season pack, habari parses a span like "S1 - S4" as just the endpoints {1,4}
+// (it drops the dash), so an exact-membership test wrongly rejects the mid-range seasons 2 and 3.
+// Treat any pack that declares 2+ seasons as covering the inclusive range [min..max]; single
+// episodes still require an exact match.
+func seasonCovered(seasons []int, expected int, isPack bool) bool {
+	if slices.Contains(seasons, expected) {
+		return true
+	}
+	if isPack && len(seasons) >= 2 {
+		lo, hi := seasons[0], seasons[0]
+		for _, n := range seasons {
+			if n < lo {
+				lo = n
+			}
+			if n > hi {
+				hi = n
+			}
+		}
+		return expected >= lo && expected <= hi
+	}
+	return false
+}
+
 // isUnlabeledSeasonPack reports whether a candidate is a multi-episode / full-season pack rather
 // than a single episode. Used (for sequels with no declared season) to demote the leaking S1 batch
 // while leaving season-less single episodes — which match the requested relative episode — alone.
@@ -477,7 +501,7 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 		// none of which is the requested season. Season-less releases and combined
 		// batches that include the requested season pass through.
 		if c.expectedSeason >= 2 {
-			if seasons := declaredSeasons(c); len(seasons) > 0 && !slices.Contains(seasons, c.expectedSeason) {
+			if seasons := declaredSeasons(c); len(seasons) > 0 && !seasonCovered(seasons, c.expectedSeason, isUnlabeledSeasonPack(c)) {
 				continue
 			}
 		}
@@ -854,7 +878,7 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 			if isUnlabeledSeasonPack(c) {
 				priority -= scoreSeasonAmbiguousBatch
 			}
-		case slices.Contains(seasons, c.expectedSeason):
+		case seasonCovered(seasons, c.expectedSeason, isUnlabeledSeasonPack(c)):
 			bonus += scoreSeasonMatch
 		default:
 			priority -= scoreSeasonMismatch

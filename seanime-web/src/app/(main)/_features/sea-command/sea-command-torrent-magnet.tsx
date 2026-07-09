@@ -2,6 +2,7 @@ import { Anime_Episode, HibikeTorrent_AnimeTorrent } from "@/api/generated/types
 import { useGetAnimeCollection } from "@/api/hooks/anilist.hooks"
 import { useGetAnimeEpisodeCollection } from "@/api/hooks/anime.hooks"
 import { useGetAnimeEntry } from "@/api/hooks/anime_entries.hooks"
+import { useDebridAddTorrents } from "@/api/hooks/debrid.hooks"
 import { useTorrentClientDownload } from "@/api/hooks/torrent_client.hooks"
 import { useAutoPlaySelectedTorrent, useDebridstreamAutoplay, useTorrentstreamAutoplay } from "@/app/(main)/_features/autoplay/autoplay"
 import { seaCommand_compareMediaTitles } from "@/app/(main)/_features/sea-command/utils.ts"
@@ -125,6 +126,9 @@ export function SeaCommandTorrentMagnet() {
     const { mutate: downloadTorrent } = useTorrentClientDownload(() => {
         router.push("/torrent-list")
     })
+    const { mutate: debridAddTorrentsToLibrary } = useDebridAddTorrents(() => {
+        router.push("/debrid")
+    })
 
     const setTorrentSearchSelection = useSetAtom(__torrentSearch_selectionAtom)
     const setTorrentSearchSelectionEpisode = useSetAtom(__torrentSearch_selectionEpisodeAtom)
@@ -158,6 +162,12 @@ export function SeaCommandTorrentMagnet() {
         && serverStatus?.settings?.torrent?.defaultTorrentClient !== TORRENT_CLIENT.NONE
     const canStreamSelectedEpisode = !!selectedEpisode?.aniDBEpisode
     const isValidMagnet = isMagnetLink(searchInput)
+
+    // Quick "paste → download to library, let the scanner match it" path (no anime/episode selection).
+    const libraryPath = serverStatus?.settings?.library?.libraryPath ?? ""
+    const canDeviceQuickDownload = !!libraryPath
+        && serverStatus?.settings?.torrent?.defaultTorrentClient !== TORRENT_CLIENT.NONE
+    const canDebridQuickDownload = !!libraryPath && hasDebridService
 
     function reset() {
         setStep("magnet")
@@ -262,6 +272,32 @@ export function SeaCommandTorrentMagnet() {
         })
     }
 
+    // Downloads the pasted magnet straight into the library root, no anime/episode selection.
+    // The scanner then auto-detects and matches it.
+    function handleDownloadToLibraryDevice() {
+        if (!isValidMagnet || !canDeviceQuickDownload) return
+
+        finish()
+        downloadTorrent({
+            torrents: [createManualMagnetTorrent(searchInput)],
+            destination: libraryPath,
+            smartSelect: {
+                enabled: false,
+                missingEpisodeNumbers: [],
+            },
+        })
+    }
+
+    function handleDownloadToLibraryDebrid() {
+        if (!isValidMagnet || !canDebridQuickDownload) return
+
+        finish()
+        debridAddTorrentsToLibrary({
+            torrents: [createManualMagnetTorrent(searchInput)],
+            destination: libraryPath,
+        })
+    }
+
     React.useEffect(() => {
         if (!open) {
             reset()
@@ -284,15 +320,27 @@ export function SeaCommandTorrentMagnet() {
 
                     {step === "magnet" && (
                         <CommandGroup heading="Paste a magnet link">
-                            {isValidMagnet ? <CommandItem
-                                onSelect={() => {
-                                    setStep("select-anime")
-                                    setMagnet(searchInput)
-                                    setInput("/magnet ")
-                                }}
-                            >
-                                Continue
-                            </CommandItem> : <p className="px-2 pb-2 text-sm text-[--muted]">
+                            {isValidMagnet ? <>
+                                {canDeviceQuickDownload && <CommandItem
+                                    onSelect={handleDownloadToLibraryDevice}
+                                >
+                                    Download to library (auto-detect)
+                                </CommandItem>}
+                                {canDebridQuickDownload && <CommandItem
+                                    onSelect={handleDownloadToLibraryDebrid}
+                                >
+                                    Download to library via Debrid (auto-detect)
+                                </CommandItem>}
+                                <CommandItem
+                                    onSelect={() => {
+                                        setStep("select-anime")
+                                        setMagnet(searchInput)
+                                        setInput("/magnet ")
+                                    }}
+                                >
+                                    Continue (pick anime / stream)
+                                </CommandItem>
+                            </> : <p className="px-2 pb-2 text-sm text-[--muted]">
                                 Paste a valid magnet link to continue.
                             </p>}
                             <CommandItem

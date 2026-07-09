@@ -300,6 +300,17 @@ func (m *Manager) PlayLocalFile(ctx context.Context, opts PlayLocalFileOptions) 
 
 	animeCollection, ok := m.animeCollection.Get()
 	if !ok {
+		// Per-session managers are never handed the collection up front (on a networked server
+		// every user — the admin included — runs as a per-user session), so load it lazily from
+		// the user's own platform. Cheap: bypassCache=false serves the already-cached collection.
+		if p := m.platformRef.Get(); p != nil {
+			if ac, err := p.GetAnimeCollection(ctx, false); err == nil && ac != nil {
+				m.SetAnimeCollection(ac)
+				animeCollection, ok = ac, true
+			}
+		}
+	}
+	if !ok {
 		return fmt.Errorf("cannot play local file, anime collection is not set")
 	}
 
