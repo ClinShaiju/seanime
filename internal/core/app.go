@@ -151,6 +151,7 @@ type (
 			Mediastream   *models.MediastreamSettings
 			Torrentstream *models.TorrentstreamSettings
 			Debrid        *models.DebridSettings
+			DummyDebrid   *models.DummyDebridSettings
 		}
 
 		// Metadata
@@ -467,7 +468,8 @@ func NewApp(configOpts *ConfigOptions, selfupdater *updater.SelfUpdater) *App {
 			Mediastream   *models.MediastreamSettings
 			Torrentstream *models.TorrentstreamSettings
 			Debrid        *models.DebridSettings
-		}{Mediastream: nil, Torrentstream: nil},
+			DummyDebrid   *models.DummyDebridSettings
+		}{Mediastream: nil, Torrentstream: nil, Debrid: nil, DummyDebrid: nil},
 		SelfUpdater:                     selfupdater,
 		moduleMu:                        sync.Mutex{},
 		OnRefreshAnilistCollectionFuncs: result.NewMap[string, func()](),
@@ -566,6 +568,9 @@ func NewApp(configOpts *ConfigOptions, selfupdater *updater.SelfUpdater) *App {
 
 	// Initialize torrentstream settings (for torrent streaming)
 	app.InitOrRefreshTorrentstreamSettings()
+
+	// Initialize dummy debrid settings before debrid providers can use them
+	app.InitOrRefreshDummyDebridSettings()
 
 	// Initialize debrid settings (for debrid services)
 	app.InitOrRefreshDebridSettings()

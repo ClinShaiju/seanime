@@ -2,7 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
-## v3.9.1
+## v3.9.3
+
+- ✨ Command Palette: Paste a magnet link → "Download to library (auto-detect)" downloads straight to the library root (device torrent client or debrid) and lets the scanner match it — no anime/episode selection
+- 🦺 Library: Parse dash-separated episodes (e.g. "S1-10") correctly instead of misreading them as a season range
+- 🦺 Torrent Auto-Select: Multi-season packs ("S1 - S4") now cover every season in the span (mid-seasons no longer buried below a low-res single)
+- 🦺 Local Playback: Fixed "cannot play local file, anime collection is not set" on per-user (networked) sessions
+- ⚡️ Subtitles: Embedded fonts prefetched in parallel and served from an immutable browser cache (font-heavy releases no longer stall playback ~40s over a remote server)
+- ⬆️ Merged upstream v3.9.1 (bugfixes below); kept mpv-prism pinned to 0.1.0 (upstream 0.1.1 fails its own checksum)
+
+### Merged from upstream v3.9.1
+
+- 🦺 VideoCore/MpvCore: Fixed preferred track selection
+- 🦺 VideoCore/MpvCore: Enforce absolute path for screenshot dir
+- 🦺 VideoCore: Fixed subtitles not appearing until after cycling
+- 🦺 Nakama: Fixed online streaming watch parties (regression)
+- 🦺 MpvCore: Fixed watch parties not working
+- 🦺 Library: Update library size stats after a scan
+- 🦺 Nakama: Send media to peers and host relay, fixes custom sources
+  - Progress tracking is still not supported
+- 🦺 Nakama: Fixed interference with connected peers not in watch party
+- 🦺 Plugins: Fixed missing fields in Discord RPC API event payload
+- 🦺 Plugins: Fixed tray icon badge state handling after remounts
+- 🦺 Torrent Download: Fixed filename detection when downloading file
+- 🦺 Manga: Workaround for AVIF file type when downloading
+- 🦺 MpvCore: Fixed logging on Windows
+- 🦺 UI: Fixed minor UI bugs
+
+## v3.9.2 (fork)
 
 - ⚡️ Denshi: Faster MpvCore startup — warm player kept alive and prewarm tiers for the direct-stream path
 - ⚡️ Debrid Streaming: Loading screen status now tracks real progress (preloaded streams report their steps instead of a static label)

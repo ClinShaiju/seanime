@@ -570,6 +570,8 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 
 	v1.GET("/debrid/settings", h.HandleGetDebridSettings)
 	v1.PATCH("/debrid/settings", h.HandleSaveDebridSettings, h.AdminOnly)
+	v1.GET("/debrid/dummy/settings", h.HandleGetDummyDebridSettings)
+	v1.PATCH("/debrid/dummy/settings", h.HandleSaveDummyDebridSettings, h.AdminOnly)
 	// Operation endpoints: anon (server-password only, no user session) may browse but
 	// not drive debrid work (add torrent, file previews → adds to debrid to read files).
 	v1.POST("/debrid/torrents", h.HandleDebridAddTorrents, h.UserOnly)

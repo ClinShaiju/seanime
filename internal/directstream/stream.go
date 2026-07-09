@@ -539,22 +539,35 @@ func (m *Manager) listenToPlayerEvents() {
 			case *player.LoadedMetadataEvent:
 				m.Logger.Debug().Msgf("directstream: Video loaded metadata")
 				if key.Target == player.TargetVideoCore {
-					if lfStream, ok := cs.(*LocalFileStream); ok {
-						reader, err := lfStream.newReader()
+					switch s := cs.(type) {
+					case *LocalFileStream:
+						reader, err := s.newReader()
 						if err == nil {
-							lfStream.StartSubtitleStream(lfStream, m.playbackCtx, reader, 0)
+							s.StartSubtitleStream(s, m.playbackCtx, reader, 0)
 						}
-					} else if torrentStream, ok := cs.(*TorrentStream); ok {
-						torrentStream.StartSubtitleStream(torrentStream, m.playbackCtx, torrentStream.newSubtitleReader(), 0)
-					} else if ds, ok := cs.(*DebridStream); ok && ds.directMode() {
-						// Direct CDN mode: the player never hits the proxy, so the proxy's
-						// range-triggered subtitle kick never fires — start the offset-0
-						// stream here instead. Proxy mode keeps its range-triggered kick.
-						subReader, err := ds.newSubtitleReader()
-						if err != nil {
-							m.Logger.Error().Err(err).Msg("directstream: Failed to create subtitle reader")
-						} else {
-							ds.StartSubtitleStream(ds, m.playbackCtx, subReader, 0)
+					case *TorrentStream:
+						s.StartSubtitleStream(s, m.playbackCtx, s.newSubtitleReader(), 0)
+					case *DebridStream:
+						if s.directMode() {
+							// Direct CDN mode: the player never hits the proxy, so the proxy's
+							// range-triggered subtitle kick never fires — start the offset-0
+							// stream here instead. Proxy mode keeps its range-triggered kick.
+							subReader, err := s.newSubtitleReader()
+							if err != nil {
+								m.Logger.Error().Err(err).Msg("directstream: Failed to create subtitle reader")
+							} else {
+								s.StartSubtitleStream(s, m.playbackCtx, subReader, 0)
+							}
+						}
+					case *UrlStream:
+						reader, err := s.newMetadataReader()
+						if err == nil {
+							s.StartSubtitleStream(s, m.playbackCtx, reader, 0)
+						}
+					case *Nakama:
+						reader, err := s.newMetadataReader()
+						if err == nil {
+							s.StartSubtitleStream(s, m.playbackCtx, reader, 0)
 						}
 					}
 				}

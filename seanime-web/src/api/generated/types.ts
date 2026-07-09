@@ -2120,6 +2120,7 @@ export type Continuity_WatchHistoryItemResponse = {
  */
 export type INTERNAL_FeatureFlags = {
     builtinTorrentClient: boolean
+    dummyDebrid: boolean
 }
 
 /**
@@ -2329,8 +2330,9 @@ export type DebridClient_FilePreview = {
  * - Package: debrid_client
  * @description
  *  PrewarmStatusItem reports that a given episode is prewarmed (will play instantly). Metadata=true
- *  means it's also metadata/CDN-warmed (the tier-1 target — instant first frame too). Consumed by the
- *  UI to badge episodes; read-only, never triggers a resolve.
+ *  means its MKV metadata is parsed and cached RIGHT NOW (instant first frame) — a live check
+ *  against the parser cache, not the recorded prewarm intent, so the badge can't claim warmth the
+ *  play won't get. Consumed by the UI to badge episodes; read-only, never triggers a resolve.
  */
 export type DebridClient_PrewarmStatusItem = {
     mediaId: number
@@ -3993,6 +3995,49 @@ export type Models_DiscordSettings = {
  * - Filename: models.go
  * - Package: models
  */
+export type Models_DummyDebridFile = {
+    id: string
+    path: string
+    name: string
+    episodeNumber: number
+    localFilePath: string
+    size?: number
+}
+
+/**
+ * - Filepath: ..\internal\database\models\models.go
+ * - Filename: models.go
+ * - Package: models
+ */
+export type Models_DummyDebridFiles = Array<Models_DummyDebridFile>
+
+/**
+ * - Filepath: internal/database/models/models.go
+ * - Filename: models.go
+ * - Package: models
+ */
+export type Models_DummyDebridSettings = {
+    enabled: boolean
+    profileName: string
+    fallbackFilePath: string
+    files: Models_DummyDebridFiles
+    cached: boolean
+    readyDelayMs: number
+    progressIntervalMs: number
+    firstByteDelayMs: number
+    bandwidthBytesPerSecond: number
+    chunkSize: number
+    jitterMs: number
+    id: number
+    createdAt?: string
+    updatedAt?: string
+}
+
+/**
+ * - Filepath: internal/database/models/models.go
+ * - Filename: models.go
+ * - Package: models
+ */
 export type Models_HomeItem = {
     id: string
     type: string
@@ -4396,7 +4441,8 @@ export type MpvCore_ClientEventType = "playback-loaded" |
     "audio-track-changed" |
     "subtitle-track-changed" |
     "playlist-state" |
-    "skip-data"
+    "skip-data" |
+    "startup-timing"
 
 /**
  * - Filepath: internal/mpvcore/insight.go
@@ -4756,6 +4802,7 @@ export type Nakama_WatchPartySessionMediaInfo = {
      * Path to local file if StreamType is file
      */
     localFilePath: string
+    media?: AL_BaseAnime
     onlinestreamParams?: Player_OnlinestreamParams
     torrentStreamParams?: Torrentstream_StartStreamOptions
 }

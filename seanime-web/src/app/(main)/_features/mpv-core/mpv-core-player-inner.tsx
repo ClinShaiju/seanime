@@ -27,7 +27,7 @@ import { VideoCoreLoadingScreen } from "@/app/(main)/_features/video-core/video-
 import { useVideoCoreInSight, vc_inSight_open, VideoCoreInSight } from "@/app/(main)/_features/video-core/video-core-in-sight"
 
 import { useVideoCorePlaylist, useVideoCorePlaylistSetup } from "@/app/(main)/_features/video-core/video-core-playlist"
-import { vc_formatTime } from "@/app/(main)/_features/video-core/video-core.utils"
+import { vc_formatTime, vc_getChapterType } from "@/app/(main)/_features/video-core/video-core.utils"
 import { useWebsocketMessageListener, useWebsocketSender } from "@/app/(main)/_hooks/handle-websockets"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { PlaybackPlayPill } from "@/app/(main)/entry/_containers/torrent-stream/playback-play-pill"
@@ -35,6 +35,7 @@ import { clientIdAtom } from "@/app/websocket-provider"
 import { Button, IconButton } from "@/components/ui/button"
 import { cn } from "@/components/ui/core/styling"
 import { Modal } from "@/components/ui/modal"
+import { logger } from "@/lib/helpers/debug"
 import { upath } from "@/lib/helpers/upath"
 import { WSEvents } from "@/lib/server/ws-events"
 import { __isDesktop__ } from "@/types/constants"
@@ -111,6 +112,7 @@ type DocumentPictureInPictureApi = {
     requestWindow(options?: { width?: number; height?: number }): Promise<Window>
 }
 
+const log = logger("MpvCore")
 const subtitleExts = ["srt", "ass", "ssa", "vtt", "ttml", "stl", "txt"]
 
 type MpvCorePlayerContentProps = {
@@ -233,6 +235,8 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const [buffering, setBuffering] = useAtom(mc_buffering)
     const [tracks, setTracks] = useAtom(mc_tracks)
     const [skipData, setSkipData] = useAtom(mc_skipData)
+    const [skipOpeningTime, setSkipOpeningTime] = React.useState(0)
+    const [skipEndingTime, setSkipEndingTime] = React.useState(0)
     const [overlayFeedback, setOverlayFeedback] = useAtom(mc_overlayFeedback)
     const [isFullscreen, setIsFullscreen] = useAtom(mc_isFullscreen)
     const [isPip, setIsPip] = useAtom(mc_isPip)
@@ -286,6 +290,48 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const closeTimerRef = React.useRef<number | null>(null)
     const resetMiniPlayerTimerRef = React.useRef<number | null>(null)
     const isPipRef = React.useRef(isPip)
+    const selectedTracksForPlaybackIdRef = React.useRef<string | null>(null)
+
+    const selectPreferredTracks = React.useCallback(async (tracksList: MpvPrismTrack[]) => {
+        const info = infoRef.current
+        if (!player || !info || !tracksList.length) return
+        if (selectedTracksForPlaybackIdRef.current === info.id) return
+
+        selectedTracksForPlaybackIdRef.current = info.id
+
+        log.info("Running preferred track selection. Total tracks:", tracksList.length)
+
+        const preferredAudio = mc_selectPreferredTrack(
+            tracksList,
+            "audio",
+            mpvSettings.preferredAudioLanguage,
+        )
+        const preferredSubtitle = mc_selectPreferredTrack(
+            tracksList,
+            "subtitle",
+            mpvSettings.preferredSubtitleLanguage,
+            mpvSettings.preferredSubtitleBlacklist,
+        )
+
+        log.info("Preferred track selection match:", {
+            audio: preferredAudio ? { id: preferredAudio.id, title: preferredAudio.title, lang: preferredAudio.lang } : "none",
+            subtitle: preferredSubtitle ? { id: preferredSubtitle.id, title: preferredSubtitle.title, lang: preferredSubtitle.lang } : "none",
+        })
+
+        await Promise.all([
+            preferredAudio?.id != null ? player.selectTrack("audio", preferredAudio.id).then(() => {
+                log.info("Programmatically selected audio track:", preferredAudio.id)
+            }).catch(err => {
+                log.error("Failed to select preferred audio track:", err)
+            }) : Promise.resolve(),
+            preferredSubtitle?.id != null ? player.selectTrack("subtitle", preferredSubtitle.id).then(() => {
+                log.info("Programmatically selected subtitle track:", preferredSubtitle.id)
+            }).catch(err => {
+                log.error("Failed to select preferred subtitle track:", err)
+            }) : Promise.resolve(),
+        ])
+    }, [player, mpvSettings.preferredAudioLanguage, mpvSettings.preferredSubtitleLanguage, mpvSettings.preferredSubtitleBlacklist])
+
     const [containerElement, setContainerElement] = React.useState<HTMLDivElement | null>(null)
     const [isTerminateConfirmOpen, setTerminateConfirmOpen] = React.useState(false)
     const [anime4kDirectory, setAnime4kDirectory] = React.useState<MpvCoreAnime4KDirectory | null>(null)
@@ -534,6 +580,43 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         const mpvChapters = createMpvChapterCues(nativeChapters, duration)
         return mpvChapters.length ? mpvChapters : createSkipChapterCues(skipData, duration)
     }, [duration, nativeChapters, skipData])
+    const opEdChapters = React.useMemo(() => {
+        let opening: { startTime: number, endTime: number } | null = null
+        let ending: { startTime: number, endTime: number } | null = null
+
+        if (nativeChapters.length) {
+            const sorted = [...nativeChapters].sort((a, b) => (a.time ?? 0) - (b.time ?? 0))
+            for (let i = 0; i < sorted.length; i++) {
+                const chapter = sorted[i]
+                const type = vc_getChapterType(chapter.title)
+                const start = chapter.time ?? 0
+                const end = sorted[i + 1]?.time ?? duration
+
+                if (!opening && type === "Opening") {
+                    opening = { startTime: start, endTime: end }
+                }
+                if (!ending && type === "Ending") {
+                    ending = { startTime: start, endTime: end }
+                }
+                if (opening && ending) break
+            }
+        }
+
+        if (!opening && skipData?.op?.interval) {
+            opening = {
+                startTime: skipData.op.interval.startTime,
+                endTime: skipData.op.interval.endTime,
+            }
+        }
+        if (!ending && skipData?.ed?.interval) {
+            ending = {
+                startTime: skipData.ed.interval.startTime,
+                endTime: skipData.ed.interval.endTime,
+            }
+        }
+
+        return { opening, ending }
+    }, [nativeChapters, skipData, duration])
     const audioTracks = React.useMemo(() => tracks.filter(track => mc_trackKind(track) === "audio"), [tracks])
     const subtitleTracks = React.useMemo(() => tracks.filter(track => mc_trackKind(track) === "subtitle"), [tracks])
 
@@ -836,13 +919,16 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         setBuffering(true)
         setDiagnostics({})
         setFrameDrops({})
-        setCacheState(null);
+        setCacheState(null)
+
+        log.info("Loading new video source: Playback ID =", info.id, "Playback URI =", info.playbackUri, "Token =", token);
 
         (async () => {
             try {
                 await player.awaitPresentationReady()
                 if (token !== sessionTokenRef.current) return
                 startupMarksRef.current.present = performance.now()
+                log.info("Presentation ready. Stopping current playback and loading new file...")
                 await player.stop().catch(() => undefined)
                 if (token !== sessionTokenRef.current) return
                 suppressEndRef.current = false
@@ -858,6 +944,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 await player.load(mc_resolveSource(loadSource))
                 if (token !== sessionTokenRef.current) return
                 startupMarksRef.current.load = performance.now()
+                log.info("Video file loaded. Initializing player properties...")
                 sendEvent("playback-loaded", { id: info.id, clientId })
                 await Promise.all([
                     player.setVolume(volume * 100),
@@ -866,7 +953,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                     applyMpvSubtitleSettings(player, mpvSettings),
                     applyShaderSettingsRef.current(player).catch(() => undefined),
                 ])
+                log.info("Player properties initialized.")
                 if (!autoPlay || info.initialState?.paused) {
+                    log.info("Pausing player on startup")
                     await player.pause()
                 } else {
                     // Warm player: mpv's pause property is sticky across loadfile on the same
@@ -884,10 +973,12 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 )
                 if (startupError && startupRetryCountRef.current < 2) {
                     startupRetryCountRef.current += 1
+                    log.warn("Startup error encountered, attempting retry:", message, "Attempt:", startupRetryCountRef.current)
                     setBuffering(true)
                     setPlayerGeneration(current => current + 1)
                     return
                 }
+                log.error("Fatal startup error, loading aborted:", message)
                 setBuffering(false)
                 setState(draft => {
                     draft.playbackError = message
@@ -903,14 +994,37 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     useMpvPrismEvent(player, "position", event => {
         const value = event.position ?? 0
         setCurrentTime(value)
-        if (autoSkip && skipData) {
-            for (const entry of [skipData.op, skipData.ed]) {
-                if (entry && value >= entry.interval.startTime && value < entry.interval.endTime) {
-                    player?.seek(entry.interval.endTime, "absolute+exact")
-                    break
-                }
+        if (autoSkip) {
+            let skipped = false
+            if (opEdChapters.opening && value >= opEdChapters.opening.startTime && value < opEdChapters.opening.endTime) {
+                player?.seek(opEdChapters.opening.endTime, "absolute+exact")
+                showMessage("Skipped OP")
+                skipped = true
+            } else if (opEdChapters.ending && value >= opEdChapters.ending.startTime && value < opEdChapters.ending.endTime) {
+                player?.seek(opEdChapters.ending.endTime, "absolute+exact")
+                showMessage("Skipped ED")
+                skipped = true
             }
+            if (skipped) return
         }
+
+        // Update on-screen skip buttons state
+        if (!autoSkip) {
+            if (opEdChapters.opening && value >= opEdChapters.opening.startTime && value < opEdChapters.opening.endTime) {
+                setSkipOpeningTime(opEdChapters.opening.endTime)
+            } else {
+                setSkipOpeningTime(0)
+            }
+            if (opEdChapters.ending && value >= opEdChapters.ending.startTime && value < opEdChapters.ending.endTime && value < durationRef.current) {
+                setSkipEndingTime(opEdChapters.ending.endTime)
+            } else {
+                setSkipEndingTime(0)
+            }
+        } else {
+            setSkipOpeningTime(0)
+            setSkipEndingTime(0)
+        }
+
         const total = durationRef.current
         if (!completedRef.current && total > 0 && value / total >= 0.8) {
             completedRef.current = true
@@ -935,8 +1049,13 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         if (!metadataReadyRef.current) return
         setMuted(event.muted)
     })
-    useMpvPrismEvent(player, "tracks", event => setTracks(event.tracks))
+    useMpvPrismEvent(player, "tracks", event => {
+        log.info("Received 'tracks' list update. Length:", event.tracks?.length)
+        setTracks(event.tracks)
+        selectPreferredTracks(event.tracks).catch(() => undefined)
+    })
     useMpvPrismEvent(player, "trackSelection", event => {
+        log.info("Track selection changed by player:", event.kind, "-> ID:", event.id)
         if (event.kind === "audio") sendEvent("audio-track-changed", { trackId: event.id })
         if (event.kind === "subtitle") sendEvent("subtitle-track-changed", { trackId: event.id })
     })
@@ -961,12 +1080,14 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         setDiagnostics(current => ({ ...current, [event.name]: event.value }))
     })
     useMpvPrismEvent(player, "state", event => {
+        log.info("State event fired:", event.state)
         if (event.state === "file-loaded") {
             if (startupMarksRef.current.fileLoaded == null) startupMarksRef.current.fileLoaded = performance.now()
             const token = sessionTokenRef.current;
             (async () => {
                 const info = infoRef.current
                 if (!player || !info) return
+                log.info("File-loaded event handling started. Fetching initial properties.")
                 const [nextDuration, nextPosition, nextTracks, nextChapters] = await Promise.all([
                     player.getProperty<number>("duration").catch(() => 0),
                     player.getProperty<number>("time-pos").catch(() => 0),
@@ -974,32 +1095,40 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                     player.getProperty<unknown>("chapter-list").catch(() => []),
                 ])
                 if (token !== sessionTokenRef.current) return
+                const chapters = normalizeMpvChapterList(nextChapters)
+                log.info("File properties loaded:", {
+                    duration: nextDuration,
+                    timePos: nextPosition,
+                    tracksCount: nextTracks?.length,
+                    chaptersCount: chapters.length,
+                })
                 setDuration(Number(nextDuration) || 0)
                 setCurrentTime(Number(nextPosition) || 0)
-                setNativeChapters(normalizeMpvChapterList(nextChapters))
+                setNativeChapters(chapters)
                 const finalTracks = nextTracks
                 setTracks(finalTracks)
-                const preferredAudio = mc_selectPreferredTrack(
-                    finalTracks,
-                    "audio",
-                    mpvSettings.preferredAudioLanguage,
-                )
-                const preferredSubtitle = mc_selectPreferredTrack(
-                    finalTracks,
-                    "subtitle",
-                    mpvSettings.preferredSubtitleLanguage,
-                    mpvSettings.preferredSubtitleBlacklist,
-                )
+                selectedTracksForPlaybackIdRef.current = null
+                await selectPreferredTracks(finalTracks)
                 const restoreTime = info.initialState?.currentTime
+                log.info("Restoring playback state:", {
+                    restoreTime,
+                    volume,
+                    muted,
+                    speed,
+                })
                 await Promise.all([
-                    preferredAudio?.id != null ? player.selectTrack("audio", preferredAudio.id).catch(() => undefined) : Promise.resolve(),
-                    preferredSubtitle?.id != null ? player.selectTrack("subtitle", preferredSubtitle.id).catch(() => undefined) : Promise.resolve(),
-                    typeof restoreTime === "number" && restoreTime > 0 ? player.seek(restoreTime, "absolute+exact").catch(() => undefined) : Promise.resolve(),
+                    typeof restoreTime === "number" && restoreTime > 0 ? player.seek(restoreTime, "absolute+exact").then(() => {
+                        log.info("Restored playback time position:", restoreTime)
+                    }).catch(() => undefined) : Promise.resolve(),
                     player.setVolume(volume * 100).catch(() => undefined),
                     player.setMute(muted).catch(() => undefined),
                     player.setSpeed(speed).catch(() => undefined),
-                    applyMpvSubtitleSettings(player, mpvSettings).catch(() => undefined),
-                    applyShaderSettingsRef.current(player).catch(() => undefined),
+                    applyMpvSubtitleSettings(player, mpvSettings).then(() => {
+                        log.info("Subtitle settings applied successfully")
+                    }).catch(() => undefined),
+                    applyShaderSettingsRef.current(player).then(() => {
+                        log.info("Shader settings applied successfully")
+                    }).catch(() => undefined),
                 ])
                 metadataReadyRef.current = true
                 setState(draft => {
@@ -1039,7 +1168,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         }
     })
     useMpvPrismEvent(player, "ended", event => {
+        log.info("Playback ended event received. Reason:", event.reason, "Error:", event.error)
         if (suppressEndRef.current) {
+            log.info("Playback end suppressed.")
             suppressEndRef.current = false
             return
         }
@@ -1049,9 +1180,11 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
             return
         }
         if ((event.reason ?? "").toLowerCase() !== "eof") return
+        log.info("Playback reached EOF. autoNext =", autoNext)
         sendEvent("ended", { autoNext })
     })
     useMpvPrismEvent(player, "error", event => {
+        log.error("Player error event received:", event.message)
         setBuffering(false)
         setState(draft => {
             draft.playbackError = event.message
@@ -1088,8 +1221,10 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         if (!player || !state.active) return
         const { parsed } = mc_parseCustomMpvConfig(activeMpvConfig)
         if ("deband" in parsed) {
+            log.info("Custom config has deband setting, skipping auto deband property set.")
             return
         }
+        log.info("Updating player deband option:", mpvSettings.deband ? "yes" : "no")
         player.setProperty("deband", mpvSettings.deband ? "yes" : "no").catch(() => undefined)
     }, [player, state.active, mpvSettings.deband, activeMpvConfig])
 
@@ -1212,7 +1347,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
 
             if (event.code === keybindings.seekForward.key) {
                 event.preventDefault()
-                const interval = [skipData?.op?.interval, skipData?.ed?.interval]
+                const interval = [opEdChapters.opening, opEdChapters.ending]
                     .find(value => value && currentTimeRef.current >= value.startTime && currentTimeRef.current < value.endTime)
                 if (interval) {
                     await player.seek(interval.endTime, "absolute+exact")
@@ -1308,7 +1443,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         volume,
         keybindings,
         chapterCues,
-        skipData,
+        opEdChapters,
         audioTracks,
         subtitleTracks,
         isFullscreen,
@@ -1651,6 +1786,50 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                                     onClick={handlePlayerSurfaceClick}
                                     onContextMenu={event => event.preventDefault()}
                                 />
+
+                                {busy && (
+                                    <>
+                                        {!!skipOpeningTime && !state.miniPlayer && (
+                                            <div
+                                                data-vc-element="skip-oped-button-container"
+                                                data-vc-for="opening"
+                                                className="absolute left-5 bottom-28 z-[60] native-player-hide-on-fullscreen"
+                                            >
+                                                <Button
+                                                    size="sm"
+                                                    intent="gray-basic"
+                                                    onClick={e => {
+                                                        e.stopPropagation()
+                                                        player?.seek(skipOpeningTime, "absolute+exact")
+                                                    }}
+                                                    onPointerMove={e => e.stopPropagation()}
+                                                >
+                                                    Skip Opening
+                                                </Button>
+                                            </div>
+                                        )}
+
+                                        {!!skipEndingTime && !state.miniPlayer && (
+                                            <div
+                                                data-vc-element="skip-oped-button-container"
+                                                data-vc-for="ending"
+                                                className="absolute right-5 bottom-28 z-[60] native-player-hide-on-fullscreen"
+                                            >
+                                                <Button
+                                                    size="sm"
+                                                    intent="gray-basic"
+                                                    onClick={e => {
+                                                        e.stopPropagation()
+                                                        player?.seek(skipEndingTime, "absolute+exact")
+                                                    }}
+                                                    onPointerMove={e => e.stopPropagation()}
+                                                >
+                                                    Skip Ending
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
 
                                 {showStats && !state.miniPlayer && (
                                     <MpvCoreStats

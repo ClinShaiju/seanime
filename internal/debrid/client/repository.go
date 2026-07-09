@@ -11,6 +11,7 @@ import (
 	"seanime/internal/database/models"
 	"seanime/internal/debrid/alldebrid"
 	"seanime/internal/debrid/debrid"
+	"seanime/internal/debrid/dummy"
 	"seanime/internal/debrid/premiumize"
 	"seanime/internal/debrid/realdebrid"
 	"seanime/internal/debrid/torbox"
@@ -61,6 +62,7 @@ type (
 		// a user's stream overlay/loader events reach only them (not always the admin).
 		// nil → fall back to wsEventManager (admin-scoped). Injected by core.
 		sessionEventsFunc func(userID uint) events.WSEventManagerInterface
+		dummyDebridEnabled bool
 
 		playbackManager *playbackmanager.PlaybackManager
 		// streamManagers holds one StreamManager per user. Each owns its own per-stream
@@ -102,6 +104,7 @@ type (
 		SessionModulesFunc func(userID uint) (*directstream.Manager, *playbackmanager.PlaybackManager)
 		// SessionEventsFunc resolves the WS event manager scoped to a user (optional).
 		SessionEventsFunc func(userID uint) events.WSEventManagerInterface
+		DummyDebridEnabled bool
 	}
 )
 
@@ -117,6 +120,7 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		torrentRepository:     opts.TorrentRepository,
 		platformRef:           opts.PlatformRef,
 		playbackManager:       opts.PlaybackManager,
+		dummyDebridEnabled:    opts.DummyDebridEnabled,
 		metadataProviderRef:   opts.MetadataProviderRef,
 		completeAnimeCache:    anilist.NewCompleteAnimeCache(),
 		ctxMap:                 result.NewMap[string, context.CancelFunc](),
@@ -159,6 +163,19 @@ func (r *Repository) startOrStopDownloadLoop() {
 	}
 }
 
+func (r *Repository) closeProvider() {
+	provider, found := r.provider.Get()
+	if !found {
+		return
+	}
+
+	if closer, ok := provider.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			r.logger.Warn().Err(err).Msg("debrid: Failed to close provider")
+		}
+	}
+}
+
 // InitializeProvider is called each time the settings change
 func (r *Repository) InitializeProvider(settings *models.DebridSettings) error {
 	// Only drop prewarmed streams when the ACCOUNT changes (provider/key/enabled). A benign settings
@@ -171,11 +188,14 @@ func (r *Repository) InitializeProvider(settings *models.DebridSettings) error {
 	r.settings = settings
 
 	if !settings.Enabled {
+		r.closeProvider()
 		r.provider = mo.None[debrid.Provider]()
 		// Stop the download loop if it's running
 		r.startOrStopDownloadLoop()
 		return nil
 	}
+
+	r.closeProvider()
 
 	switch settings.Provider {
 	case "torbox":
@@ -186,6 +206,13 @@ func (r *Repository) InitializeProvider(settings *models.DebridSettings) error {
 		r.provider = mo.Some(alldebrid.NewAllDebrid(r.logger))
 	case "premiumize":
 		r.provider = mo.Some(premiumize.NewPremiumize(r.logger, &premiumizeHashStore{db: r.db}))
+	case "dummy":
+		if r.dummyDebridEnabled {
+			r.provider = mo.Some(dummy.New(r.logger, r.db))
+		} else {
+			r.provider = mo.None[debrid.Provider]()
+			r.logger.Warn().Msg("debrid: Dummy provider is disabled")
+		}
 	default:
 		r.provider = mo.None[debrid.Provider]()
 	}
