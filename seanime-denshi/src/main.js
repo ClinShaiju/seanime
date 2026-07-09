@@ -208,6 +208,13 @@ function setupChromiumFlags() {
     app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required")
     app.commandLine.appendSwitch("force_high_performance_gpu")
     process.env.MPV_PRISM_HIGH_PERFORMANCE_GPU ||= "1"
+    // mpv-prism's ANGLE backend can end up on an unsynchronized shared texture
+    // (candidate=nt-handle+shared, keyedMutex=0) → chromium samples mid-write →
+    // intermittent black frames during playback (verified via CDP frame capture
+    // 2026-07-09, RTX 4060 laptop). The WGL backend does keyed-mutex handoff and
+    // showed zero black frames in the same A/B; nvdec hwdec + 0 dropped frames.
+    // ||= keeps an env override possible for A/B.
+    if (process.platform === "win32") process.env.MPV_PRISM_WIN32_BACKEND ||= "wgl"
 
     app.commandLine.appendSwitch("disk-cache-size", (400 * 1000 * 1000).toString())
     app.commandLine.appendSwitch("force-effective-connection-type", "4g")
@@ -224,42 +231,36 @@ function setupChromiumFlags() {
     // Hardware acceleration and GPU optimizations
     app.commandLine.appendSwitch("force-high-performance-gpu")
 
-    // ponytail: upstream's aggressive GPU/compositing flags inject single black
-    // composited frames ~1x/sec during MpvCore playback on some machines (verified
-    // via CDP screencast: byte-identical black frames while the presenter reports
-    // clean presents). They buy nothing here anyway — video render + Anime4K run
-    // inside libmpv, Chromium only blits finished frames. Default is stock Chromium;
-    // SEANIME_DENSHI_GPU_FLAGS=1 restores the old flag set for A/B.
-    const legacyGpuFlags = process.env.SEANIME_DENSHI_GPU_FLAGS === "1"
-    if (legacyGpuFlags) {
-        app.commandLine.appendSwitch("enable-zero-copy")
-        app.commandLine.appendSwitch("enable-hardware-overlays", "single-fullscreen,single-on-top,underlay")
-        app.commandLine.appendSwitch("ignore-gpu-blocklist")
-        app.commandLine.appendSwitch("enable-accelerated-video-decode")
-    }
+    // app.commandLine.appendSwitch('enable-gpu-rasterization');
+    app.commandLine.appendSwitch("enable-zero-copy")
+    app.commandLine.appendSwitch("enable-hardware-overlays", "single-fullscreen,single-on-top,underlay")
+    app.commandLine.appendSwitch("ignore-gpu-blocklist")
+
+    // Video-specific optimizations
+    app.commandLine.appendSwitch("enable-accelerated-video-decode")
 
     // Enable advanced features
     app.commandLine.appendSwitch("enable-features", [
         "WebAssemblyLazyCompilation",
         "ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes",
-        ...(legacyGpuFlags ? ["CanvasOopRasterization", "UseSkiaRenderer"] : []),
+        "CanvasOopRasterization",
+        "UseSkiaRenderer",
         "PlatformEncryptedDolbyVision",
         "SharedArrayBuffer",
     ].join(","))
 
-    if (legacyGpuFlags) {
-        app.commandLine.appendSwitch("enable-unsafe-webgpu")
-        app.commandLine.appendSwitch("enable-gpu-rasterization")
-        app.commandLine.appendSwitch("enable-oop-rasterization")
-        app.commandLine.appendSwitch("double-buffer-compositing")
-        app.commandLine.appendSwitch("disable-direct-composition-video-overlays")
-    }
+    app.commandLine.appendSwitch("enable-unsafe-webgpu")
+    app.commandLine.appendSwitch("enable-gpu-rasterization")
+    app.commandLine.appendSwitch("enable-oop-rasterization")
 
     // Background processing optimizations
     app.commandLine.appendSwitch("disable-background-timer-throttling")
     app.commandLine.appendSwitch("disable-backgrounding-occluded-windows")
     app.commandLine.appendSwitch("disable-renderer-backgrounding")
     app.commandLine.appendSwitch("disable-background-media-suspend")
+
+    app.commandLine.appendSwitch("double-buffer-compositing")
+    app.commandLine.appendSwitch("disable-direct-composition-video-overlays")
 
     if (process.platform === "linux") {
         log.info(`Passing --gtk-version=3 to Electron`)

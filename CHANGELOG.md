@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.9.4
+
+- 🦺 Desktop (MpvCore): Fixed intermittent black-frame flashing during playback — mpv-prism's ANGLE backend could hand chromium an unsynchronized shared texture (no keyed mutex), letting frames be sampled mid-write; Denshi now defaults to the WGL backend (keyed-mutex handoff; nvdec hardware decode unaffected, `MPV_PRISM_WIN32_BACKEND` env overrides)
+- ↩️ Desktop: Restored upstream's GPU/compositing chromium flags (the v3.9.3 flag-strip targeted the wrong layer for the flashing; superseded by the WGL fix)
+
 ## v3.9.3
 
 - ✨ Command Palette: Paste a magnet link → "Download to library (auto-detect)" downloads straight to the library root (device torrent client or debrid) and lets the scanner match it — no anime/episode selection
