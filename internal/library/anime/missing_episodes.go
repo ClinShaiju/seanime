@@ -8,6 +8,7 @@ import (
 	"seanime/internal/hook"
 	"seanime/internal/util"
 	"seanime/internal/util/limiter"
+	"seanime/internal/util/result"
 	"sort"
 	"sync"
 	"time"
@@ -16,27 +17,26 @@ import (
 	lop "github.com/samber/lo/parallel"
 )
 
-var missingEpisodesCache = struct {
-	sync.Mutex
-	value *MissingEpisodes
-}{}
+// missingEpisodesCache is keyed by user id so each user caches their own missing-episodes
+// result (derived from their own collection) instead of only the admin caching and every
+// other user recomputing on each request.
+var missingEpisodesCache = result.NewMap[uint, *MissingEpisodes]()
 
-func GetMissingEpisodesCache() (*MissingEpisodes, bool) {
-	missingEpisodesCache.Lock()
-	defer missingEpisodesCache.Unlock()
-
-	return missingEpisodesCache.value, missingEpisodesCache.value != nil
+func GetMissingEpisodesCache(userID uint) (*MissingEpisodes, bool) {
+	v, ok := missingEpisodesCache.Get(userID)
+	if !ok || v == nil {
+		return nil, false
+	}
+	return v, true
 }
 
-func SetMissingEpisodesCache(missing *MissingEpisodes) {
-	missingEpisodesCache.Lock()
-	defer missingEpisodesCache.Unlock()
-
-	missingEpisodesCache.value = missing
+func SetMissingEpisodesCache(userID uint, missing *MissingEpisodes) {
+	missingEpisodesCache.Set(userID, missing)
 }
 
+// ClearMissingEpisodesCache clears every user's cached result (called on collection refresh).
 func ClearMissingEpisodesCache() {
-	SetMissingEpisodesCache(nil)
+	missingEpisodesCache.Clear()
 }
 
 type (

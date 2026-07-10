@@ -57,11 +57,15 @@ func (r *Repository) resolveAutoSelectProfile(userID uint) *anime.AutoSelectProf
 	return &anime.AutoSelectProfile{Resolutions: []string{resolution}, MinSeeders: 0}
 }
 
-func (r *Repository) findBestTorrent(ctx context.Context, provider debrid.Provider, media *anilist.CompleteAnime, episodeNumber int, userID uint) (ret *playbackTorrent, err error) {
+func (r *Repository) findBestTorrent(ctx context.Context, provider debrid.Provider, media *anilist.CompleteAnime, episodeNumber int, userID uint, silent bool) (ret *playbackTorrent, err error) {
 
 	defer util.HandlePanicInModuleWithError("debridstream/findBestTorrent", &err)
 
 	r.logger.Debug().Msgf("debridstream: Finding best torrent for %s, Episode %d", media.GetTitleSafe(), episodeNumber)
+
+	// Route auto-select status to this user's client, and suppress it entirely for silent
+	// background resolves (preload/prewarm) so they don't flash the playback pill.
+	ctx = autoselect.WithStatusRouting(ctx, userID, silent)
 
 	profile := r.resolveAutoSelectProfile(userID)
 

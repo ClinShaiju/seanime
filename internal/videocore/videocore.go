@@ -167,9 +167,19 @@ func (vc *VideoCore) Start() {
 	})
 }
 
-// Shutdown gracefully stops the dispatcher.
+// Shutdown gracefully stops the dispatcher and the client-event listener. Idempotent.
 func (vc *VideoCore) Shutdown() {
-	close(vc.dispatcherStop)
+	select {
+	case <-vc.dispatcherStop:
+		return
+	default:
+		close(vc.dispatcherStop)
+	}
+	// listenToClientEvents ranges the client subscriber channel; unsubscribe closes it so the
+	// goroutine returns instead of leaking when a per-session VideoCore is evicted.
+	if vc.wsEventManager != nil {
+		vc.wsEventManager.UnsubscribeFromClientEvents(fmt.Sprintf("videocore:u%d", vc.userID))
+	}
 }
 
 func (vc *VideoCore) PushEvent(event VideoEvent) {

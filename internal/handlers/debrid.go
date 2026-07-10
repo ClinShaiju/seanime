@@ -27,6 +27,15 @@ func (h *Handler) HandleGetDebridSettings(c echo.Context) error {
 		return h.RespondWithError(c, errors.New("debrid settings not found"))
 	}
 
+	// Never leak the shared debrid API key to non-admins (matches the redaction in NewStatus).
+	// A regular user or anon who passed the server-password gate must not be able to read the
+	// paid provider credential through this endpoint.
+	if debridSettings != nil && !h.IsAdmin(c) {
+		redacted := *debridSettings
+		redacted.ApiKey = ""
+		debridSettings = &redacted
+	}
+
 	return h.RespondWithData(c, debridSettings)
 }
 

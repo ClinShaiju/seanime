@@ -39,7 +39,7 @@ import { vc_cursorBusy } from "@/app/(main)/_features/video-core/video-core-atom
 import { vc_cursorPosition } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_busy } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_videoElement } from "@/app/(main)/_features/video-core/video-core-atoms"
-import { vc_globalVideoElement, vc_globalLastProgress } from "@/app/(main)/_features/video-core/video-core-atoms"
+import { vc_globalVideoElement, vc_globalLastProgress, vc_globalPlayerSyncControl, type PlayerSyncControl } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_containerElement } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_previousPausedState } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_lastKnownProgress } from "@/app/(main)/_features/video-core/video-core-atoms"
@@ -210,9 +210,31 @@ function VideoCoreGlobalBridge() {
     const lastProgress = useAtomValue(vc_lastKnownProgress)  // scoped
     const setGlobalVideo = useSetAtom(vc_globalVideoElement)
     const setGlobalProgress = useSetAtom(vc_globalLastProgress)
+    const setSyncControl = useSetAtom(vc_globalPlayerSyncControl)
     React.useEffect(() => {
         setGlobalVideo(videoElement)
-    }, [videoElement, setGlobalVideo])
+        // Bridge the DOM video element into the player-agnostic sync control so the watch-room
+        // sync hook works identically for VideoCore (DOM) and MpvCore (native). An HTMLVideoElement
+        // already satisfies the interface natively — just wrap the methods that need .catch().
+        if (videoElement) {
+            const ctrl: PlayerSyncControl = {
+                get currentTime() { return videoElement.currentTime },
+                get paused() { return videoElement.paused },
+                get duration() { return videoElement.duration },
+                get seeking() { return videoElement.seeking },
+                get readyState() { return videoElement.readyState },
+                get playbackRate() { return videoElement.playbackRate },
+                play() { videoElement.play().catch(() => {}) },
+                pause() { videoElement.pause() },
+                seek(t) { videoElement.currentTime = t },
+                setPlaybackRate(r) { videoElement.playbackRate = r },
+                domElement: videoElement,
+            }
+            setSyncControl(ctrl)
+        } else {
+            setSyncControl(null)
+        }
+    }, [videoElement, setGlobalVideo, setSyncControl])
     React.useEffect(() => {
         setGlobalProgress(lastProgress)
     }, [lastProgress, setGlobalProgress])
@@ -220,7 +242,8 @@ function VideoCoreGlobalBridge() {
     React.useEffect(() => () => {
         setGlobalVideo(null)
         setGlobalProgress(null)
-    }, [setGlobalVideo, setGlobalProgress])
+        setSyncControl(null)
+    }, [setGlobalVideo, setGlobalProgress, setSyncControl])
     return null
 }
 

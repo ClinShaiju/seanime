@@ -224,17 +224,17 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.StartSubtitleStream(s, m.playbackCtx, reader, offset)
+		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
 	case *TorrentStream:
 		reader := s.newSubtitleReader()
-		s.StartSubtitleStream(s, m.playbackCtx, reader, offset)
+		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
 	case *UrlStream:
 		reader, err := s.newMetadataReader()
 		if err != nil {
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.StartSubtitleStream(s, m.playbackCtx, reader, offset)
+		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
 	case *DebridStream:
 		// Direct CDN mode reads the server link via a gated chunked reader (the proxy never
 		// fills the FileStream cache); proxy mode keeps the FileStream reader.
@@ -243,14 +243,14 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.StartSubtitleStream(s, m.playbackCtx, reader, offset)
+		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
 	case *Nakama:
 		reader, err := s.newMetadataReader()
 		if err != nil {
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.StartSubtitleStream(s, m.playbackCtx, reader, offset)
+		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
 	}
 }
 
@@ -331,6 +331,17 @@ func (s *SubtitleStream) Stop(completed bool) {
 
 // StartSubtitleStreamP starts a subtitle stream for the given stream at the given offset with a specified backoff bytes.
 func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Context, newReader io.ReadSeekCloser, offset int64, backoffBytes int64) {
+	// playbackCtx can be niled by a concurrent stream release/switch (releaseCurrentStreamLocked
+	// sets manager.playbackCtx = nil) while an in-flight range handler or a seek event is still
+	// kicking a subtitle stream. context.WithCancel(nil) panics, and callers dispatch this in a
+	// bare goroutine, so a nil here would crash the whole (multi-user) server process. Bail out —
+	// the release that niled the ctx has already torn the stream down.
+	if playbackCtx == nil {
+		if newReader != nil {
+			_ = newReader.Close()
+		}
+		return
+	}
 	mkvMetadataParser, ok := s.playbackInfo.MkvMetadataParser.Get()
 	if !ok {
 		_ = newReader.Close()

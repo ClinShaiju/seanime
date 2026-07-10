@@ -5,6 +5,7 @@ import { mc_currentTime, mpvCore_stateAtom } from "@/app/(main)/_features/mpv-co
 import { nativePlayer_stateAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
 import { PlaybackManager_PlaybackState } from "@/app/(main)/_features/progress-tracking/_lib/playback-manager.types"
 import { vc_currentTime, vc_globalMiniPlayerAtom, vc_miniPlayer, vc_videoElement } from "@/app/(main)/_features/video-core/video-core-atoms"
+import { vc_loadingScreenVisibleAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { useWebsocketSender } from "@/app/(main)/_hooks/handle-websockets"
 import { useWebsocketMessageListener } from "@/app/(main)/_hooks/handle-websockets"
 import { clientIdAtom } from "@/app/websocket-provider"
@@ -360,10 +361,14 @@ export function PlaybackPlayPill({ isNativePlayerComponent, show }: {
 
     const mpvCurrentTime = useAtomValue(mc_currentTime)
     const videoCoreCurrentTime = useAtomValue(vc_currentTime)
+    const loadingScreenVisible = useAtomValue(vc_loadingScreenVisibleAtom)
     const isPlayerLoading = (mpvCoreState.active && !!mpvCoreState.loadingState) || (nativePlayerState.active && !!nativePlayerState.loadingState)
 
-    // Hide the floating pill if the player is active in expanded (fullscreen) mode and the media has started playing
-    const shouldHideFloating = isExpandedPlayerActive && (mediaPlayerStartedPlaying || mpvCurrentTime > 0 || videoCoreCurrentTime > 0 || !isPlayerLoading)
+    // Hide the floating pill if the player is active in expanded (fullscreen) mode and the media has started playing.
+    // Also hide it whenever the Stremio-style loading screen is up: it already shows the debrid/auto-select status, so
+    // the floating pill (z-[1000]) would just stack a duplicate on top of it during a cold debrid start.
+    const shouldHideFloating = loadingScreenVisible
+        || (isExpandedPlayerActive && (mediaPlayerStartedPlaying || mpvCurrentTime > 0 || videoCoreCurrentTime > 0 || !isPlayerLoading))
     const showFloatingPill = isActive && !shouldHideFloating
 
     // Reset mediaPlayerStartedPlaying to false when loading/selecting starts

@@ -335,10 +335,19 @@ func capturePrewarmWindows(logger *zerolog.Logger, streamUrl string, contentLeng
 	logger.Debug().Str("url", streamUrl).Int("windows", len(windows)).Msg("directstream: Captured prewarm windows")
 }
 
+// prewarmFetchTimeout bounds a single prewarm-window download. videoProxyClient has no
+// Client.Timeout, and capturePrewarmWindows holds a per-token CDN gate slot for the whole
+// capture, so a CDN that stalls mid-body (without erroring) would otherwise hang io.ReadAll
+// forever and permanently leak one of the link's 2 gate slots — eventually blocking the serve
+// path. Generous (windows are tens of MiB) but finite. This is the sibling of metadataParseTimeout.
+const prewarmFetchTimeout = 90 * time.Second
+
 // fetchRangeBytes downloads [start, start+length) in one request; nil on any error or short body
 // (a truncated window must not be cached — the play-time serve would stall waiting for the rest).
 func fetchRangeBytes(streamUrl string, start, length int64) []byte {
-	req, err := http.NewRequest(http.MethodGet, streamUrl, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), prewarmFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamUrl, nil)
 	if err != nil {
 		return nil
 	}
@@ -378,6 +387,31 @@ func (m *Manager) GetPlaybackTarget() PlaybackTarget {
 	m.playbackMu.Lock()
 	defer m.playbackMu.Unlock()
 	return m.defaultPlaybackTarget
+}
+
+// PlaybackCtx returns the current playback context under lock. It may be nil when no stream
+// is active (releaseCurrentStreamLocked nils it); callers passing the result to a subtitle
+// kick must tolerate nil (StartSubtitleStreamP guards it) rather than read m.playbackCtx
+// directly, which races with the release path that writes it under playbackMu.
+func (m *Manager) PlaybackCtx() context.Context {
+	m.playbackMu.Lock()
+	defer m.playbackMu.Unlock()
+	return m.playbackCtx
+}
+
+// Shutdown stops this manager's background work so an evicted per-session Manager doesn't leak
+// goroutines. It unsubscribes from the mediacore Coordinator (closing the subscriber channel
+// that listenToPlayerEvents ranges over) and cancels any in-flight playback context.
+func (m *Manager) Shutdown() {
+	if m.mediacoreCoordinator != nil {
+		m.mediacoreCoordinator.Unsubscribe("directstream")
+	}
+	m.playbackMu.Lock()
+	if m.playbackCtxCancelFunc != nil {
+		m.playbackCtxCancelFunc()
+	}
+	m.playbackCtx = nil
+	m.playbackMu.Unlock()
 }
 
 func (m *Manager) SetAnimeCollection(ac *anilist.AnimeCollection) {

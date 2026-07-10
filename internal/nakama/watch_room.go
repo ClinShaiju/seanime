@@ -794,6 +794,22 @@ func (h *WatchRoomHub) StreamInfo(roomID string) RoomStreamInfo {
 	}
 }
 
+// IsParticipant reports whether the given pool-user key is currently a member of the room.
+// The join-stream endpoint must call this: unlike JoinRoom it performs no password check, so
+// without a membership gate any authenticated user who discovers a roomId (room ids are
+// broadcast to everyone via ListRooms) could start the controller's already-resolved debrid
+// stream in a room they never joined and never supplied a password for.
+func (h *WatchRoomHub) IsParticipant(roomID string, userKey string) bool {
+	room, ok := h.getRoom(roomID)
+	if !ok {
+		return false
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	_, exists := room.Participants[userKey]
+	return exists
+}
+
 // resolveRelay returns the other members' client ids to relay to, and whether the sender
 // (identified by ws client id) is allowed to drive playback. Pure (no I/O) so the
 // enforcement is unit-testable without a manager.

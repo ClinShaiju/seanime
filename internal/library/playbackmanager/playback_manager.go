@@ -49,6 +49,7 @@ type (
 		Database              *db.Database
 		MediaPlayerRepository *mediaplayer.Repository // MediaPlayerRepository is used to control the media player
 		continuityManager     *continuity.Manager
+		userID                uint // scopes the shared-mediaplayer subscription key (0 = global/admin)
 
 		settings *Settings
 
@@ -192,6 +193,9 @@ type (
 		DiscordPresence            *discordrpc_presence.Presence
 		IsOfflineRef               *util.Ref[bool]
 		ContinuityManager          *continuity.Manager
+		// UserID scopes this PlaybackManager's shared-mediaplayer.Repository subscription key
+		// so per-session managers don't overwrite each other's subscription. 0 = global/admin.
+		UserID uint
 	}
 
 	Settings struct {
@@ -214,6 +218,7 @@ func New(opts *NewPlaybackManagerOptions) *PlaybackManager {
 	pm := &PlaybackManager{
 		Logger:                       opts.Logger,
 		Database:                     opts.Database,
+		userID:                       opts.UserID,
 		settings:                     &Settings{},
 		discordPresence:              opts.DiscordPresence,
 		wsEventManager:               opts.WSEventManager,
@@ -279,8 +284,11 @@ func (pm *PlaybackManager) SetMediaPlayerRepository(mediaPlayerRepository *media
 		pm.mu.Lock()
 		// Set the new media player repository instance
 		pm.MediaPlayerRepository = mediaPlayerRepository
-		// Set up event listeners for the media player instance
-		pm.mediaPlayerRepoSubscriber = pm.MediaPlayerRepository.Subscribe("playbackmanager")
+		// Set up event listeners for the media player instance. The key is per-user: the
+		// repository's Subscribe replaces by key, so a fixed "playbackmanager" would let each
+		// new per-session PlaybackManager steal the external-player event stream from every
+		// earlier session (orphaning their listener goroutines). Mirrors videocore's "u%d" keys.
+		pm.mediaPlayerRepoSubscriber = pm.MediaPlayerRepository.Subscribe(fmt.Sprintf("playbackmanager:u%d", pm.userID))
 		pm.mu.Unlock()
 
 		// Start listening to new media player events

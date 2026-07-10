@@ -1,10 +1,12 @@
 import { Nakama_RoomPlaybackStatusPayload, Nakama_WatchPartyStreamType, NativePlayer_StreamType } from "@/api/generated/types"
+import { mpvCore_stateAtom } from "@/app/(main)/_features/mpv-core/mpv-core.atoms"
 import { nativePlayer_stateAtom, nativePlayer_terminateRequestedAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
 import { vc_audioManager, vc_mediaCaptionsManager, vc_subtitleManager } from "@/app/(main)/_features/video-core/video-core"
 // Use the GLOBAL mirrors, not vc_videoElement / vc_lastKnownProgress directly: those are scoped to
 // VideoCoreProvider (jotai-scope) and this hook runs app-wide in NakamaManager, OUTSIDE that scope,
-// so the scoped atoms always read null here. VideoCoreGlobalBridge mirrors the active player into these.
-import { vc_globalLastProgress, vc_globalVideoElement } from "@/app/(main)/_features/video-core/video-core-atoms"
+// so the scoped atoms always read null here. Both VideoCoreGlobalBridge and MpvCorePlayerContent
+// populate the player-agnostic vc_globalPlayerSyncControl, so this hook works for either player.
+import { vc_globalLastProgress, vc_globalPlayerSyncControl } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { useHandleStartDebridStream } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-stream"
 import { useHandleStartTorrentStream } from "@/app/(main)/entry/_containers/torrent-stream/_lib/handle-torrent-stream"
 import { useWebsocketMessageListener, useWebsocketSender } from "@/app/(main)/_hooks/handle-websockets"
@@ -76,14 +78,22 @@ const SEEK_COOLDOWN_MS = 2500
 export function useWatchRoomPlayerSync() {
     const room = useAtomValue(currentWatchRoomAtom)
     const clientId = useAtomValue(clientIdAtom)
-    const videoElement = useAtomValue(vc_globalVideoElement)
+    // Player-agnostic sync control: populated by whichever player is active (VideoCore DOM
+    // bridge or MpvCore native bridge). null when no player is mounted.
+    const player = useAtomValue(vc_globalPlayerSyncControl)
     const lastProgress = useAtomValue(vc_globalLastProgress)
     const audioManager = useAtomValue(vc_audioManager)
     const subtitleManager = useAtomValue(vc_subtitleManager)
     const mediaCaptionsManager = useAtomValue(vc_mediaCaptionsManager)
     const nativeState = useAtomValue(nativePlayer_stateAtom)
-    const playbackInfo = nativeState.playbackInfo
-    const playerActive = nativeState.active
+    const mpvState = useAtomValue(mpvCore_stateAtom)
+    // Either player being active counts — the sync control is populated by whichever one is.
+    // Prefer nativeState.playbackInfo (carries streamType for the relay source identity); fall
+    // back to mpvState for media/episode when MpvCore is the active player.
+    const nativeInfo = nativeState.playbackInfo
+    const mpvInfo = mpvState.playbackInfo
+    const playbackInfo = nativeInfo || mpvInfo
+    const playerActive = nativeState.active || mpvState.active
     const requestTerminate = useSetAtom(nativePlayer_terminateRequestedAtom)
     const { sendMessage } = useWebsocketSender()
 
@@ -133,20 +143,20 @@ export function useWatchRoomPlayerSync() {
         if (!room) return
         sendMessage({
             type: WSEvents.NAKAMA_ROOM_DEBUG,
-            payload: `hook-state video=${!!videoElement} active=${playerActive} playingMedia=${playbackInfo?.media?.id ?? 0} `
+            payload: `hook-state video=${!!player} active=${playerActive} playingMedia=${playbackInfo?.media?.id ?? 0} `
                 + `canCtrl=${canControl} amCtrl=${amController}`,
         })
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [videoElement, playerActive, room?.id, canControl, amController])
+    }, [player, playerActive, room?.id, canControl, amController])
 
     // Only a FOLLOWER nudges its playbackRate to converge; the driver always plays at normal
     // speed. The driver returns early in apply (never reaching the nudge), so if this client just
     // BECAME the driver (control handoff) it could be left at a leftover nudged rate — reset it.
     React.useEffect(() => {
-        if (videoElement && canControl && amController && videoElement.playbackRate !== 1) {
-            videoElement.playbackRate = 1
+        if (player && canControl && amController && player.playbackRate !== 1) {
+            player.setPlaybackRate(1)
         }
-    }, [videoElement, canControl, amController])
+    }, [player, canControl, amController])
 
     // ---- Follow the controller into the episode (auto-start) ----
     // The sync above only adjusts an EXISTING player. When the controller starts an episode
@@ -194,7 +204,7 @@ export function useWatchRoomPlayerSync() {
         // Already playing/loading this exact media+episode? Let the position sync handle it.
         const playingThis = (
             (playbackInfo?.media?.id === p.mediaId && playbackInfo?.episode?.episodeNumber === p.episodeNumber)
-            || (!!videoElement && lastProgress?.mediaId === p.mediaId && lastProgress?.progressNumber === p.episodeNumber)
+            || (!!player && lastProgress?.mediaId === p.mediaId && lastProgress?.progressNumber === p.episodeNumber)
         )
         if (playingThis) {
             autoStartingKeyRef.current = ""
@@ -205,7 +215,7 @@ export function useWatchRoomPlayerSync() {
             return
         }
         startRoomStream(p)
-    }, [canControl, amController, optedOutRoomId, videoElement, lastProgress, playbackInfo, startRoomStream])
+    }, [canControl, amController, optedOutRoomId, player, lastProgress, playbackInfo, startRoomStream])
 
     // NOTE: no late-join auto-open. Joining a room that already has a live stream surfaces the
     // "Join room stream" button (button-only) instead of force-opening. Auto-open happens only
@@ -223,8 +233,8 @@ export function useWatchRoomPlayerSync() {
     // "Join room stream" retry re-fail (the original "follower never plays the whole session").
     const everHadVideoRef = React.useRef(false)
     React.useEffect(() => {
-        if (videoElement) everHadVideoRef.current = true
-    }, [videoElement])
+        if (player) everHadVideoRef.current = true
+    }, [player])
     const prevActiveRef = React.useRef(playerActive)
     React.useEffect(() => {
         const was = prevActiveRef.current
@@ -259,8 +269,9 @@ export function useWatchRoomPlayerSync() {
 
     // ---- Emit local control actions ----
     React.useEffect(() => {
-        if (!videoElement || !room) return
-        const player = videoElement
+        if (!player || !room) return
+        // TS can't narrow `player` into inner closures despite the guard above; alias once.
+        const p = player
 
         function buildPayload(heartbeat: boolean): RoomPlaybackSync {
             // Buffering hold: a driver whose player has STALLED (mid-rebuffer / seeking, not user-
@@ -270,16 +281,16 @@ export function useWatchRoomPlayerSync() {
             // second). Report the stall as a transient pause so followers HOLD instead of rewind;
             // when the buffer fills, paused flips back false and everyone resumes together. Only on
             // the heartbeat — discrete play/pause/seek emits must carry the player's true state.
-            const stalled = heartbeat && !player.paused && (player.seeking || player.readyState < 3)
-            const effectivePaused = player.paused || stalled
+            const stalled = heartbeat && !p.paused && (p.seeking || p.readyState < 3)
+            const effectivePaused = p.paused || stalled
             return {
                 roomId: room!.id,
                 paused: effectivePaused,
                 // Lead by our own uplink latency while playing, so by the time this reaches the
                 // server and is fanned to followers (who add their own downlink) everyone lands on
                 // our true current frame. No lead while paused/stalled — position isn't advancing.
-                currentTime: player.currentTime + (effectivePaused ? 0 : getHalfRttSeconds()),
-                duration: isFinite(player.duration) ? player.duration : 0,
+                currentTime: p.currentTime + (effectivePaused ? 0 : getHalfRttSeconds()),
+                duration: isFinite(p.duration) ? p.duration : 0,
                 // Prefer the global nativePlayer playbackInfo: lastProgress comes from
                 // vc_lastKnownProgress which (like vc_videoElement) is bridged from the scoped
                 // store and can lag/stay null, making emits go out with mediaId 0 — a follower's
@@ -289,24 +300,30 @@ export function useWatchRoomPlayerSync() {
                 episodeNumber: playbackInfo?.episode?.episodeNumber ?? lastProgress?.progressNumber ?? 0,
                 // Source identity so a follower can start the SAME stream (debrid/torrent).
                 aniDbEpisode: playbackInfo?.episode?.aniDBEpisode ?? "",
-                streamType: nakamaStreamType(playbackInfo?.streamType),
+                streamType: nakamaStreamType(nativeInfo?.streamType ?? (mpvInfo?.playbackType as NativePlayer_StreamType | undefined)),
                 heartbeat: heartbeat || undefined,
             }
         }
 
         function emit(isSeek: boolean) {
             if (!canControl) return
+            // Teardown guard: when a player is closing, the DOM element (or MpvCore) resets to
+            // currentTime=0/paused=true before unmounting, firing a last play/pause/seeked event.
+            // Broadcasting that t=0 to followers seeks them to the start. Suppress emit when the
+            // player reports t≈0 while we were well into playback — a genuine "start from 0" is
+            // only valid when no prior position existed.
+            if (p.currentTime < 0.5 && everHadVideoRef.current && lastAppliedRef.current && lastAppliedRef.current.currentTime > 5) return
             // Buffering guard: a player stalling at a seek target fires play/pause as it rebuffers —
             // don't broadcast those (only genuine toggles; a seek always passes). The heartbeat
             // carries the settled paused state once buffering clears.
-            if (!isSeek && (player.seeking || player.readyState < 3)) return
+            if (!isSeek && (p.seeking || p.readyState < 3)) return
             // Drop the echo of a state we were just told to be in. A genuine local action
             // (different paused state, or a seek away from the applied position) diverges and
             // passes through immediately.
             const la = lastAppliedRef.current
             if (la && (Date.now() - la.at) < APPLY_ECHO_WINDOW_MS
-                && la.paused === player.paused
-                && Math.abs(player.currentTime - la.currentTime) < APPLY_ECHO_SEEK_TOL) {
+                && la.paused === p.paused
+                && Math.abs(p.currentTime - la.currentTime) < APPLY_ECHO_SEEK_TOL) {
                 return
             }
 
@@ -327,9 +344,22 @@ export function useWatchRoomPlayerSync() {
         const onPlay = () => emit(false)
         const onPause = () => emit(false)
         const onSeeked = () => emit(true)
-        player.addEventListener("play", onPlay)
-        player.addEventListener("pause", onPause)
-        player.addEventListener("seeked", onSeeked)
+        // Discrete event listeners: VideoCore uses DOM addEventListener on the underlying video
+        // element; MpvCore uses the subscribe() callback fired from its IPC event handlers. Both
+        // produce the same immediate emit on play/pause/seek so followers track instantly.
+        const domBridge = p.domElement ?? null
+        let unsubNative: (() => void) | undefined
+        if (domBridge) {
+            domBridge.addEventListener("play", onPlay)
+            domBridge.addEventListener("pause", onPause)
+            domBridge.addEventListener("seeked", onSeeked)
+        } else if (p.subscribe) {
+            unsubNative = p.subscribe((action) => {
+                if (action === "seeked") onSeeked()
+                else if (action === "play") onPlay()
+                else if (action === "pause") onPause()
+            })
+        }
 
         // Heartbeat: the active driver broadcasts its position every couple seconds so
         // followers reconcile drift and late/desynced players catch up — discrete play/pause/
@@ -344,17 +374,20 @@ export function useWatchRoomPlayerSync() {
 
         return () => {
             if (hb) clearInterval(hb)
-            player.removeEventListener("play", onPlay)
-            player.removeEventListener("pause", onPause)
-            player.removeEventListener("seeked", onSeeked)
+            unsubNative?.()
+            if (domBridge) {
+                domBridge.removeEventListener("play", onPlay)
+                domBridge.removeEventListener("pause", onPause)
+                domBridge.removeEventListener("seeked", onSeeked)
+            }
         }
-    }, [videoElement, room, canControl, amController, amHost, forceHostTracks, lastProgress, audioManager, subtitleManager,
+    }, [player, room, canControl, amController, amHost, forceHostTracks, lastProgress, audioManager, subtitleManager,
         mediaCaptionsManager, playbackInfo, sendMessage])
 
     // ---- Apply incoming sync ----
     useWebsocketMessageListener({
         type: WSEvents.NAKAMA_ROOM_PLAYBACK_SYNC,
-        deps: [videoElement, canControl, amController, forceHostTracks, audioManager, subtitleManager, mediaCaptionsManager, maybeAutoStart, requestTerminate],
+        deps: [player, canControl, amController, forceHostTracks, audioManager, subtitleManager, mediaCaptionsManager, maybeAutoStart, requestTerminate],
         onMessage: (p: RoomPlaybackSync | null) => {
             if (!p) return
 
@@ -365,7 +398,7 @@ export function useWatchRoomPlayerSync() {
             if (!p.heartbeat) {
                 sendMessage({
                     type: WSEvents.NAKAMA_ROOM_DEBUG,
-                    payload: `recv-gate{video:${!!videoElement},active:${playerActive},canCtrl:${canControl},amCtrl:${amController},`
+                    payload: `recv-gate{video:${!!player},active:${playerActive},canCtrl:${canControl},amCtrl:${amController},`
                         + `playingMedia:${playbackInfo?.media?.id ?? 0}} p{paused:${p.paused},t:${(p.currentTime ?? 0).toFixed(1)},stop:${!!p.stopped}}`,
                 })
             }
@@ -382,7 +415,7 @@ export function useWatchRoomPlayerSync() {
             // have no player yet (or a different episode) this kicks off the stream and returns;
             // the position sync below applies once the player is up.
             maybeAutoStart(p)
-            if (!videoElement) return
+            if (!player) return
 
             // NO local-controller guard here. The server already excludes the sender from every
             // discrete relay AND excludes the live driver from the position ticker, so a sync only
@@ -402,22 +435,22 @@ export function useWatchRoomPlayerSync() {
             let action = "none"
             // Lead the target by our own downlink latency while playing, so we land on the
             // controller's TRUE current frame (it already led by its uplink). No lead while paused.
-            const target = isFinite(p.currentTime) ? p.currentTime + (p.paused ? 0 : getHalfRttSeconds()) : videoElement.currentTime
-            const drift = target - videoElement.currentTime
+            const target = isFinite(p.currentTime) ? p.currentTime + (p.paused ? 0 : getHalfRttSeconds()) : player.currentTime
+            const drift = target - player.currentTime
             const ad = Math.abs(drift)
             if (!p.heartbeat) {
                 if (ad > SEEK_THRESHOLD) {
                     action = `seek->${target.toFixed(1)}`
-                    videoElement.currentTime = target
+                    player.seek(target)
                     lastHardSeekRef.current = Date.now() // a heartbeat right after must not re-seek
                 }
-                videoElement.playbackRate = 1 // a real action -> normal speed
+                player.setPlaybackRate(1) // a real action -> normal speed
             } else if (drift > HARD_SEEK_DRIFT && (Date.now() - lastHardSeekRef.current) > SEEK_COOLDOWN_MS) {
                 // We fell BEHIND the driver -> snap forward once, then nudge-only until the cooldown
                 // elapses (prevents the directstream reset->rebuffer->reseek churn on Denshi).
                 action = `seek->${target.toFixed(1)}`
-                videoElement.currentTime = target
-                videoElement.playbackRate = 1
+                player.seek(target)
+                player.setPlaybackRate(1)
                 lastHardSeekRef.current = Date.now()
             } else if (drift < -HARD_SEEK_DRIFT) {
                 // The driver is far BEHIND us: it's frozen/rebuffering but still heartbeating
@@ -426,19 +459,19 @@ export function useWatchRoomPlayerSync() {
                 // once per heartbeat). Keep playing at normal speed; we resync if it catches up. A
                 // deliberate controller rewind arrives as a DISCRETE seek (not a heartbeat) and still
                 // snaps both ways above.
-                if (videoElement.playbackRate !== 1) videoElement.playbackRate = 1
+                if (player.playbackRate !== 1) player.setPlaybackRate(1)
             } else if (ad > SYNC_DEADBAND) {
                 const off = Math.max(-NUDGE_MAX, Math.min(NUDGE_MAX, drift * NUDGE_GAIN))
-                videoElement.playbackRate = 1 + off // glide toward the controller (no log: continuous)
-            } else if (videoElement.playbackRate !== 1) {
-                videoElement.playbackRate = 1 // converged -> normal speed
+                player.setPlaybackRate(1 + off) // glide toward the controller (no log: continuous)
+            } else if (player.playbackRate !== 1) {
+                player.setPlaybackRate(1) // converged -> normal speed
             }
-            if (p.paused && !videoElement.paused) {
+            if (p.paused && !player.paused) {
                 action += " pause"
-                videoElement.pause()
-            } else if (!p.paused && videoElement.paused) {
+                player.pause()
+            } else if (!p.paused && player.paused) {
                 action += " play"
-                videoElement.play().catch(() => { })
+                player.play()
             }
             // DIAGNOSTIC (temporary): only log when something actually applied (or a discrete
             // sync) — heartbeats with action=[none] are once-per-second and drowned the log.
@@ -446,7 +479,7 @@ export function useWatchRoomPlayerSync() {
                 sendMessage({
                     type: WSEvents.NAKAMA_ROOM_DEBUG,
                     payload: `apply recv{paused:${p.paused},t:${p.currentTime.toFixed(1)},hb:${!!p.heartbeat}} `
-                        + `local{paused:${videoElement.paused},t:${videoElement.currentTime.toFixed(1)}} action=[${action.trim()}]`,
+                        + `local{paused:${player.paused},t:${player.currentTime.toFixed(1)}} action=[${action.trim()}]`,
                 })
             }
 

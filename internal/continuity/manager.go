@@ -28,6 +28,11 @@ type (
 
 		externalPlayerEpisodeDetails mo.Option[*ExternalPlayerEpisodeDetails]
 
+		// lwSaveThrottle records the last time the durable last-watched store was written per
+		// media id, so the 1 Hz status-tick mirror doesn't full-rewrite (+ re-decode for trim)
+		// the whole _lw bucket every second. Guarded by mu.
+		lwSaveThrottle map[int]time.Time
+
 		logger   *zerolog.Logger
 		settings *Settings
 		mu       sync.RWMutex
@@ -80,6 +85,7 @@ func NewManager(opts *NewManagerOptions) *Manager {
 			WatchContinuityEnabled: false,
 		},
 		externalPlayerEpisodeDetails: mo.None[*ExternalPlayerEpisodeDetails](),
+		lwSaveThrottle:               make(map[int]time.Time),
 	}
 
 	ret.logger.Info().Msg("continuity: Initialized manager")

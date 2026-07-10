@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"seanime/internal/api/anilist"
 	"seanime/internal/api/metadata_provider"
 	"seanime/internal/database/db"
@@ -138,7 +139,14 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		MetadataProvider:  opts.MetadataProviderRef,
 		Platform:          opts.PlatformRef,
 		OnStatus: func(status autoselect.StreamAutoSelectStatusPayload) {
-			opts.WSEventManager.SendEvent(events.StreamAutoSelectStatus, status)
+			// Silent (preload/prewarm) resolves must not flash the user-facing playback pill.
+			if status.Silent {
+				return
+			}
+			// Route to the acting user's client (evFor falls back to the global/admin plane when
+			// UserID is 0), so on a networked server the non-admin who started the stream sees the
+			// pill and the admin doesn't receive every other user's auto-select status.
+			ret.evFor(status.UserID).SendEvent(events.StreamAutoSelectStatus, status)
 		},
 	})
 
@@ -487,19 +495,22 @@ func (r *Repository) PreloadStream(ctx context.Context, opts *StartStreamOptions
 	return r.smFor(opts.UserID).preloadStream(ctx, opts)
 }
 
-// GetStreamURL returns the stream URL of any currently-active stream. With per-user
-// stream managers there may be several; this returns the first non-empty one (used by
-// single-host features like Nakama/plugins).
+// GetStreamURL returns the stream URL of a currently-active stream. With per-user stream
+// managers there may be several; used by legacy single-host features (Nakama host endpoints,
+// plugins) that don't carry a user id. It iterates users in ascending id order so the pick is
+// DETERMINISTIC — the same active stream every call — rather than a random map-iteration order
+// that could serve a different user's stream on each request when several are streaming.
 func (r *Repository) GetStreamURL() (string, bool) {
-	var url string
-	r.streamManagers.Range(func(_ uint, sm *StreamManager) bool {
-		if u := sm.getCurrentStreamUrl(); u != "" {
-			url = u
-			return false
+	keys := r.streamManagers.Keys()
+	slices.Sort(keys)
+	for _, uid := range keys {
+		if sm, ok := r.streamManagers.Get(uid); ok {
+			if u := sm.getCurrentStreamUrl(); u != "" {
+				return u, true
+			}
 		}
-		return true
-	})
-	return url, url != ""
+	}
+	return "", false
 }
 
 // UserStreamShare is what the watch-room "join stream" path needs to let a peer (re)play the

@@ -20,6 +20,11 @@ const (
 	// because this outlives completion (one row per show ever watched).
 	// ponytail: 1000 rows (~a few hundred bytes each); bump if a whale library needs more.
 	MaxLastWatchedItems = 1000
+	// lastWatchedSaveMinInterval throttles the durable last-watched mirror per media id. It feeds
+	// the recency sort + up-next (not the resume position, which lives in the separate watch-
+	// history store), so sub-10s freshness is unnecessary — and UpdateWatchHistoryItem fires on
+	// every 1 Hz player status tick.
+	lastWatchedSaveMinInterval = 10 * time.Second
 )
 
 type (
@@ -133,7 +138,7 @@ func (m *Manager) RecordLastWatchedOpen(mediaId, episodeNumber int) {
 	found, _ := m.fileCacher.Get(*m.lastWatchedFileCacheBucket, strconv.Itoa(mediaId), &existing)
 	if found && existing != nil && existing.EpisodeNumber == episodeNumber {
 		existing.TimeUpdated = now
-		m.setLastWatched(existing)
+		m.setLastWatched(existing, false) // explicit reopen — bump immediately, don't throttle
 		return
 	}
 
@@ -142,7 +147,7 @@ func (m *Manager) RecordLastWatchedOpen(mediaId, episodeNumber int) {
 		EpisodeNumber: episodeNumber,
 		TimeAdded:     now,
 		TimeUpdated:   now,
-	})
+	}, false) // explicit reopen — bump immediately, don't throttle
 }
 
 func (m *Manager) GetWatchHistoryItem(mediaId int) *WatchHistoryItemResponse {
@@ -196,7 +201,7 @@ func (m *Manager) UpdateWatchHistoryItem(opts *UpdateWatchHistoryItemOptions) (e
 	}
 
 	// Mirror into the durable last-watched store (this is the "close" / periodic-save path).
-	m.setLastWatched(i)
+	m.setLastWatched(i, true) // 1 Hz progress-tick path — throttle the durable mirror
 
 	_ = hook.GlobalHookManager.OnWatchHistoryItemUpdated().Trigger(&WatchHistoryItemUpdatedEvent{
 		WatchHistoryItem: i,
@@ -406,7 +411,7 @@ func (m *Manager) UpdateExternalPlayerEpisodeWatchHistoryItem(currentTime, durat
 	_ = m.fileCacher.Set(*m.watchHistoryFileCacheBucket, strconv.Itoa(opts.MediaId), i)
 
 	// Mirror into the durable last-watched store (external-player "close" / periodic-save path).
-	m.setLastWatched(i)
+	m.setLastWatched(i, true) // progress path — throttle the durable mirror
 
 	// If the item was added, check if we need to remove the oldest item
 	if added {
@@ -457,14 +462,28 @@ func (m *Manager) getWatchHistory(mediaId int) (ret *WatchHistoryItem, exists bo
 }
 
 // setLastWatched upserts an item into the durable last-watched store. Caller must hold m.mu.
-// Gated on WatchContinuityEnabled so the durable store only reflects enabled sessions.
-func (m *Manager) setLastWatched(i *WatchHistoryItem) {
+// Gated on WatchContinuityEnabled so the durable store only reflects enabled sessions. When
+// throttle is true (the high-frequency progress-tick paths) the write is rate-limited per media
+// id; explicit operations (a reopen) pass throttle=false so they take effect immediately.
+func (m *Manager) setLastWatched(i *WatchHistoryItem, throttle bool) {
 	if i == nil || m.lastWatchedFileCacheBucket == nil || !m.settings.WatchContinuityEnabled {
 		return
+	}
+	// Throttle per media id: the first tick for a media writes immediately (map miss), then at
+	// most once per lastWatchedSaveMinInterval. Without this each 1 Hz tick full-rewrites the _lw
+	// bucket (Set) and re-decodes+rewrites it twice more (trim), per active viewer, on the Pi.
+	// Only the progress-tick paths throttle — a reopen must bump the timestamp right away.
+	if throttle && m.lwSaveThrottle != nil {
+		if last, ok := m.lwSaveThrottle[i.MediaId]; ok && time.Since(last) < lastWatchedSaveMinInterval {
+			return
+		}
 	}
 	if err := m.fileCacher.Set(*m.lastWatchedFileCacheBucket, strconv.Itoa(i.MediaId), i); err != nil {
 		m.logger.Error().Err(err).Msg("continuity: Failed to save last-watched item")
 		return
+	}
+	if m.lwSaveThrottle != nil {
+		m.lwSaveThrottle[i.MediaId] = time.Now()
 	}
 	_ = m.trimLastWatchedItems()
 }

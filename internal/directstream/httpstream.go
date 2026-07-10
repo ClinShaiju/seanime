@@ -57,9 +57,12 @@ var videoProxyClient = &http.Client{
 		MaxIdleConnsPerHost: 10,
 		// Bound concurrent connections to a single CDN host so a burst of range requests
 		// (stream start + metadata + a seek) can't hammer the debrid CDN into 429ing the
-		// token. Excess requests queue rather than fail. Generous enough for several
-		// concurrent streams at this deployment's scale; tune if it ever blocks legit reads.
-		MaxConnsPerHost:     8,
+		// token. Excess requests queue rather than fail. This is a PROCESS-WIDE cap shared by
+		// every user, and a proxy serve holds a connection for a range's whole live-tee
+		// duration, so 8 serialized concurrent viewers on a multi-user server. The per-link
+		// cdngate (cap 2/link) already prevents any single link from flooding the CDN, so raise
+		// the cross-user ceiling to 16 to avoid queueing legit concurrent streams.
+		MaxConnsPerHost:     16,
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
 		ForceAttemptHTTP2:   false, // Fixes issues on Linux
@@ -456,8 +459,19 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 				return
 			}
 			if ra.Start < s.contentLength-1024*1024 {
-				// subReader is closed inside the subtitle goroutine
-				go s.StartSubtitleStreamP(outer, s.manager.playbackCtx, subReader, ra.Start, 0)
+				// subReader is closed inside the subtitle goroutine. Snapshot playbackCtx under
+				// lock (racing the release path that nils it) and recover: this is a detached
+				// goroutine, so an unrecovered panic here would take down the whole server.
+				pbCtx := s.manager.PlaybackCtx()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							s.logger.Error().Interface("panic", r).Msg("directstream(http): recovered panic in subtitle stream goroutine")
+							_ = subReader.Close()
+						}
+					}()
+					s.StartSubtitleStreamP(outer, pbCtx, subReader, ra.Start, 0)
+				}()
 			} else {
 				_ = subReader.Close()
 			}

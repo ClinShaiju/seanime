@@ -120,14 +120,17 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 
 	// Multi-user profiles: overlay the acting user's overrides (theme is separate).
 	// Admins see/edit the base server settings; regular users see their effective settings.
+	// Non-admins always get a redacted clone: the shared server credentials (torrent-client,
+	// VLC, translate key, nakama passwords) must never reach a regular user or anon.
 	if settings != nil && !h.IsAdmin(c) {
+		merged := db.CloneSettings(settings)
 		if uid := h.CurrentUserID(c); uid != 0 {
 			if overrides, _ := h.App.Database.GetUserOverrides(uid); overrides != nil {
-				merged := db.CloneSettings(settings)
 				overrides.ApplyTo(merged)
-				settings = merged
 			}
 		}
+		redactSettingsSecretsForNonAdmin(merged)
+		settings = merged
 	}
 
 	clientInfo, found := clientInfoCache.Get(c.Request().UserAgent())
@@ -170,8 +173,7 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 	}
 
 	// Don't leak the shared debrid API key to non-admins (they still stream via the
-	// server debrid; they just can't see/configure it). Other admin-only secrets are
-	// gated behind hidden tabs on the client.
+	// server debrid; they just can't see/configure it).
 	if !h.IsAdmin(c) && status.DebridSettings != nil {
 		redacted := *status.DebridSettings
 		redacted.ApiKey = ""
@@ -194,6 +196,35 @@ func (h *Handler) NewStatus(c echo.Context) *Status {
 	}
 
 	return status
+}
+
+// redactSettingsSecretsForNonAdmin blanks the shared server credentials embedded in
+// models.Settings so they never reach a non-admin user or an anon holding the server
+// password. It reassigns fresh sub-struct copies rather than mutating in place, so it is
+// safe even if the passed Settings shares its embedded pointers with the DB-cached value
+// (CloneSettings only deep-copies Library/Manga). Callers must still pass a cloned Settings.
+func redactSettingsSecretsForNonAdmin(s *models.Settings) {
+	if s == nil {
+		return
+	}
+	if s.Torrent != nil {
+		t := *s.Torrent
+		t.QBittorrentPassword = ""
+		t.TransmissionPassword = ""
+		s.Torrent = &t
+	}
+	if s.MediaPlayer != nil {
+		mp := *s.MediaPlayer
+		mp.VlcPassword = ""
+		mp.VcTranslateApiKey = ""
+		s.MediaPlayer = &mp
+	}
+	if s.Nakama != nil {
+		n := *s.Nakama
+		n.HostPassword = ""
+		n.RemoteServerPassword = ""
+		s.Nakama = &n
+	}
 }
 
 // HandleGetStatus

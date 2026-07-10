@@ -264,6 +264,12 @@ const (
 	// episode with no torrents yet would otherwise re-run a full aggregator search every tick.
 	// Real plays (startStream) are unaffected — this gates only background preloads.
 	preloadFailureBackoff = 30 * time.Minute
+	// preloadResolveTimeout hard-caps a single background preload resolve (search + debrid add +
+	// requestdl). Without it, preloadCtx is derived from context.Background() and a stuck resolve
+	// (e.g. a persistently-failing requestdl on a ready torrent) spins forever, leaking the
+	// synchronous prewarm-drain goroutine and hammering the shared requestdl limiter against
+	// real plays. Generous — a normal resolve completes in seconds.
+	preloadResolveTimeout = 3 * time.Minute
 	// batchFanOutCount caps how many episodes AFTER a preloaded one are fanned out from the
 	// same batch torrent (URL-only, ~1 requestdl each; zero search/createtorrent).
 	batchFanOutCount = 2
@@ -496,7 +502,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		})
 
 		selectionStart := time.Now()
-		pt, err := s.repository.findBestTorrent(ctx, provider, media, opts.EpisodeNumber, opts.UserID)
+		pt, err := s.repository.findBestTorrent(ctx, provider, media, opts.EpisodeNumber, opts.UserID, false)
 		selectionDur = time.Since(selectionStart)
 		if err != nil {
 			if opts.PlaybackType == PlaybackTypeNativePlayer {
@@ -1000,10 +1006,16 @@ func (s *StreamManager) cancelStream(opts *CancelStreamOptions) {
 	}
 
 	// Resolve the directStream of the user who owns the stream being cancelled — THIS
-	// manager's own last stream (per-user), not the repository's last-active copy.
+	// manager's own last stream (per-user), not the repository's last-active copy. When there
+	// are no previous options (fresh per-user manager, e.g. right after a restart where
+	// loadPersistedActiveStream restored preloads but not previousStreamOptions), fall back to
+	// the cancel's own UserID rather than nil — otherwise ds(nil)/ev(nil) resolve the GLOBAL
+	// (admin) manager and this cancel would abort the admin's open and hide their loader.
 	var prevOpts *StartStreamOptions
 	if p, ok := s.getPreviousStreamOptions(); ok {
 		prevOpts = p
+	} else if opts != nil {
+		prevOpts = &StartStreamOptions{UserID: opts.UserID}
 	}
 	if dm := s.ds(prevOpts); dm != nil {
 		dm.CloseOpen("")
@@ -1214,7 +1226,8 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 		}
 		delete(s.preloadFailedAt, key)
 	}
-	preloadCtx, cancel := context.WithCancel(context.Background())
+	// Bounded: a stuck resolve must not hang the drain goroutine or the requestdl limiter forever.
+	preloadCtx, cancel := context.WithTimeout(context.Background(), preloadResolveTimeout)
 	s.preloadInflight[key] = cancel
 	s.preloadMu.Unlock()
 
@@ -1257,7 +1270,8 @@ func (s *StreamManager) preloadStreamWith(ctx context.Context, opts *StartStream
 		var otherEpisodeFiles map[int]*debrid.TorrentItemFile
 
 		if opts.AutoSelect {
-			pt, err := s.repository.findBestTorrent(context.Background(), provider, media, opts.EpisodeNumber, opts.UserID)
+			// silent=true: background preload must not flash the playback pill.
+			pt, err := s.repository.findBestTorrent(context.Background(), provider, media, opts.EpisodeNumber, opts.UserID, true)
 			if err != nil {
 				s.repository.logger.Warn().Err(err).Msg("debridstream: Preload failed to select torrent")
 				// Negative-cache the miss (no releases yet) so background preloads don't re-search

@@ -4,8 +4,10 @@ import (
 	"context"
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
 	"seanime/internal/library/anime"
+	"strings"
 	"testing"
 
+	"github.com/5rahim/habari"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -376,15 +378,16 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			expectedOrder: []string{highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
 		},
 		{
-			// Cached-first within the same audio tier: the cached 480p comes first, then the
-			// uncached ones by format. (Cache outranks format, per "cached should always be first".)
-			name:         "Cached comes first within the same audio tier",
+			// Quality floor: cache is a tie-break WITHIN a resolution tier, never across tiers.
+			// A cached 480p does NOT jump ahead of the uncached 1080p/720p releases — it stays
+			// last because 480p is the lowest resolution tier (decreed quality-over-cache).
+			name:         "Cached low-res stays below higher-res uncached (quality floor)",
 			torrents:     []*hibiketorrent.AnimeTorrent{highQuality1080p, mediumQuality1080p, lowQuality720p, veryLowQuality480p},
 			cachedHashes: []string{"hash4"}, // veryLowQuality480p is cached
 			profile: &anime.AutoSelectProfile{
 				Resolutions: []string{"1080p"},
 			},
-			expectedOrder: []string{veryLowQuality480p.Name, highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name},
+			expectedOrder: []string{highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
 		},
 		{
 			name:         "Medium quality cached within threshold should be prioritized",
@@ -406,14 +409,16 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			expectedOrder: []string{highQuality1080pAlt.Name, highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
 		},
 		{
-			// Both cached ones come first (ordered by format), then the uncached ones (by format).
-			name:         "Mixed cached: cached first, then by format",
+			// Cache only reorders within a resolution tier. The cached 1080p leads its tier (over
+			// the uncached 1080p), but the cached 480p still sinks to the bottom tier — it does not
+			// leapfrog the uncached 720p/1080p.
+			name:         "Mixed cached: cache reorders within tier, not across tiers",
 			torrents:     []*hibiketorrent.AnimeTorrent{highQuality1080p, mediumQuality1080p, lowQuality720p, veryLowQuality480p},
-			cachedHashes: []string{"hash1", "hash4"}, // High and very low quality cached
+			cachedHashes: []string{"hash1", "hash4"}, // High (1080p) and very low (480p) quality cached
 			profile: &anime.AutoSelectProfile{
 				Resolutions: []string{"1080p"},
 			},
-			expectedOrder: []string{highQuality1080p.Name, veryLowQuality480p.Name, mediumQuality1080p.Name, lowQuality720p.Name},
+			expectedOrder: []string{highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
 		},
 		{
 			name:         "When all cached, maintain quality-based order",
@@ -434,25 +439,26 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			expectedOrder: []string{highQuality1080p.Name, mediumQuality1080p.Name, lowQuality720p.Name, veryLowQuality480p.Name},
 		},
 		{
-			name:         "Cached 720p within threshold vs uncached 1080p",
+			// Quality floor: an uncached 1080p outranks a cached 720p — cache cannot promote a
+			// lower resolution tier above a higher one, even when both resolutions are acceptable.
+			name:         "Uncached 1080p beats cached 720p (quality floor)",
 			torrents:     []*hibiketorrent.AnimeTorrent{highQuality1080p, lowQuality720p},
 			cachedHashes: []string{"hash3"}, // 720p is cached
 			profile: &anime.AutoSelectProfile{
 				Resolutions: []string{"1080p", "720p"}, // Both acceptable
 			},
-			// When both resolutions are in profile, 720p gets score too and may be within 70% threshold
-			// So cached 720p CAN be prioritized if within threshold
-			expectedOrder: []string{lowQuality720p.Name, highQuality1080p.Name},
+			expectedOrder: []string{highQuality1080p.Name, lowQuality720p.Name},
 		},
 		{
-			// Cache outranks format within the same audio tier, so the cached 480p comes first.
-			name:         "Cached 480p beats uncached 1080p (same audio tier)",
+			// The decreed invariant: a cached 480p does NOT beat an uncached 1080p. Cache is only a
+			// tie-break within a resolution tier, never a way to override quality.
+			name:         "Uncached 1080p beats cached 480p (quality floor)",
 			torrents:     []*hibiketorrent.AnimeTorrent{highQuality1080p, veryLowQuality480p},
 			cachedHashes: []string{"hash4"}, // 480p is cached
 			profile: &anime.AutoSelectProfile{
 				Resolutions: []string{"1080p"}, // Only 1080p preferred
 			},
-			expectedOrder: []string{veryLowQuality480p.Name, highQuality1080p.Name},
+			expectedOrder: []string{highQuality1080p.Name, veryLowQuality480p.Name},
 		},
 	}
 
@@ -488,6 +494,43 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 			assert.Equal(t, tt.expectedOrder, sortedNames)
 		})
 	}
+}
+
+// TestResolutionTier covers the F-INV quality floor: higher resolution => higher tier, so cache
+// can only reorder within a tier, never across tiers.
+func TestResolutionTier(t *testing.T) {
+	tier := func(name, parsedRes string) int {
+		return resolutionTier(&candidate{
+			torrent:   &hibiketorrent.AnimeTorrent{Name: name},
+			parsed:    &habari.Metadata{VideoResolution: parsedRes},
+			lowerName: strings.ToLower(name),
+		})
+	}
+	assert.Equal(t, 4, tier("[G] Show - 01 [2160p].mkv", "2160p"))
+	assert.Equal(t, 4, tier("[G] Show - 01 [4K].mkv", ""))
+	assert.Equal(t, 3, tier("[G] Show - 01 [1080p].mkv", "1080p"))
+	assert.Equal(t, 2, tier("[G] Show - 01 [720p].mkv", ""))
+	assert.Equal(t, 1, tier("[G] Show - 01 [480p].mkv", "480p"))
+	assert.Equal(t, 0, tier("[G] Show - 01.mkv", ""))
+	// The floor: a 1080p tier must rank above a 480p tier regardless of cache (asserted via the
+	// numeric ordering the sort relies on).
+	assert.Greater(t, tier("x [1080p]", "1080p"), tier("x [480p]", "480p"))
+}
+
+// TestSizeTieBreak covers M1a: a multi-episode batch's larger total size must not beat a single
+// episode when every stronger signal is tied.
+func TestSizeTieBreak(t *testing.T) {
+	batch := &hibiketorrent.AnimeTorrent{Name: "Show S1 [Batch]", IsBatch: true, Size: 12_000_000_000}
+	single := &hibiketorrent.AnimeTorrent{Name: "Show - 01", IsBatch: false, Size: 1_400_000_000}
+	// Single should rank first (<0) despite the batch's far larger total size.
+	assert.Less(t, sizeTieBreak(single, batch), 0)
+	assert.Greater(t, sizeTieBreak(batch, single), 0)
+	// Two singles: larger (higher bitrate) wins.
+	big := &hibiketorrent.AnimeTorrent{Size: 2_000_000_000}
+	small := &hibiketorrent.AnimeTorrent{Size: 1_000_000_000}
+	assert.Less(t, sizeTieBreak(big, small), 0)
+	// Identical => 0 (fall through to seeders).
+	assert.Equal(t, 0, sizeTieBreak(small, &hibiketorrent.AnimeTorrent{Size: 1_000_000_000}))
 }
 
 func TestAutoSelect_SmartCachedPrioritization_EdgeCases(t *testing.T) {

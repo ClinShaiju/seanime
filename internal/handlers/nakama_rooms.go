@@ -224,6 +224,15 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 	if err := c.Bind(&b); err != nil {
 		return h.RespondWithError(c, err)
 	}
+
+	// Membership gate: this endpoint reuses the controller's already-resolved debrid selection,
+	// but performs no room-password check of its own (unlike JoinRoom). Require the caller to be
+	// an actual participant — otherwise any authenticated user who discovers a roomId (they are
+	// broadcast via ListRooms) could piggyback the controller's stream in a room they never joined.
+	if !h.App.NakamaManager.GetWatchRoomHub().IsParticipant(b.RoomId, h.nakamaPoolUser(c).Key()) {
+		return h.RespondWithStatusError(c, http.StatusForbidden, errors.New("join the room before starting its stream"))
+	}
+
 	b.ClientId = getRequestClientId(c, b.ClientId)
 
 	info := h.App.NakamaManager.GetWatchRoomHub().StreamInfo(b.RoomId)

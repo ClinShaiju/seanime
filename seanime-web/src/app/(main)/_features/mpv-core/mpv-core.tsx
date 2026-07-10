@@ -10,6 +10,7 @@ import { useMpvPrismPlayer } from "@mpv-prism/react"
 import { useAtom } from "jotai"
 import React from "react"
 import { MpvCorePlayerInner } from "./mpv-core-player-inner"
+import { useDebridReconnectResume } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-reconnect"
 import { mc_settings, mpvCore_stateAtom, type MpvCoreAnime4KQuality, type MpvCoreSettings } from "./mpv-core.atoms"
 
 export type MpvCoreEnvelope = { type: MpvCore_ServerEvent, payload: unknown }
@@ -522,6 +523,12 @@ export function MpvCore() {
     const [state, setState] = useAtom(mpvCore_stateAtom)
     const serverStatus = useServerStatus()
     const [mpvSettings] = useAtom(mc_settings)
+
+    // Resume a debrid stream that died on a mid-play server restart. MpvCore is Denshi's default
+    // player, but the hook was previously mounted only in the native (VideoCore) player, so an
+    // MpvCore stream got no auto-resume. The hook is player-aware and the two players are mutually
+    // exclusive, so mounting it here as well is safe.
+    useDebridReconnectResume()
 
     // Keep the player mounted (native libmpv instance warm) for the app's lifetime in
     // Denshi when MpvPrism is the active player: prewarmed/preloaded streams resolve

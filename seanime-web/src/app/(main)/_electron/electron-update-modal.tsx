@@ -147,9 +147,12 @@ export function ElectronUpdateModal(props: UpdateModalProps) {
 
     // electron-updater may finish downloading while the server-side check reports no update
     // (external server already updated, or app/server version skew). Surface the prompt anyway.
+    // NOTE: do NOT gate this on disableUpdateCheck — that setting suppresses server-side update
+    // CHECKS, but electron-updater downloads unconditionally (main.js), so gating here left the
+    // "downloaded but no Install button" bug unfixed for exactly the disableUpdateCheck case this
+    // effect was added to fix.
     React.useEffect(() => {
         if (isMacOS) return
-        if (serverStatus?.settings?.library?.disableUpdateCheck) return
         if (isDownloaded) setUpdateModalOpen(true)
     }, [isDownloaded, serverStatus])
 

@@ -80,6 +80,11 @@ type (
 		StepDetail   string                `json:"stepDetail"` // Description of the current action
 		Candidates   []AutoSelectCandidate `json:"candidates"`
 		SelectedFile string                `json:"selectedFile"`
+		// UserID/Silent are routing hints (never serialized): UserID scopes the status event to
+		// the acting user's client instead of the global/admin plane; Silent suppresses emission
+		// entirely for background resolves (preload/prewarm) that must not flash the playback pill.
+		UserID uint `json:"-"`
+		Silent bool `json:"-"`
 	}
 
 	AutoSelectCandidate struct {
@@ -115,6 +120,20 @@ type DebridClient interface {
 type contextKey string
 
 const statusKey contextKey = "autoselect-status"
+const statusRoutingKey contextKey = "autoselect-status-routing"
+
+type statusRouting struct {
+	userID uint
+	silent bool
+}
+
+// WithStatusRouting tags a context so auto-select status events raised during FindBestTorrent
+// are routed to the given user's client (instead of the global/admin event plane) and are
+// suppressed entirely when silent — used by background preload/prewarm resolves that must not
+// activate the user-facing playback pill.
+func WithStatusRouting(ctx context.Context, userID uint, silent bool) context.Context {
+	return context.WithValue(ctx, statusRoutingKey, statusRouting{userID: userID, silent: silent})
+}
 
 func (s *AutoSelect) updateStatus(status StreamAutoSelectStatusPayload) {
 	if s.onStatus != nil {
@@ -194,6 +213,10 @@ func (s *AutoSelect) FindBestTorrent(
 		MinSeeders:  minSeeders,
 		Step:        "searching",
 		StepDetail:  "Starting auto-select search...",
+	}
+	if r, ok := ctx.Value(statusRoutingKey).(statusRouting); ok {
+		status.UserID = r.userID
+		status.Silent = r.silent
 	}
 
 	ctx = context.WithValue(ctx, statusKey, &status)

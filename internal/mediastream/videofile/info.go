@@ -395,7 +395,11 @@ func streamToMimeCodec(stream *ffprobe.Stream) *string {
 			ret += ".1.4"
 		}
 
-		ret += fmt.Sprintf(".L%02X.BO", stream.Level)
+		// HEVC level in the codec string is the DECIMAL general_level_idc (ffprobe already reports
+		// it, e.g. 120 for 4.0, 153 for 5.1), and the trailing constraint byte is ".B0" (digit
+		// zero). The previous ".L%02X.BO" emitted a hex level and a literal letter O, so the string
+		// never matched the browser's canPlayType() and HEVC always fell back to transcoding (#866).
+		ret += fmt.Sprintf(".L%d.B0", stream.Level)
 		return &ret
 
 	case "av1":
@@ -421,7 +425,10 @@ func streamToMimeCodec(stream *ffprobe.Stream) *string {
 		}
 
 		tierflag := 'M'
-		ret += fmt.Sprintf(".%02X%c.%02d", stream.Level, tierflag, bitdepth)
+		// AV1 level in the codec string is the DECIMAL seq_level_idx (0-31), same class of bug as
+		// HEVC above: %02X emitted hex, which diverges from the browser's expected string for any
+		// level index >= 10.
+		ret += fmt.Sprintf(".%02d%c.%02d", stream.Level, tierflag, bitdepth)
 
 		return &ret
 
