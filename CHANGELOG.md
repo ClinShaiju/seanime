@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.9.5
+
+Full-fork audit fix pass — 43 files, security + crash + sync + ranking + multi-user + UX.
+
+### Security
+
+- 🔒 **Credential leak closed**: `GET /settings`, `/status`, and `/debrid/settings` no longer return server secrets (TorBox API key, server/Nakama passwords, qBit/Transmission/VLC passwords, translate API key) to non-admin users — a new `redactSettingsSecretsForNonAdmin` scrubs them server-side
+- 🔒 **Admin-only privileged operations**: Extension install/uninstall and server self-update/download now require admin identity on password-protected servers (the underlying `isTrustedRequest` guard was a no-op for any password holder)
+- 🔒 **Watch-room join-stream auth**: Joining a room's stream now requires room membership — previously any authenticated user who discovered a room ID could piggyback the controller's resolved debrid selection
+
+### Critical fixes
+
+- 🦺 **Server crash guard**: Nil `playbackCtx` in the subtitle-kick goroutine could panic the entire server process during an episode switch concurrent with a seek; now nil-guarded with `recover` + a locked `PlaybackCtx()` getter (also fixed the identical crash path in local-file serve)
+
+### Watch-room sync (was dead on MpvCore / Denshi since v3.9)
+
+- ✨ **MpvCore watch-room sync**: Introduced a `PlayerSyncControl` interface that both VideoCore (DOM) and MpvCore (native IPC) populate — the sync hook now works for either player instead of only the DOM video element
+- 🦺 MpvCore fires discrete play/pause/seeked actions via a subscribe callback (not just the heartbeat)
+- 🦺 Seek detection via position-jump with 2s cooldown (suppresses rebuffer bounce-back false positives)
+- 🦺 Refs synced immediately in mpv-prism event handlers (fixes 1s drift that caused constant hard-seeking)
+- 🦺 Teardown emit guard — player resetting to t=0 on unmount no longer seeks followers to the start
+- 🦺 Buffering hold wired for MpvCore (rebuffering driver reports stalled, not playing-at-frozen-position)
+- 🦺 Debrid auto-resume now arms for MpvCore (a mid-play server restart re-issues the stream)
+
+### Autoselect ranking
+
+- ⚡️ **Quality floor**: Cached releases now win only within their resolution tier — a cached 480p no longer outranks an uncached 1080p (was test-pinned the other way; quality-over-cache invariant enforced)
+- 🦺 Size tie-break: Single episodes preferred over batches at equal score (batch's total size no longer wins as a bitrate proxy)
+- 🦺 `RequireLanguage` filter now consults flag-emoji languages and always runs the name fallback (flag-only AIOStreams releases were silently dropped)
+- 🦺 Background preloads no longer flash the playback pill ("Selecting best torrent…"); auto-select status routed per-user
+
+### Multi-user isolation
+
+- 🦺 Per-user `PlaybackManager` subscription key (fixes silent event-stream hijack between sessions)
+- 🦺 `GetStreamURL` is deterministic (sorted user IDs, not random map iteration)
+- 🦺 `cancelStream` with no prior stream resolves via `opts.UserID` (not the admin's manager)
+- 🦺 Session eviction tears down per-user videoCore/mpvCore/mediaCoord/directStream (goroutine leak on relink/logout)
+- 🦺 Schedule/missing/upcoming caches keyed per-user (non-admins no longer recompute from AniList every request)
+
+### Robustness
+
+- 🦺 `serveHandoff` redirects to CDN on any warm failure (partial cached span no longer causes an empty-206 reconnect loop)
+- 🦺 `fetchRangeBytes` bounded at 90s (was unbounded, could leak a CDN gate slot indefinitely)
+- 🦺 TorBox `requestdl` retry capped at 5; preload context bounded at 3 min (stuck resolve no longer spins forever)
+- ⚡️ Durable last-watched store throttled to 10s on the progress path (was 3× full-rewrite per 1 Hz tick)
+- 🦺 TorBox `fileIdCache` bounded (mutex+map cap 4096, was unbounded sync.Map)
+- ⚡️ Shared CDN proxy `MaxConnsPerHost` raised from 8 to 16
+
+### UX
+
+- 🦺 **Browser direct-play**: HEVC and AV1 codec strings fixed (hex level → decimal, literal `O` → digit `0`) — upstream [#866](https://github.com/5rahim/seanime/issues/866)
+- 🦺 MpvCore OP/ED auto-skip now handles Intro/Outro labels + duration heuristic (reuses `vc_getOPEDChapters`)
+- 🦺 Loading screen reads the live debrid atom; floating pill hidden while loading screen is visible (no more duplicate stacked UI)
+- 🦺 Denshi install prompt no longer suppressed by `disableUpdateCheck`
+- 🦺 Franchise query key uses the full id set (fixes 30-min stale cache collision on same-count lists)
+
 ## v3.9.4
 
 - 🦺 Desktop (MpvCore): Fixed intermittent black-frame flashing during playback — mpv-prism's ANGLE backend could hand chromium an unsynchronized shared texture (no keyed mutex), letting frames be sampled mid-write; Denshi now defaults to the WGL backend (keyed-mutex handoff; nvdec hardware decode unaffected, `MPV_PRISM_WIN32_BACKEND` env overrides)
