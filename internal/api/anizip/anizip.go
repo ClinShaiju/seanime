@@ -29,6 +29,11 @@ type (
 		Rating                string            `json:"rating,omitempty"`
 	}
 
+	Image struct {
+		CoverType string `json:"coverType,omitempty"`
+		URL       string `json:"url,omitempty"`
+	}
+
 	Mappings struct {
 		AnimeplanetID string `json:"animeplanet_id,omitempty"`
 		KitsuID       int    `json:"kitsu_id,omitempty"`
@@ -49,6 +54,7 @@ type (
 		Episodes     map[string]Episode `json:"episodes"`
 		EpisodeCount int                `json:"episodeCount"`
 		SpecialCount int                `json:"specialCount"`
+		Images       []Image            `json:"images,omitempty"`
 		Mappings     *Mappings          `json:"mappings"`
 	}
 )

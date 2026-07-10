@@ -1,5 +1,29 @@
 package anizip
 
+import "strings"
+
+type Artwork struct {
+	Fanart string `json:"fanart,omitempty"`
+	Logo   string `json:"logo,omitempty"`
+	Title  string `json:"title,omitempty"`
+}
+
+func (m *Media) GetArtwork() *Artwork {
+	if m == nil {
+		return &Artwork{}
+	}
+	a := &Artwork{Title: m.GetTitle()}
+	for _, img := range m.Images {
+		switch strings.ToLower(img.CoverType) {
+		case "fanart":
+			a.Fanart = img.URL
+		case "clearlogo":
+			a.Logo = img.URL
+		}
+	}
+	return a
+}
+
 func (m *Media) GetTitle() string {
 	if m == nil {
 		return ""

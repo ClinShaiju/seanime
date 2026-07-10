@@ -16,6 +16,7 @@ import { PluginWebviewSlot } from "@/app/(main)/_features/plugin/webview/plugin-
 import { useSeaCommandInject } from "@/app/(main)/_features/sea-command/use-inject"
 
 import { vc_isFullscreen } from "@/app/(main)/_features/video-core/video-core-atoms"
+import { useAnizipArtworkPrefetch } from "@/app/(main)/_features/video-core/video-core-loading-screen"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { MergedSeasonSection, __entry_mergedSeasonAtom } from "@/app/(main)/entry/_components/merged-season-section"
 import { MetaSection } from "@/app/(main)/entry/_components/meta-section"
@@ -120,6 +121,9 @@ export function AnimeEntryPage() {
     const { data: animeDetails, isLoading: animeDetailsLoading } = useGetAnilistAnimeDetails(mediaId)
     const { data: registeredEpisodeTabExtensions, isFetched: registeredEpisodeTabExtensionsFetched } = useListAnimeEntryEpisodeTabExtensions()
     const vc_fullscreen = useAtomValue(vc_isFullscreen)
+
+    // Prefetch loading-screen artwork + images so they're cached before playback starts
+    useAnizipArtworkPrefetch(mediaId ? Number(mediaId) : null)
 
     const [mergedSeason, setMergedSeason] = useAtom(__entry_mergedSeasonAtom)
     // Clear the merged-season view whenever the entry changes.

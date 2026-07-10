@@ -2,12 +2,17 @@ package handlers
 
 import (
 	"errors"
+	"seanime/internal/api/anizip"
 	"seanime/internal/database/models"
 	"seanime/internal/library/anime"
+	"seanime/internal/util/filecache"
 	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
+
+var anizipArtworkBucket = filecache.NewBucket("anizip_artwork", 7*24*time.Hour)
 
 // HandlePopulateFillerData
 //
@@ -157,4 +162,36 @@ func (h *Handler) HandleDeleteMediaMetadataParent(c echo.Context) error {
 	anime.ClearEpisodeCollectionCache()
 
 	return h.RespondWithData(c, true)
+}
+
+// HandleGetAnizipArtwork
+//
+//	@summary returns cached artwork URLs (fanart, clearlogo, title) for the loading screen.
+//	@route /api/v1/anizip-artwork/{id} [GET]
+//	@param id - int - true - "The AniList media ID"
+//	@returns anizip.Artwork
+func (h *Handler) HandleGetAnizipArtwork(c echo.Context) error {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id == 0 {
+		return h.RespondWithError(c, errors.New("invalid id"))
+	}
+
+	key := strconv.Itoa(id)
+
+	// Check filecache
+	var cached anizip.Artwork
+	if found, _ := h.App.FileCacher.Get(anizipArtworkBucket, key, &cached); found {
+		return h.RespondWithData(c, &cached)
+	}
+
+	// Fetch from ani.zip
+	media, err := anizip.FetchAniZipMedia("anilist", id)
+	if err != nil {
+		return h.RespondWithError(c, err)
+	}
+
+	artwork := media.GetArtwork()
+	_ = h.App.FileCacher.Set(anizipArtworkBucket, key, artwork)
+
+	return h.RespondWithData(c, artwork)
 }
