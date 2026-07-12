@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.9.6
+
+- 🦺 Desktop (MpvCore): Fixed autoplay next episode — `keep-open=yes` prevents mpv's `end-file` event from firing; now detects EOF via the `eof-reached` property change instead
+- 🦺 AniList: Rate limit resilience — retry logic now gates on HTTP 429 / remaining=0 (not any response with rate-limit headers), retries raised from 2→4, prevents false "rate limit exceeded" errors on login and during browsing
+
 ## v3.9.5
 
 Full-fork audit fix pass — 43 files, security + crash + sync + ranking + multi-user + UX.
