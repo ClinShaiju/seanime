@@ -945,6 +945,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     React.useEffect(() => {
         const info = state.playbackInfo
         if (!player || !info || !state.active) return
+
         const token = ++sessionTokenRef.current
         completedRef.current = false
         eofHandledRef.current = false
