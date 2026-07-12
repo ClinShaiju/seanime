@@ -280,7 +280,7 @@ func TestDoAniListRequestWithRetriesExhaustsRetries(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limit exceeded, retries exhausted")
 	assert.Nil(t, resp)
-	assert.Equal(t, 2, attempt)
+	assert.Equal(t, 4, attempt)
 }
 
 func TestUseCustomAPIUsesRuntimeConfig(t *testing.T) {

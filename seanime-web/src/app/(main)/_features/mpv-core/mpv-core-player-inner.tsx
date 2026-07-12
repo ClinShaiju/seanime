@@ -227,7 +227,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
 
     // Setup playlist hooks
     useVideoCorePlaylistSetup(state as any)
-    const { playEpisode, hasNextEpisode, hasPreviousEpisode } = useVideoCorePlaylist()
+    const { playEpisode, hasNextEpisode, hasPreviousEpisode, isGlobalPlaylistActive } = useVideoCorePlaylist()
     const clientId = useAtomValue(clientIdAtom) ?? ""
     const { sendMessage } = useWebsocketSender()
     const [paused, setPaused] = useAtom(mc_paused)
@@ -274,6 +274,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const sessionTokenRef = React.useRef(0)
     const suppressEndRef = React.useRef(false)
     const completedRef = React.useRef(false)
+    const eofHandledRef = React.useRef(false)
     const metadataReadyRef = React.useRef(false)
     const canPlayRef = React.useRef(false)
     // Startup phase marks (ms via performance.now), reported once per session as
@@ -946,6 +947,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         if (!player || !info || !state.active) return
         const token = ++sessionTokenRef.current
         completedRef.current = false
+        eofHandledRef.current = false
         if (startupRetryPlaybackIdRef.current !== info.id) {
             startupRetryPlaybackIdRef.current = info.id
             startupRetryCountRef.current = 0
@@ -1245,8 +1247,26 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
             return
         }
         if ((event.reason ?? "").toLowerCase() !== "eof") return
-        log.info("Playback reached EOF. autoNext =", autoNext)
+        log.info("Playback reached EOF (end-file). autoNext =", autoNext)
         sendEvent("ended", { autoNext })
+        if (autoNext && !isGlobalPlaylistActive) {
+            playEpisode("next")
+        }
+    })
+    // keep-open=yes prevents end-file from firing; detect EOF via eof-reached property instead
+    useMpvPrismEvent(player, "property", event => {
+        if (event.name !== "eof-reached" || !event.value) return
+        if (eofHandledRef.current) return
+        eofHandledRef.current = true
+        if (suppressEndRef.current) {
+            suppressEndRef.current = false
+            return
+        }
+        log.info("Playback reached EOF (eof-reached). autoNext =", autoNext)
+        sendEvent("ended", { autoNext })
+        if (autoNext && !isGlobalPlaylistActive) {
+            playEpisode("next")
+        }
     })
     useMpvPrismEvent(player, "error", event => {
         log.error("Player error event received:", event.message)
