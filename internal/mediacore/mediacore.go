@@ -368,10 +368,13 @@ func (c *Coordinator) dispatch(event player.Event) {
 }
 
 func (c *Coordinator) listenToBackendEvents(target player.Target, b Backend) {
+	var lastContinuitySave time.Time
 	for ev := range b.Events() {
 		key := ev.GetSessionKey()
 		var finalState *player.PlaybackState
 		var finalStatus *player.PlaybackStatus
+		var statusState *player.PlaybackState
+		var statusTime, statusDuration float64
 
 		c.mu.Lock()
 		if c.session.Target != key.Target || c.session.ClientID != key.ClientID {
@@ -414,6 +417,11 @@ func (c *Coordinator) listenToBackendEvents(target player.Target, b Backend) {
 			c.activePlaybackStatus = playbackStatusFromEvent(event.BaseEvent, event.CurrentTime, event.Duration, false)
 		case *player.StatusEvent:
 			c.activePlaybackStatus = playbackStatusFromEvent(event.BaseEvent, event.CurrentTime, event.Duration, event.Paused)
+			if c.activePlaybackState != nil {
+				statusState = new(*c.activePlaybackState)
+				statusTime = event.CurrentTime
+				statusDuration = event.Duration
+			}
 		case *player.SeekedEvent:
 			c.activePlaybackStatus = playbackStatusFromEvent(event.BaseEvent, event.CurrentTime, event.Duration, event.Paused)
 		case *player.CompletedEvent:
@@ -438,6 +446,10 @@ func (c *Coordinator) listenToBackendEvents(target player.Target, b Backend) {
 
 		if finalState != nil && finalStatus != nil {
 			c.updateContinuityState(*finalState, finalStatus.CurrentTime, finalStatus.Duration)
+		}
+		if statusState != nil && time.Since(lastContinuitySave) >= 5*time.Second {
+			lastContinuitySave = time.Now()
+			c.updateContinuityState(*statusState, statusTime, statusDuration)
 		}
 
 		select {
