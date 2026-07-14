@@ -407,9 +407,22 @@ func (h *WatchRoomHub) JoinRoom(roomID string, user PoolUser, clientID, password
 		AutoSkipPref: "auto",
 	}
 	room.recomputeAutoSkipLocked()
+	// Snapshot the other live members so we can toast them "X joined" after unlocking (never send
+	// under room.mu — writeJSON can block; the F7 lock discipline).
+	notifyTargets := make([]string, 0, len(room.Participants))
+	for k, p := range room.Participants {
+		if k != key && p.ClientID != "" {
+			notifyTargets = append(notifyTargets, p.ClientID)
+		}
+	}
 	room.mu.Unlock()
 
 	h.logf("user %s joined room %s", user.Username, roomID)
+	if h.manager != nil && h.manager.wsEventManager != nil {
+		for _, cid := range notifyTargets {
+			h.manager.wsEventManager.SendEventTo(cid, events.InfoToast, user.Username+" joined the room")
+		}
+	}
 	h.broadcastRoomState(room)
 	h.broadcastRoomsUpdated() // member count changed on the card
 	return room, nil

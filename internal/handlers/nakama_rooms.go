@@ -36,6 +36,21 @@ func (h *Handler) requireRoomIdentity(c echo.Context) error {
 	return nil
 }
 
+// respondRoomError maps watch-room hub sentinel errors to terminal HTTP statuses so the client can
+// react (clear a stale room on 404 instead of tight-looping a logged 500). Unknown sentinels stay 500.
+func (h *Handler) respondRoomError(c echo.Context, err error) error {
+	switch {
+	case errors.Is(err, nakama.ErrRoomNotFound), errors.Is(err, nakama.ErrParticipantUnknown):
+		return h.RespondWithStatusError(c, http.StatusNotFound, err)
+	case errors.Is(err, nakama.ErrRoomWrongPassword), errors.Is(err, nakama.ErrNotRoomHost):
+		return h.RespondWithStatusError(c, http.StatusForbidden, err)
+	case errors.Is(err, nakama.ErrRoomNameRequired):
+		return h.RespondWithStatusError(c, http.StatusBadRequest, err)
+	default:
+		return h.RespondWithError(c, err)
+	}
+}
+
 // HandleNakamaWatchRoomList
 //
 //	@summary lists available same-instance watch rooms (discovery cards).
@@ -87,7 +102,7 @@ func (h *Handler) HandleNakamaWatchRoomCreate(c echo.Context) error {
 
 	room, err := h.App.NakamaManager.GetWatchRoomHub().CreateRoom(h.nakamaPoolUser(c), b.ClientId, b.Name, b.Password)
 	if err != nil {
-		return h.RespondWithError(c, err)
+		return h.respondRoomError(c, err)
 	}
 	return h.RespondWithData(c, room.Snapshot()) // marshal a copy, never the live room (concurrent-map-write crash)
 }
@@ -114,7 +129,7 @@ func (h *Handler) HandleNakamaWatchRoomJoin(c echo.Context) error {
 
 	room, err := h.App.NakamaManager.GetWatchRoomHub().JoinRoom(b.RoomId, h.nakamaPoolUser(c), b.ClientId, b.Password)
 	if err != nil {
-		return h.RespondWithError(c, err)
+		return h.respondRoomError(c, err)
 	}
 	return h.RespondWithData(c, room.Snapshot()) // marshal a copy, never the live room (concurrent-map-write crash)
 }
@@ -133,7 +148,7 @@ func (h *Handler) HandleNakamaWatchRoomLeave(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 	if err := h.App.NakamaManager.GetWatchRoomHub().LeaveRoom(b.RoomId, h.nakamaPoolUser(c).Key()); err != nil {
-		return h.RespondWithError(c, err)
+		return h.respondRoomError(c, err)
 	}
 	return h.RespondWithData(c, true)
 }
@@ -155,7 +170,7 @@ func (h *Handler) HandleNakamaWatchRoomSetControl(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 	if err := h.App.NakamaManager.GetWatchRoomHub().SetControl(b.RoomId, h.nakamaPoolUser(c).Key(), b.TargetKey, b.CanControl, b.All); err != nil {
-		return h.RespondWithError(c, err)
+		return h.respondRoomError(c, err)
 	}
 	return h.RespondWithData(c, true)
 }
@@ -175,7 +190,7 @@ func (h *Handler) HandleNakamaWatchRoomForceTracks(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 	if err := h.App.NakamaManager.GetWatchRoomHub().SetForceHostTracks(b.RoomId, h.nakamaPoolUser(c).Key(), b.ForceHostTracks); err != nil {
-		return h.RespondWithError(c, err)
+		return h.respondRoomError(c, err)
 	}
 	return h.RespondWithData(c, true)
 }
@@ -195,7 +210,7 @@ func (h *Handler) HandleNakamaWatchRoomAutoSkip(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 	if err := h.App.NakamaManager.GetWatchRoomHub().SetAutoSkipPref(b.RoomId, h.nakamaPoolUser(c).Key(), b.Pref); err != nil {
-		return h.RespondWithError(c, err)
+		return h.respondRoomError(c, err)
 	}
 	return h.RespondWithData(c, true)
 }
@@ -237,7 +252,7 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 
 	info := h.App.NakamaManager.GetWatchRoomHub().StreamInfo(b.RoomId)
 	if !info.Active {
-		return h.RespondWithError(c, errors.New("the room has no active stream"))
+		return h.RespondWithStatusError(c, http.StatusConflict, errors.New("the room has no active stream"))
 	}
 
 	opts := &debrid_client.StartStreamOptions{
@@ -280,7 +295,7 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 		if !ok {
 			// Still resolving (or the controller's stream is gone) — tell the client to retry
 			// via the Join button rather than diverge onto a different release.
-			return h.RespondWithError(c, errors.New("the room's stream is not ready yet, try again in a moment"))
+			return h.RespondWithStatusError(c, http.StatusConflict, errors.New("the room's stream is not ready yet, try again in a moment"))
 		}
 		fp := share.Filepath
 		if fp == "" {
