@@ -170,6 +170,11 @@ func (m *WSEventManager) AddConn(id string, conn *websocket.Conn, platform ...st
 		clientPlatform = platform[0]
 	}
 
+	// Guard m.Conns/m.hasHadConnection like every other accessor — GetClientIds (reaper liveness)
+	// and the fan-out paths read m.Conns under m.mu, so an unlocked append here is a data race
+	// (worst right after a restart when all sockets re-register at once).
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.hasHadConnection = true
 	m.Conns = append(m.Conns, &WSConn{
 		ID:       id,
@@ -287,6 +292,8 @@ func (m *WSEventManager) SendEventToIfOwner(clientId string, ownerUserID uint, t
 }
 
 func (m *WSEventManager) RemoveConn(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for i, conn := range m.Conns {
 		if conn.ID == id {
 			m.Conns = append(m.Conns[:i], m.Conns[i+1:]...)
