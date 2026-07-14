@@ -737,6 +737,17 @@ type DebridActiveStream struct {
 	Data   string `gorm:"column:data" json:"data"`
 }
 
+// NakamaWatchRoom persists a same-instance watch room so it survives a server restart (the Pi
+// auto-updates ~every 15min, which would otherwise nuke every live party). One row per room; Data
+// is a JSON blob of the room's DURABLE state (membership + playback intent + password hash) WITHOUT
+// per-connection fields — ClientIDs are re-earned on re-join. A rehydrated room whose members never
+// reconnect is evicted by the normal idle reaper.
+type NakamaWatchRoom struct {
+	BaseModel
+	RoomID string `gorm:"column:room_id;uniqueIndex" json:"roomId"`
+	Data   string `gorm:"column:data" json:"data"`
+}
+
 // DebridPrewarm is the server-wide, account-partitioned cache of resolved debrid prewarms
 // (selection + resolved CDN URL). A prewarm done for one user is reused by ANY user on the SAME
 // TorBox account (same API key) without re-searching/re-adding, and it survives restarts. Keyed by

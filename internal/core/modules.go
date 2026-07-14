@@ -427,6 +427,7 @@ func (a *App) initModulesOnce() {
 		MediacoreCoordinator:    a.MediacoreCoordinator,
 		DirectStreamManager:     a.DirectStreamManager,
 		IsOfflineRef:            a.IsOfflineRef(),
+		Db:                      a.Database,
 	})
 
 	// +---------------------+

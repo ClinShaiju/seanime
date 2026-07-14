@@ -451,3 +451,59 @@ func TestWatchRoom_BarePauseDoesNotStealControl(t *testing.T) {
 		t.Fatalf("a seek should hand control to bob, got %s", ctrl)
 	}
 }
+
+func TestRoomPersistenceRoundTrip(t *testing.T) {
+	now := time.Now()
+	room := &WatchRoom{
+		ID: "r1", Name: "Movie Night", HostKey: "local:alice", ControllerKey: "local:bob",
+		HasPassword: true, passwordHash: "abc123", ForceHostTracks: true,
+		CurrentMediaInfo: &WatchPartySessionMediaInfo{MediaId: 42, EpisodeNumber: 3, StreamType: WatchPartyStreamTypeDebrid},
+		CreatedAt:        now,
+		PlaybackActive:   true, paused: false, position: 123.4, positionAt: now,
+		Participants: map[string]*RoomParticipant{
+			"local:alice": {User: PoolUser{Username: "alice", Source: PoolSourceLocal}, ClientID: "cid-alice", IsHost: true, CanControl: true, JoinedAt: now, AutoSkipPref: "on"},
+			"local:bob":   {User: PoolUser{Username: "bob", Source: PoolSourceLocal}, ClientID: "cid-bob", IsHost: false, CanControl: true, JoinedAt: now, AutoSkipPref: "off"},
+		},
+	}
+
+	// toPersisted -> JSON -> back -> hydrate (mirrors persist/restore across a restart)
+	pr := room.toPersistedLocked()
+	data, err := json.Marshal(&pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back persistedRoom
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	h := hydrateRoom(back, now.Add(time.Hour))
+
+	if h.ID != "r1" || h.Name != "Movie Night" || h.HostKey != "local:alice" || h.ControllerKey != "local:bob" {
+		t.Errorf("durable identity not preserved: %+v", h)
+	}
+	if h.passwordHash != "abc123" || !h.HasPassword || !h.ForceHostTracks {
+		t.Errorf("password/forceTracks not preserved")
+	}
+	if h.CurrentMediaInfo == nil || h.CurrentMediaInfo.MediaId != 42 || h.CurrentMediaInfo.EpisodeNumber != 3 {
+		t.Errorf("media info not preserved")
+	}
+	// per-connection + live playback deliberately NOT restored
+	if h.PlaybackActive {
+		t.Errorf("PlaybackActive must be false after hydrate")
+	}
+	if !h.paused {
+		t.Errorf("hydrated room must start paused")
+	}
+	for k, p := range h.Participants {
+		if p.ClientID != "" {
+			t.Errorf("ClientID must be cleared on hydrate for %s", k)
+		}
+	}
+	if len(h.Participants) != 2 || !h.Participants["local:bob"].CanControl {
+		t.Errorf("membership/control not preserved")
+	}
+	// offline (ClientID-cleared) members don't vote until they reconnect
+	if h.EffectiveAutoSkip {
+		t.Errorf("no live voters after hydrate -> EffectiveAutoSkip must be false")
+	}
+}

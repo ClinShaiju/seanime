@@ -5,11 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"seanime/internal/database/models"
 	"seanime/internal/events"
+	"seanime/internal/util"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )
@@ -240,6 +243,9 @@ func NewWatchRoomHub(manager *Manager, logger *zerolog.Logger) *WatchRoomHub {
 		rooms:   make(map[string]*WatchRoom),
 		stop:    make(chan struct{}),
 	}
+	// Rehydrate rooms persisted before a restart (all ClientIDs cleared) so a redeploy doesn't strand
+	// live parties — members re-attach by re-joining; a room nobody reconnects to is reaped as idle.
+	h.loadPersistedRooms()
 	// ponytail: one process-lifetime ticker for all rooms (rooms are few; members are few).
 	go h.runBroadcastLoop()
 	return h
@@ -362,6 +368,7 @@ func (h *WatchRoomHub) CreateRoom(host PoolUser, clientID, name, password string
 	h.mu.Unlock()
 
 	h.logf("created room %q (%s) host=%s", name, room.ID, host.Username)
+	h.persistRoom(room)
 	h.broadcastRoomsUpdated()
 	return room, nil
 }
@@ -387,7 +394,9 @@ func (h *WatchRoomHub) JoinRoom(roomID string, user PoolUser, clientID, password
 			room.ControllerKey = key
 			room.lastControllerClientID = clientID
 		}
+		room.recomputeAutoSkipLocked() // this member is live again → their vote counts
 		room.mu.Unlock()
+		h.persistRoom(room) // host-return may have moved ControllerKey (durable)
 		h.broadcastRoomState(room)
 		return room, nil
 	}
@@ -418,6 +427,7 @@ func (h *WatchRoomHub) JoinRoom(roomID string, user PoolUser, clientID, password
 	room.mu.Unlock()
 
 	h.logf("user %s joined room %s", user.Username, roomID)
+	h.persistRoom(room)
 	if h.manager != nil && h.manager.wsEventManager != nil {
 		for _, cid := range notifyTargets {
 			h.manager.wsEventManager.SendEventTo(cid, events.InfoToast, user.Username+" joined the room")
@@ -461,6 +471,7 @@ func (h *WatchRoomHub) LeaveRoom(roomID string, userKey string) error {
 		h.mu.Lock()
 		delete(h.rooms, roomID)
 		h.mu.Unlock()
+		h.deletePersistedRoom(roomID)
 		h.logf("host left room %s, closed", roomID)
 		if h.manager != nil && h.manager.wsEventManager != nil {
 			for _, cid := range others {
@@ -487,8 +498,10 @@ func (h *WatchRoomHub) LeaveRoom(roomID string, userKey string) error {
 		h.mu.Lock()
 		delete(h.rooms, roomID)
 		h.mu.Unlock()
+		h.deletePersistedRoom(roomID)
 		h.logf("room %s emptied, removed", roomID)
 	} else {
+		h.persistRoom(room)
 		h.broadcastRoomState(room)
 	}
 	h.broadcastRoomsUpdated()
@@ -534,6 +547,9 @@ func (h *WatchRoomHub) HandleClientDisconnect(clientID string) {
 			room.recomputeAutoSkipLocked() // an offline member's vote no longer counts
 		}
 		room.mu.Unlock()
+		if wasController {
+			h.persistRoom(room) // promotion moved ControllerKey/CanControl (durable)
+		}
 		if cleared || wasController {
 			h.broadcastRoomState(room)
 		}
@@ -569,6 +585,7 @@ func (h *WatchRoomHub) SetControl(roomID, hostKey, targetKey string, canControl,
 		p.CanControl = canControl
 	}
 
+	go h.persistRoom(room) // go: its RLock waits for this fn's deferred write-unlock
 	go h.broadcastRoomState(room)
 	return nil
 }
@@ -589,6 +606,7 @@ func (h *WatchRoomHub) SetForceHostTracks(roomID, hostKey string, value bool) er
 	room.ForceHostTracks = value
 	room.mu.Unlock()
 
+	h.persistRoom(room)
 	h.broadcastRoomState(room)
 	return nil
 }
@@ -632,6 +650,7 @@ func (h *WatchRoomHub) SetAutoSkipPref(roomID, userKey, pref string) error {
 	room.recomputeAutoSkipLocked()
 	room.mu.Unlock()
 
+	h.persistRoom(room)
 	h.broadcastRoomState(room)
 	return nil
 }
@@ -827,6 +846,12 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 	// broadcastRoomsUpdated takes its own locks.
 	if cardMediaChanged {
 		h.broadcastRoomsUpdated()
+	}
+
+	// Persist the durable state when the media identity or the controller changed (NOT on every
+	// discrete play/pause/seek, and never on a heartbeat) so a restart rehydrates the right episode.
+	if cardMediaChanged || controlHandedOff {
+		h.persistRoom(room)
 	}
 
 	// Push the full room state to members when playback STARTS, STOPS, or switches episode (not on
@@ -1117,6 +1142,144 @@ func (room *WatchRoom) Snapshot() *WatchRoom {
 	return room.snapshotLocked()
 }
 
+////////////////////////////////////////////////////////////////////////////////////////
+// Persistence — survive a server restart (the Pi auto-updates ~every 15min).
+////////////////////////////////////////////////////////////////////////////////////////
+
+// persistedRoomParticipant is the DURABLE part of a participant: everything except the
+// per-connection ClientID, which is re-earned when the user re-joins after a restart.
+type persistedRoomParticipant struct {
+	User         PoolUser  `json:"user"`
+	IsHost       bool      `json:"isHost"`
+	CanControl   bool      `json:"canControl"`
+	JoinedAt     time.Time `json:"joinedAt"`
+	AutoSkipPref string    `json:"autoSkipPref"`
+}
+
+// persistedRoom is the JSON blob stored per room. Playback POSITION is deliberately omitted — a
+// rehydrated room comes back with no active stream and the controller re-starts playback (cheaper,
+// and the debrid link/selection died with the restart too, so a stale position would point nowhere).
+type persistedRoom struct {
+	ID               string                              `json:"id"`
+	Name             string                              `json:"name"`
+	HostKey          string                              `json:"hostKey"`
+	ControllerKey    string                              `json:"controllerKey"`
+	HasPassword      bool                                `json:"hasPassword"`
+	PasswordHash     string                              `json:"passwordHash"`
+	ForceHostTracks  bool                                `json:"forceHostTracks"`
+	Participants     map[string]persistedRoomParticipant `json:"participants"`
+	CurrentMediaInfo *WatchPartySessionMediaInfo         `json:"currentMediaInfo"`
+	CreatedAt        time.Time                           `json:"createdAt"`
+}
+
+// toPersistedLocked snapshots the room's durable state (caller holds room.mu).
+func (room *WatchRoom) toPersistedLocked() persistedRoom {
+	pr := persistedRoom{
+		ID:               room.ID,
+		Name:             room.Name,
+		HostKey:          room.HostKey,
+		ControllerKey:    room.ControllerKey,
+		HasPassword:      room.HasPassword,
+		PasswordHash:     room.passwordHash,
+		ForceHostTracks:  room.ForceHostTracks,
+		CurrentMediaInfo: room.CurrentMediaInfo,
+		CreatedAt:        room.CreatedAt,
+		Participants:     make(map[string]persistedRoomParticipant, len(room.Participants)),
+	}
+	for k, p := range room.Participants {
+		pr.Participants[k] = persistedRoomParticipant{
+			User: p.User, IsHost: p.IsHost, CanControl: p.CanControl, JoinedAt: p.JoinedAt, AutoSkipPref: p.AutoSkipPref,
+		}
+	}
+	return pr
+}
+
+// hydrateRoom rebuilds a live *WatchRoom from a persisted blob: ClientIDs cleared (re-earned on
+// re-join), no active playback, lastLiveAt=now so the idle reaper gives members the normal window to
+// reconnect before evicting a room nobody comes back to.
+func hydrateRoom(pr persistedRoom, now time.Time) *WatchRoom {
+	room := &WatchRoom{
+		ID:               pr.ID,
+		Name:             pr.Name,
+		HostKey:          pr.HostKey,
+		ControllerKey:    pr.ControllerKey,
+		HasPassword:      pr.HasPassword,
+		passwordHash:     pr.PasswordHash,
+		ForceHostTracks:  pr.ForceHostTracks,
+		CurrentMediaInfo: pr.CurrentMediaInfo,
+		CreatedAt:        pr.CreatedAt,
+		Participants:     make(map[string]*RoomParticipant, len(pr.Participants)),
+		PlaybackActive:   false,
+		paused:           true,
+		lastLiveAt:       now,
+	}
+	for k, p := range pr.Participants {
+		room.Participants[k] = &RoomParticipant{
+			User: p.User, ClientID: "", IsHost: p.IsHost, CanControl: p.CanControl,
+			JoinedAt: p.JoinedAt, AutoSkipPref: p.AutoSkipPref,
+		}
+	}
+	room.recomputeAutoSkipLocked()
+	return room
+}
+
+// persistRoom best-effort write-through of a room's durable state (async, panic-guarded). Called on
+// membership/control/media mutations — NOT on the 500ms position heartbeat (position isn't stored).
+func (h *WatchRoomHub) persistRoom(room *WatchRoom) {
+	if h.manager == nil || h.manager.db == nil {
+		return
+	}
+	room.mu.RLock()
+	pr := room.toPersistedLocked()
+	room.mu.RUnlock()
+	go func() {
+		defer util.HandlePanicInModuleThen("nakama/persistRoom", func() {})
+		data, err := json.Marshal(&pr)
+		if err != nil {
+			return
+		}
+		_ = h.manager.db.UpsertNakamaWatchRoom(&models.NakamaWatchRoom{RoomID: pr.ID, Data: string(data)})
+	}()
+}
+
+// deletePersistedRoom removes a room's persisted row (host-close / empty / reap).
+func (h *WatchRoomHub) deletePersistedRoom(roomID string) {
+	if h.manager == nil || h.manager.db == nil {
+		return
+	}
+	go func() {
+		defer util.HandlePanicInModuleThen("nakama/deletePersistedRoom", func() {})
+		h.manager.db.DeleteNakamaWatchRoom(roomID)
+	}()
+}
+
+// loadPersistedRooms rehydrates rooms from the DB on boot (called from NewWatchRoomHub). Synchronous
+// so rooms exist before the first client reconnects and re-joins.
+func (h *WatchRoomHub) loadPersistedRooms() {
+	defer util.HandlePanicInModuleThen("nakama/loadPersistedRooms", func() {})
+	if h.manager == nil || h.manager.db == nil {
+		return
+	}
+	recs, err := h.manager.db.GetAllNakamaWatchRooms()
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	h.mu.Lock()
+	for _, rec := range recs {
+		var pr persistedRoom
+		if err := json.Unmarshal([]byte(rec.Data), &pr); err != nil || pr.ID == "" || len(pr.Participants) == 0 {
+			continue
+		}
+		h.rooms[pr.ID] = hydrateRoom(pr, now)
+	}
+	n := len(h.rooms)
+	h.mu.Unlock()
+	if n > 0 {
+		h.logf("rehydrated %d watch room(s) from persistence", n)
+	}
+}
+
 // reapIdleRooms closes any room that has had no connected client for longer than roomIdleTTL.
 // HandleClientDisconnect keeps participants (for reconnect) and only an explicit leave deletes a
 // room, so a room whose members all vanish without leaving would otherwise linger forever —
@@ -1166,6 +1329,7 @@ func (h *WatchRoomHub) reapIdleRoomsWith(live map[string]struct{}, now time.Time
 	}
 	h.mu.Unlock()
 	for _, id := range reaped {
+		h.deletePersistedRoom(id)
 		h.logf("reaped idle room %s (no connected client for >%s)", id, roomIdleTTL)
 	}
 	h.broadcastRoomsUpdated()

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"seanime/internal/database/db"
 	"seanime/internal/database/models"
 	debrid_client "seanime/internal/debrid/client"
 	"seanime/internal/directstream"
@@ -48,6 +49,7 @@ type Manager struct {
 	peerId                  string
 	mediacoreCoordinator    *mediacore.Coordinator
 	genericPlayer           *WatchPartyGenericPlayer
+	db                      *db.Database // watch-room persistence (survive restart); may be nil
 
 	// Host connections (when acting as host)
 	peerConnections *result.Map[string, *PeerConnection]
@@ -102,6 +104,7 @@ type NewManagerOptions struct {
 	MediacoreCoordinator    *mediacore.Coordinator
 	DirectStreamManager     *directstream.Manager
 	IsOfflineRef            *util.Ref[bool]
+	Db                      *db.Database
 }
 
 type ConnectionType string
@@ -245,6 +248,7 @@ func NewManager(opts *NewManagerOptions) *Manager {
 		useDenshiPlayer:         false,
 		directstreamManager:     opts.DirectStreamManager,
 		isOfflineRef:            opts.IsOfflineRef,
+		db:                      opts.Db,
 		connectionMode:          ConnectionModeDirect, // Default to direct mode
 	}
 	// Initialize to a non-nil empty settings so all lock-free reads are safe before the

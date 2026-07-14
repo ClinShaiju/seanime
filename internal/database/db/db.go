@@ -114,6 +114,7 @@ func migrateTables(db *gorm.DB) error {
 		&models.DummyDebridSettings{},
 		&models.DebridTorrentItem{},
 		&models.DebridActiveStream{},
+		&models.NakamaWatchRoom{},
 		&models.DebridPrewarm{},
 		&models.DebridTransferHash{},
 		&models.PluginData{},
