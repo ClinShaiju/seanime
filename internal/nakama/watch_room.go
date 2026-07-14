@@ -227,6 +227,12 @@ const minPauseFlipInterval = 500 * time.Millisecond
 // out from under its members.
 const roomIdleTTL = 2 * time.Minute
 
+// playbackStaleTTL is how long PlaybackActive may persist with no controller report before the
+// broadcast loop clears it. The controller heartbeats ~1/s while its player is open (even paused),
+// so a healthy stream never goes stale; ~6s tolerates a few missed heartbeats / a brief ws blip
+// while still promptly clearing a phantom stream after the host closes/tab-closes without a stop.
+const playbackStaleTTL = 6 * time.Second
+
 func NewWatchRoomHub(manager *Manager, logger *zerolog.Logger) *WatchRoomHub {
 	h := &WatchRoomHub{
 		manager: manager,
@@ -255,7 +261,20 @@ func (h *WatchRoomHub) runBroadcastLoop() {
 			}
 			h.reapIdleRooms()
 			for _, room := range h.snapshotRooms() {
-				room.mu.RLock()
+				room.mu.Lock()
+				// Self-heal a stale "stream is playing" flag. The controller heartbeats ~1/s while its
+				// player is open (even paused), refreshing positionAt; if it goes stale the controller's
+				// player is gone (closed / tab-closed / disconnected) WITHOUT a clean stopped=true, and
+				// PlaybackActive would otherwise linger true forever — leaving a phantom "Join room
+				// stream" button (canJoin is gated on it). Clear it and push the room state so the button
+				// disappears. A graceful stop already clears PlaybackActive immediately, so this only
+				// catches the ungraceful case.
+				playbackWentInactive := false
+				if room.PlaybackActive && !room.positionAt.IsZero() && time.Since(room.positionAt) > playbackStaleTTL {
+					room.PlaybackActive = false
+					room.paused = true
+					playbackWentInactive = true
+				}
 				payload := room.playbackBroadcastLocked(true)
 				// The authoritative position is derived from the driver's reports, so the driver
 				// is the source — don't echo it back to itself (that's what caused the self-driven
@@ -272,9 +291,15 @@ func (h *WatchRoomHub) runBroadcastLoop() {
 						}
 					}
 				}
-				room.mu.RUnlock()
+				room.mu.Unlock()
 				for _, cid := range clientIDs {
 					h.manager.wsEventManager.SendEventTo(cid, events.NakamaRoomPlaybackSync, payload, true)
+				}
+				// Push the cleared state so the "Join room stream" button hides + the discovery card
+				// drops its media. Done outside room.mu (both take their own locks).
+				if playbackWentInactive {
+					h.broadcastRoomState(room)
+					h.broadcastRoomsUpdated()
 				}
 			}
 		}

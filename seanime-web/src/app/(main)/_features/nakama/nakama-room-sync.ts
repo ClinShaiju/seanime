@@ -400,6 +400,13 @@ export function useWatchRoomPlayerSync() {
             // emit side for the duration of our terminate (>700ms) so it doesn't echo back.
             if (p.stopped) {
                 applyingRemoteUntil.current = Date.now() + 2000
+                // The stream instance ended: re-arm auto-follow so a fresh start (even of the SAME
+                // media+episode) opens automatically instead of needing a manual "Join room stream".
+                // The start latch is keyed by media:episode:type and only cleared on an episode CHANGE,
+                // so a same-episode restart would otherwise stay suppressed; the per-instance opt-out
+                // likewise — a new start is a new instance.
+                autoStartingKeyRef.current = ""
+                setOptedOut(null)
                 requestTerminate(c => c + 1)
                 return
             }
