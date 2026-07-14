@@ -391,3 +391,24 @@ func TestDownloadedItemsAreRemovedFromQueue(t *testing.T) {
 		return err == nil && queued.Downloaded
 	}, time.Second, 10*time.Millisecond)
 }
+
+func TestHasShareableSelection(t *testing.T) {
+	cases := []struct {
+		name                             string
+		streamUrl, torrentItemId, fileId string
+		want                             bool
+	}{
+		{"resolved url only (pre-resolved direct stream, no item)", "https://cdn/x", "", "", true},
+		{"selection known before url resolves (concurrent-start path)", "", "item1", "file1", true},
+		{"url + selection both present", "https://cdn/x", "item1", "file1", true},
+		{"nothing resolved yet", "", "", "", false},
+		{"item without file is not a complete selection", "", "item1", "", false},
+		{"file without item is not a complete selection", "", "", "file1", false},
+	}
+	for _, tc := range cases {
+		if got := hasShareableSelection(tc.streamUrl, tc.torrentItemId, tc.fileId); got != tc.want {
+			t.Errorf("%s: hasShareableSelection(%q,%q,%q) = %v, want %v",
+				tc.name, tc.streamUrl, tc.torrentItemId, tc.fileId, got, tc.want)
+		}
+	}
+}

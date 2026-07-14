@@ -620,8 +620,14 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		}
 	}
 
-	// Save the current torrent item id
+	// Save the current selection (torrent item + file). Setting BOTH here — not the file id only at
+	// resolve time (below) — makes the selection shareable to a watch-room peer as soon as it's known,
+	// so the peer resolves its OWN CDN link CONCURRENTLY with ours instead of blocking on our fully-
+	// resolved currentStreamUrl (which lands ~2-3s later at the bottom of the download goroutine). It
+	// also closes the torn-selection window (new item id paired with a stale file id). fileId is final
+	// from selection and does not change before the resolve.
 	s.setCurrentTorrentItemId(torrentItemId)
+	s.setCurrentFileId(fileId)
 	ctx, cancelCtx := context.WithCancel(context.Background())
 	s.setDownloadCancel(cancelCtx)
 
@@ -832,7 +838,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		}
 
 		s.setCurrentStreamUrl(streamUrl)
-		s.setCurrentFileId(fileId) // shareable selection for watch-room peers
+		// currentFileId (the shareable selection for watch-room peers) is already set early, at
+		// selection time above — no need to re-set it here.
 		// Snapshot the freshly-resolved stream so a server restart can replay it instantly.
 		s.persistActiveStream(opts, streamUrl, torrentItemId, fileId, filepath, media, selectedTorrent, time.Now())
 

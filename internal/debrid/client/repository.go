@@ -525,6 +525,14 @@ type UserStreamShare struct {
 	FileId        string
 }
 
+// hasShareableSelection reports whether a user's stream state is reusable by a watch-room peer:
+// either a fully-resolved URL, or a torrent item + file id the peer can resolve its own fresh CDN
+// link from. The latter is available ~2-3s before the URL (set right after AddTorrent), so gating on
+// it lets a follower start resolving concurrently instead of blocking on the controller's own link.
+func hasShareableSelection(streamUrl, torrentItemId, fileId string) bool {
+	return streamUrl != "" || (torrentItemId != "" && fileId != "")
+}
+
 // GetUserStreamShare returns the shareable selection for a user's currently-active debrid
 // stream. Returns ok=false when that user has no active stream in memory yet.
 func (r *Repository) GetUserStreamShare(userID uint) (share UserStreamShare, ok bool) {
@@ -534,7 +542,11 @@ func (r *Repository) GetUserStreamShare(userID uint) (share UserStreamShare, ok 
 	}
 	// Consistent triple — never a torn selection (URL refreshed but file id stale, or vice-versa).
 	streamUrl, torrentItemId, fileId := sm.shareSnapshot()
-	if streamUrl == "" {
+	// Shareable as soon as EITHER a resolved URL exists OR the selection (torrent item + file) is
+	// known: a watch-room peer reusing the selection resolves its own fresh CDN link from (item,file)
+	// and ignores the URL (see HandleNakamaWatchRoomJoinStream), so it need not wait for our own link
+	// to finish resolving. A pre-resolved direct stream (no torrent item) still requires the URL.
+	if !hasShareableSelection(streamUrl, torrentItemId, fileId) {
 		return UserStreamShare{}, false
 	}
 	filepath := ""
