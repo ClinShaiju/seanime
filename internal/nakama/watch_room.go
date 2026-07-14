@@ -459,9 +459,13 @@ func (h *WatchRoomHub) LeaveRoom(roomID string, userKey string) error {
 	}
 	delete(room.Participants, userKey)
 	empty := len(room.Participants) == 0
-	// If the effective controller left, promote the next by join order.
+	// If the effective controller left, promote the next by join order AND grant it control (else
+	// resolveRelay rejects its actions and the room freezes — same defect as the disconnect path).
 	if room.ControllerKey == userKey && !empty {
 		room.ControllerKey = nextControllerKeyLocked(room, userKey, live)
+		if np, ok := room.Participants[room.ControllerKey]; ok {
+			np.CanControl = true
+		}
 	}
 	room.recomputeAutoSkipLocked()
 	room.mu.Unlock()
@@ -488,15 +492,38 @@ func (h *WatchRoomHub) HandleClientDisconnect(clientID string) {
 	live := h.liveClientIDs()
 	for _, room := range h.snapshotRooms() {
 		room.mu.Lock()
-		ctrl, ok := room.Participants[room.ControllerKey]
-		if ok && ctrl.ClientID == clientID {
+		// Detect a controller drop BEFORE clearing ids (once cleared we can't tell it apart).
+		wasController := false
+		if ctrl, ok := room.Participants[room.ControllerKey]; ok && ctrl.ClientID == clientID {
+			wasController = true
+		}
+		// Clear the dropped client's id wherever it's attached, so it stops counting as a live member
+		// (reaper liveness / MemberCount / auto-skip tally) and as a broadcast or promotion target.
+		// A reconnect re-sets it by pool key via JoinRoom, so this is safe.
+		cleared := false
+		for _, p := range room.Participants {
+			if p.ClientID == clientID {
+				p.ClientID = ""
+				cleared = true
+			}
+		}
+		if wasController {
 			room.ControllerKey = nextControllerKeyLocked(room, room.ControllerKey, live)
+			// Grant the promoted member control — otherwise resolveRelay rejects its every action and
+			// the room is permanently undrivable until the original host returns (a host tab-close
+			// froze the whole party). The host reclaims control + CanControl on its own JoinRoom.
+			if np, ok := room.Participants[room.ControllerKey]; ok {
+				np.CanControl = true
+			}
 			h.logf("controller client %s dropped in room %s, promoted %s", clientID, room.ID, room.ControllerKey)
-			room.mu.Unlock()
-			h.broadcastRoomState(room)
-			continue
+		}
+		if cleared {
+			room.recomputeAutoSkipLocked() // an offline member's vote no longer counts
 		}
 		room.mu.Unlock()
+		if cleared || wasController {
+			h.broadcastRoomState(room)
+		}
 	}
 }
 
@@ -558,6 +585,9 @@ func (h *WatchRoomHub) SetForceHostTracks(roomID, hostKey string, value bool) er
 func (room *WatchRoom) recomputeAutoSkipLocked() {
 	on, off := 0, 0
 	for _, p := range room.Participants {
+		if p.ClientID == "" {
+			continue // offline member (disconnected, id cleared) doesn't vote
+		}
 		switch p.AutoSkipPref {
 		case "on":
 			on++
@@ -902,7 +932,7 @@ func (h *WatchRoomHub) ListRooms() []*RoomCard {
 		card := &RoomCard{
 			ID:           room.ID,
 			Name:         room.Name,
-			MemberCount:  len(room.Participants),
+			MemberCount:  room.liveMemberCountLocked(),
 			HasPassword:  room.HasPassword,
 			HostUsername: room.hostUsernameLocked(),
 		}
@@ -1002,6 +1032,19 @@ func (room *WatchRoom) hostUsernameLocked() string {
 		return p.User.Username
 	}
 	return ""
+}
+
+// liveMemberCountLocked counts only participants with a live client attached (ClientID != "").
+// A disconnected member's id is cleared (HandleClientDisconnect) but the participant is kept for
+// reconnect, so len(Participants) over-counts departed users on the discovery card. Caller holds mu.
+func (room *WatchRoom) liveMemberCountLocked() int {
+	n := 0
+	for _, p := range room.Participants {
+		if p.ClientID != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func (h *WatchRoomHub) logf(format string, args ...interface{}) {
