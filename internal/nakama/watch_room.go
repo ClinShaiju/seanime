@@ -401,6 +401,9 @@ func (h *WatchRoomHub) LeaveRoom(roomID string, userKey string) error {
 		return nil
 	}
 
+	// Fetch the live-client set before locking (the reaper's ordering) so a controller promotion
+	// below can skip an offline candidate — see nextControllerKeyLocked.
+	live := h.liveClientIDs()
 	room.mu.Lock()
 	if _, exists := room.Participants[userKey]; !exists {
 		room.mu.Unlock()
@@ -433,7 +436,7 @@ func (h *WatchRoomHub) LeaveRoom(roomID string, userKey string) error {
 	empty := len(room.Participants) == 0
 	// If the effective controller left, promote the next by join order.
 	if room.ControllerKey == userKey && !empty {
-		room.ControllerKey = nextControllerKeyLocked(room, userKey)
+		room.ControllerKey = nextControllerKeyLocked(room, userKey, live)
 	}
 	room.recomputeAutoSkipLocked()
 	room.mu.Unlock()
@@ -455,11 +458,14 @@ func (h *WatchRoomHub) LeaveRoom(roomID string, userKey string) error {
 // client was the effective controller, so playback keeps driving. The original host
 // reclaims control when they JoinRoom again (§2.6).
 func (h *WatchRoomHub) HandleClientDisconnect(clientID string) {
+	// Fetch the live-client set once, before locking any room (the reaper's lock ordering), so
+	// promotion skips offline candidates — see nextControllerKeyLocked.
+	live := h.liveClientIDs()
 	for _, room := range h.snapshotRooms() {
 		room.mu.Lock()
 		ctrl, ok := room.Participants[room.ControllerKey]
 		if ok && ctrl.ClientID == clientID {
-			room.ControllerKey = nextControllerKeyLocked(room, room.ControllerKey)
+			room.ControllerKey = nextControllerKeyLocked(room, room.ControllerKey, live)
 			h.logf("controller client %s dropped in room %s, promoted %s", clientID, room.ID, room.ControllerKey)
 			room.mu.Unlock()
 			h.broadcastRoomState(room)
@@ -636,7 +642,15 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 		}
 		sameMedia := room.CurrentMediaInfo != nil && room.CurrentMediaInfo.MediaId == p.MediaId && room.CurrentMediaInfo.EpisodeNumber == p.EpisodeNumber
 		noop := room.PlaybackActive && sameMedia && p.Paused == room.paused && posDelta <= echoPosTol
-		crossEcho := room.lastDiscreteBy != "" && senderClientID != room.lastDiscreteBy && time.Since(room.lastDiscreteAt) < echoDebounce
+		// A cross-client action within the debounce window is the apply-echo of the last genuine
+		// change ONLY when it reports the same committed state the sender was just told (paused
+		// matches and position within tolerance) — mirroring the client's lastAppliedRef state-match.
+		// A payload that DIVERGES (different paused, or position off by more than the tolerance) is a
+		// genuine second-controller action and must pass through even inside the window, not be
+		// silently dropped. (The inverted same-position pause echo MPV re-fires is caught by
+		// flipChatter below, not here.)
+		echoState := p.Paused == room.paused && posDelta <= echoPosTol
+		crossEcho := echoState && room.lastDiscreteBy != "" && senderClientID != room.lastDiscreteBy && time.Since(room.lastDiscreteAt) < echoDebounce
 		// Buffering chatter: a same-position play<->pause flip faster than a human (the controller's
 		// player stalling at a seek target). Drop it; the controller's heartbeat carries the settled
 		// state once the buffer fills.
@@ -794,6 +808,22 @@ func (h *WatchRoomHub) StreamInfo(roomID string) RoomStreamInfo {
 	}
 }
 
+// IsParticipant reports whether the given pool-user key is currently a member of the room.
+// The join-stream endpoint must call this: unlike JoinRoom it performs no password check, so
+// without a membership gate any authenticated user who discovers a roomId (room ids are
+// broadcast to everyone via ListRooms) could start the controller's already-resolved debrid
+// stream in a room they never joined and never supplied a password for.
+func (h *WatchRoomHub) IsParticipant(roomID string, userKey string) bool {
+	room, ok := h.getRoom(roomID)
+	if !ok {
+		return false
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	_, exists := room.Participants[userKey]
+	return exists
+}
+
 // resolveRelay returns the other members' client ids to relay to, and whether the sender
 // (identified by ws client id) is allowed to drive playback. Pure (no I/O) so the
 // enforcement is unit-testable without a manager.
@@ -871,26 +901,59 @@ func (h *WatchRoomHub) snapshotRooms() []*WatchRoom {
 	return out
 }
 
-// nextControllerKeyLocked picks the next controller by join order: the earliest joiner
-// other than excludeKey (the dropped/leaving controller). Caller must hold room.mu.
+// liveClientIDs returns the set of currently-connected UI client ids — the same liveness source
+// the reaper uses (GetClientIds). Returns nil when there's no ws layer (unit tests), in which case
+// nextControllerKeyLocked falls back to plain join order. Call it BEFORE taking room.mu: the reaper
+// establishes the ordering (take/release the ws lock, then room.mu), so fetching here first avoids
+// any lock inversion.
+func (h *WatchRoomHub) liveClientIDs() map[string]struct{} {
+	if h.manager == nil || h.manager.wsEventManager == nil {
+		return nil
+	}
+	ids := h.manager.wsEventManager.GetClientIds()
+	live := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		live[id] = struct{}{}
+	}
+	return live
+}
+
+// nextControllerKeyLocked picks the next controller: the earliest joiner other than excludeKey
+// (the dropped/leaving controller) whose client is CURRENTLY connected (live is the reaper's
+// GetClientIds() set). Preferring a live candidate matters because Participant.ClientID is never
+// cleared on disconnect, so an offline member would otherwise win by join order and then the
+// heartbeat-arbitration guard (:624) would drop every live member's heartbeat against its stale
+// (but non-empty) id, freezing the room. If NO candidate is live (everyone dropped), fall back to
+// plain join order so a still-populated room resolves deterministically. Caller must hold room.mu.
 // Returns "" if no candidate remains.
-func nextControllerKeyLocked(room *WatchRoom, excludeKey string) string {
+func nextControllerKeyLocked(room *WatchRoom, excludeKey string, live map[string]struct{}) string {
 	type kp struct {
 		key string
 		at  time.Time
 	}
 	cands := make([]kp, 0, len(room.Participants))
+	liveCands := make([]kp, 0, len(room.Participants))
 	for k, p := range room.Participants {
 		if k == excludeKey {
 			continue
 		}
-		cands = append(cands, kp{k, p.JoinedAt})
+		cand := kp{k, p.JoinedAt}
+		cands = append(cands, cand)
+		if p.ClientID != "" {
+			if _, ok := live[p.ClientID]; ok {
+				liveCands = append(liveCands, cand)
+			}
+		}
 	}
-	if len(cands) == 0 {
+	pick := liveCands
+	if len(pick) == 0 {
+		pick = cands
+	}
+	if len(pick) == 0 {
 		return ""
 	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].at.Before(cands[j].at) })
-	return cands[0].key
+	sort.Slice(pick, func(i, j int) bool { return pick[i].at.Before(pick[j].at) })
+	return pick[0].key
 }
 
 func (room *WatchRoom) hostUsernameLocked() string {

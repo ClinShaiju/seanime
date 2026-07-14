@@ -37,6 +37,7 @@ import { Tooltip } from "@/components/ui/tooltip"
 import { copyToClipboard } from "@/lib/helpers/browser"
 import { nativePlayer_terminateRequestedAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
 import { useRoomStreamJoin, useWatchRoomPlayerSync } from "./nakama-room-sync"
+import { roomStreamKey } from "./nakama-sync-reconcile"
 import { WSEvents } from "@/lib/server/ws-events"
 import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { __isElectronDesktop__ } from "@/types/constants"
@@ -65,9 +66,10 @@ export const currentWatchRoomAtom = atom<Nakama_WatchRoom | null>(null)
 // discovery + legacy host/peer sections. Defaults to "room" (the common case once joined).
 export const nakamaModalViewAtom = atom<"main" | "room">("room")
 
-// The roomId whose active stream this client has opted OUT of (closed/late-joined). While set,
-// the room's playback sync won't auto-open the player — a "Join room stream" button does.
-// Cleared on join, on the join button, and when leaving the room.
+// The stream-instance key (roomId:mediaId:episode — see roomStreamKey) this client has opted OUT
+// of (closed/late-joined). While set, the room's playback sync won't auto-open THAT stream — a
+// "Join room stream" button does. Keyed per stream instance (not bare roomId) so a NEW episode the
+// controller starts still auto-opens. Cleared on join, on the join button, and when leaving.
 export const optedOutStreamRoomIdAtom = atom<string | null>(null)
 
 export function useNakamaStatus() {
@@ -274,20 +276,6 @@ export function NakamaManager() {
 
     useWebsocketMessageListener({
         type: WSEvents.NAKAMA_PEER_DISCONNECTED,
-        onMessage: () => {
-            refetchStatus()
-        },
-    })
-
-    useWebsocketMessageListener({
-        type: WSEvents.NAKAMA_HOST_CONNECTED,
-        onMessage: () => {
-            refetchStatus()
-        },
-    })
-
-    useWebsocketMessageListener({
-        type: WSEvents.NAKAMA_HOST_DISCONNECTED,
         onMessage: () => {
             refetchStatus()
         },
@@ -688,8 +676,11 @@ function WatchRoomsSection({ open }: { open: boolean }) {
                 setJoinTarget(null)
                 setJoinPassword("")
                 // Joining a room that already has a live stream is button-only (don't force-open):
-                // pre-opt-out so the heartbeat doesn't auto-pull us in. The "Join stream" button clears it.
-                setOptedOut(room?.playbackActive ? roomId : null)
+                // pre-opt-out (keyed to the current stream instance) so the heartbeat doesn't auto-pull
+                // us in. The "Join stream" button clears it; a later new episode auto-opens.
+                setOptedOut(room?.playbackActive
+                    ? roomStreamKey(roomId, room.currentMediaInfo?.mediaId, room.currentMediaInfo?.episodeNumber)
+                    : null)
                 refetchRooms()
             },
             onError: (e) => toast.error(e.message),

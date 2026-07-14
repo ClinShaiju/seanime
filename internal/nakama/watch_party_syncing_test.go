@@ -157,11 +157,11 @@ func newWatchPartySyncWrapper(isHost bool) *watchPartySyncWrapper {
 	logger := util.NewLogger()
 	manager := &Manager{
 		logger:         logger,
-		settings:       &models.NakamaSettings{IsHost: isHost},
 		wsEventManager: events.NewMockWSEventManager(logger),
 		hostConnection: &HostConnection{PeerId: "peer-1", Authenticated: true},
 		isOfflineRef:   util.NewRef(false),
 	}
+	manager.settings.Store(&models.NakamaSettings{IsHost: isHost})
 
 	wpm := NewWatchPartyManager(manager)
 	player := &fakeWatchPartyPlayer{}

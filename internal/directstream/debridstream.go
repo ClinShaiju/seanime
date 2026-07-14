@@ -21,8 +21,7 @@ var _ Stream = (*DebridStream)(nil)
 // DebridStream is a stream sourced from a debrid provider.
 type DebridStream struct {
 	httpBaseStream
-	torrent       *hibiketorrent.AnimeTorrent
-	streamReadyCh chan struct{} // Closed by the initiator when the stream URL is resolved
+	torrent *hibiketorrent.AnimeTorrent
 }
 
 func (s *DebridStream) Type() player.PlaybackType {
@@ -92,7 +91,6 @@ func (m *Manager) PlayDebridStream(ctx context.Context, filepath string, opts Pl
 				activeSubtitleStreams: result.NewMap[string, *SubtitleStream](),
 			},
 		},
-		streamReadyCh: make(chan struct{}),
 	}
 
 	go func() {

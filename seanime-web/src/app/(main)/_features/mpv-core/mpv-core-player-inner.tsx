@@ -25,9 +25,12 @@ import { mediaCorePreferencesAtom } from "@/app/(main)/_features/media-core/medi
 import { startVideoCoreMiniPlayerTransition } from "@/app/(main)/_features/video-core/video-core"
 import { VideoCoreLoadingScreen } from "@/app/(main)/_features/video-core/video-core-loading-screen"
 import { useVideoCoreInSight, vc_inSight_open, VideoCoreInSight } from "@/app/(main)/_features/video-core/video-core-in-sight"
+import { currentWatchRoomAtom } from "@/app/(main)/_features/nakama/nakama-manager"
 
 import { useVideoCorePlaylist, useVideoCorePlaylistSetup } from "@/app/(main)/_features/video-core/video-core-playlist"
-import { vc_formatTime, vc_getChapterType } from "@/app/(main)/_features/video-core/video-core.utils"
+import { vc_formatTime, vc_getOPEDChapters } from "@/app/(main)/_features/video-core/video-core.utils"
+import { vc_globalPlayerSyncControl, type PlayerSyncControl } from "@/app/(main)/_features/video-core/video-core-atoms"
+import { VideoCoreTimeRangeChapter } from "@/app/(main)/_features/video-core/video-core-time-range"
 import { useWebsocketMessageListener, useWebsocketSender } from "@/app/(main)/_hooks/handle-websockets"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { PlaybackPlayPill } from "@/app/(main)/entry/_containers/torrent-stream/playback-play-pill"
@@ -225,7 +228,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
 
     // Setup playlist hooks
     useVideoCorePlaylistSetup(state as any)
-    const { playEpisode, hasNextEpisode, hasPreviousEpisode } = useVideoCorePlaylist()
+    const { playEpisode, hasNextEpisode, hasPreviousEpisode, isGlobalPlaylistActive } = useVideoCorePlaylist()
     const clientId = useAtomValue(clientIdAtom) ?? ""
     const { sendMessage } = useWebsocketSender()
     const [paused, setPaused] = useAtom(mc_paused)
@@ -246,6 +249,16 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const [autoPlay, setAutoPlay] = useAtom(mc_autoPlay)
     const [autoNext, setAutoNext] = useAtom(mc_autoNext)
     const [autoSkip, setAutoSkip] = useAtom(mc_autoSkip)
+    // Watch-room auto-skip: in a room, only the controller auto-skips (others follow the
+    // synced seek — no "some skipped, some didn't" desync), and on/off is the vote result.
+    // Mirrors VideoCoreTimeRange's gating so MpvCore (Denshi) honors room coordination too.
+    const watchRoom = useAtomValue(currentWatchRoomAtom)
+    const roomAutoSkip = React.useMemo(() => {
+        if (!watchRoom?.participants) return null
+        const entry = Object.entries(watchRoom.participants).find(([, p]) => p.clientId === clientId)
+        const amController = !!entry && entry[0] === watchRoom.controllerKey
+        return { amController, effective: !!watchRoom.effectiveAutoSkip }
+    }, [watchRoom, clientId])
     const [showChapterMarkers, setChapterMarkers] = useAtom(mc_showChapterMarkers)
     const [highlightOPEDChapters, setHighlightOPEDChapters] = useAtom(mc_highlightOPEDChapters)
     const [keybindings] = useAtom(mc_keybindingsAtom)
@@ -272,6 +285,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const sessionTokenRef = React.useRef(0)
     const suppressEndRef = React.useRef(false)
     const completedRef = React.useRef(false)
+    const eofHandledRef = React.useRef(false)
     const metadataReadyRef = React.useRef(false)
     const canPlayRef = React.useRef(false)
     // Startup phase marks (ms via performance.now), reported once per session as
@@ -280,6 +294,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const currentTimeRef = React.useRef(0)
     const durationRef = React.useRef(0)
     const pausedRef = React.useRef(true)
+    const bufferingRef = React.useRef(false)
+    const speedRef = React.useRef(1)
+    const lastSyncSeekRef = React.useRef(0) // cooldown for sync seek-detection (false-positive suppression)
     const lastSeekEventRef = React.useRef(0)
     const castWasPausedRef = React.useRef(true)
     const lastClickTimeRef = React.useRef(0)
@@ -291,6 +308,39 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const resetMiniPlayerTimerRef = React.useRef<number | null>(null)
     const isPipRef = React.useRef(isPip)
     const selectedTracksForPlaybackIdRef = React.useRef<string | null>(null)
+
+    // Bridge MpvCore into the player-agnostic sync control so the watch-room sync hook can
+    // drive this player without reaching for the private mpv-prism instance or a DOM element
+    // (MpvCore is a native IPC surface with no HTMLVideoElement).
+    const setSyncControl = useSetAtom(vc_globalPlayerSyncControl)
+    // Subscriber set for discrete player-action callbacks (play/pause/seeked). The sync hook
+    // subscribes via ctrl.subscribe(); MpvCore fires via syncActionListenersRef.
+    const syncActionListenersRef = React.useRef(new Set<(action: "play" | "pause" | "seeked") => void>())
+    React.useEffect(() => {
+        if (!player || !state.active) {
+            setSyncControl(null)
+            return
+        }
+        const listeners = syncActionListenersRef.current
+        const ctrl: PlayerSyncControl = {
+            get currentTime() { return currentTimeRef.current },
+            get paused() { return pausedRef.current },
+            get duration() { return durationRef.current },
+            get seeking() { return bufferingRef.current },
+            get readyState() { return (canPlayRef.current && !bufferingRef.current) ? 4 : 1 },
+            get playbackRate() { return speedRef.current || 1 },
+            play() { player.setPaused(false).catch(() => {}) },
+            pause() { player.setPaused(true).catch(() => {}) },
+            seek(t) { player.seek(t, "absolute+exact").catch(() => {}) },
+            setPlaybackRate(r) { player.setSpeed(r).catch(() => {}) },
+            subscribe(cb) {
+                listeners.add(cb)
+                return () => { listeners.delete(cb) }
+            },
+        }
+        setSyncControl(ctrl)
+        return () => setSyncControl(null)
+    }, [player, state.active, setSyncControl])
 
     const selectPreferredTracks = React.useCallback(async (tracksList: MpvPrismTrack[]) => {
         const info = infoRef.current
@@ -479,6 +529,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         pausedRef.current = paused
     }, [paused])
     React.useEffect(() => {
+        bufferingRef.current = buffering
+    }, [buffering])
+    React.useEffect(() => {
         isPipRef.current = isPip
     }, [isPip])
 
@@ -585,21 +638,21 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         let ending: { startTime: number, endTime: number } | null = null
 
         if (nativeChapters.length) {
+            // Reuse VideoCore's OP/ED detection so MpvCore (Denshi) gets the same Intro/Outro label
+            // handling + duration heuristic — previously this only matched "Opening"/"Ending", so
+            // Intro/Outro-labeled or unlabeled-chapter releases auto-skipped in the browser but not
+            // here. width/percentageOffset are render-only fields the detector ignores.
             const sorted = [...nativeChapters].sort((a, b) => (a.time ?? 0) - (b.time ?? 0))
-            for (let i = 0; i < sorted.length; i++) {
-                const chapter = sorted[i]
-                const type = vc_getChapterType(chapter.title)
-                const start = chapter.time ?? 0
-                const end = sorted[i + 1]?.time ?? duration
-
-                if (!opening && type === "Opening") {
-                    opening = { startTime: start, endTime: end }
-                }
-                if (!ending && type === "Ending") {
-                    ending = { startTime: start, endTime: end }
-                }
-                if (opening && ending) break
-            }
+            const ranges: VideoCoreTimeRangeChapter[] = sorted.map((chapter, i) => ({
+                width: 0,
+                percentageOffset: 0,
+                label: chapter.title ?? null,
+                start: chapter.time ?? 0,
+                end: sorted[i + 1]?.time ?? duration,
+            }))
+            const oped = vc_getOPEDChapters(ranges, duration)
+            if (oped.opening) opening = { startTime: oped.opening.start, endTime: oped.opening.end }
+            if (oped.ending) ending = { startTime: oped.ending.start, endTime: oped.ending.end }
         }
 
         if (!opening && skipData?.op?.interval) {
@@ -903,8 +956,10 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     React.useEffect(() => {
         const info = state.playbackInfo
         if (!player || !info || !state.active) return
+
         const token = ++sessionTokenRef.current
         completedRef.current = false
+        eofHandledRef.current = false
         if (startupRetryPlaybackIdRef.current !== info.id) {
             startupRetryPlaybackIdRef.current = info.id
             startupRetryCountRef.current = 0
@@ -993,36 +1048,59 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
 
     useMpvPrismEvent(player, "position", event => {
         const value = event.position ?? 0
+        const prev = currentTimeRef.current
+        currentTimeRef.current = value // sync ref immediately so the sync-control getter is fresh
         setCurrentTime(value)
-        if (autoSkip) {
-            let skipped = false
-            if (opEdChapters.opening && value >= opEdChapters.opening.startTime && value < opEdChapters.opening.endTime) {
-                player?.seek(opEdChapters.opening.endTime, "absolute+exact")
-                showMessage("Skipped OP")
-                skipped = true
-            } else if (opEdChapters.ending && value >= opEdChapters.ending.startTime && value < opEdChapters.ending.endTime) {
-                player?.seek(opEdChapters.ending.endTime, "absolute+exact")
-                showMessage("Skipped ED")
-                skipped = true
-            }
-            if (skipped) return
+        // Detect seeks (large time jumps) and fire the sync-control action so the watch-room
+        // relay emits immediately. Without this, an OP skip or manual seek on the MpvCore driver
+        // doesn't reach followers until the next heartbeat, causing desync. Cooldown: after a
+        // detected seek, suppress for 2s — a long seek can cause a position bounce-back while
+        // the player rebuffers at the new offset, which would fire a false "seeked" with the
+        // pre-seek position and revert the follower.
+        const now = Date.now()
+        if (Math.abs(value - prev) > 2 && prev > 0 && (now - lastSyncSeekRef.current) > 2000) {
+            lastSyncSeekRef.current = now
+            syncActionListenersRef.current.forEach(cb => cb("seeked"))
         }
-
-        // Update on-screen skip buttons state
-        if (!autoSkip) {
-            if (opEdChapters.opening && value >= opEdChapters.opening.startTime && value < opEdChapters.opening.endTime) {
-                setSkipOpeningTime(opEdChapters.opening.endTime)
-            } else {
-                setSkipOpeningTime(0)
-            }
-            if (opEdChapters.ending && value >= opEdChapters.ending.startTime && value < opEdChapters.ending.endTime && value < durationRef.current) {
-                setSkipEndingTime(opEdChapters.ending.endTime)
-            } else {
-                setSkipEndingTime(0)
-            }
-        } else {
+        // Suppress auto-skip (and the manual skip buttons) for non-controller room members —
+        // they follow the controller's synced seek instead of skipping locally.
+        if (roomAutoSkip && !roomAutoSkip.amController) {
             setSkipOpeningTime(0)
             setSkipEndingTime(0)
+        } else {
+            // In a room the auto-skip on/off is the vote result; otherwise the local setting.
+            const effectiveAutoSkip = roomAutoSkip ? roomAutoSkip.effective : autoSkip
+
+            if (effectiveAutoSkip) {
+                let skipped = false
+                if (opEdChapters.opening && value >= opEdChapters.opening.startTime && value < opEdChapters.opening.endTime) {
+                    player?.seek(opEdChapters.opening.endTime, "absolute+exact")
+                    showMessage("Skipped OP")
+                    skipped = true
+                } else if (opEdChapters.ending && value >= opEdChapters.ending.startTime && value < opEdChapters.ending.endTime) {
+                    player?.seek(opEdChapters.ending.endTime, "absolute+exact")
+                    showMessage("Skipped ED")
+                    skipped = true
+                }
+                if (skipped) return
+            }
+
+            // Update on-screen skip buttons state
+            if (!effectiveAutoSkip) {
+                if (opEdChapters.opening && value >= opEdChapters.opening.startTime && value < opEdChapters.opening.endTime) {
+                    setSkipOpeningTime(opEdChapters.opening.endTime)
+                } else {
+                    setSkipOpeningTime(0)
+                }
+                if (opEdChapters.ending && value >= opEdChapters.ending.startTime && value < opEdChapters.ending.endTime && value < durationRef.current) {
+                    setSkipEndingTime(opEdChapters.ending.endTime)
+                } else {
+                    setSkipEndingTime(0)
+                }
+            } else {
+                setSkipOpeningTime(0)
+                setSkipEndingTime(0)
+            }
         }
 
         const total = durationRef.current
@@ -1031,15 +1109,26 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
             sendEvent("completed", { ...statusPayload(), currentTime: value })
         }
     })
-    useMpvPrismEvent(player, "duration", event => setDuration(event.duration ?? 0))
+    useMpvPrismEvent(player, "duration", event => {
+        durationRef.current = event.duration ?? 0
+        setDuration(event.duration ?? 0)
+    })
     useMpvPrismEvent(player, "paused", event => {
+        pausedRef.current = event.paused // sync ref immediately for the sync-control getter
         setPaused(event.paused)
+        // Fire the sync-control action so the watch-room sync hook emits immediately (not just
+        // on the next heartbeat). Without this, MpvCore as a room driver never relays play/pause
+        // to followers — they'd only learn on the next ~1.5s heartbeat, if at all.
+        syncActionListenersRef.current.forEach(cb => cb(event.paused ? "pause" : "play"))
         if (!metadataReadyRef.current) return
         sendEvent(event.paused ? "paused" : "resumed", { ...statusPayload(), paused: event.paused })
     })
     useMpvPrismEvent(player, "speed", event => {
         if (!metadataReadyRef.current) return
-        if (event.speed != null) setSpeed(event.speed)
+        if (event.speed != null) {
+            speedRef.current = event.speed
+            setSpeed(event.speed)
+        }
     })
     useMpvPrismEvent(player, "volume", event => {
         if (!metadataReadyRef.current) return
@@ -1180,8 +1269,26 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
             return
         }
         if ((event.reason ?? "").toLowerCase() !== "eof") return
-        log.info("Playback reached EOF. autoNext =", autoNext)
+        log.info("Playback reached EOF (end-file). autoNext =", autoNext)
         sendEvent("ended", { autoNext })
+        if (autoNext && !isGlobalPlaylistActive) {
+            playEpisode("next")
+        }
+    })
+    // keep-open=yes prevents end-file from firing; detect EOF via eof-reached property instead
+    useMpvPrismEvent(player, "property", event => {
+        if (event.name !== "eof-reached" || !event.value) return
+        if (eofHandledRef.current) return
+        eofHandledRef.current = true
+        if (suppressEndRef.current) {
+            suppressEndRef.current = false
+            return
+        }
+        log.info("Playback reached EOF (eof-reached). autoNext =", autoNext)
+        sendEvent("ended", { autoNext })
+        if (autoNext && !isGlobalPlaylistActive) {
+            playEpisode("next")
+        }
     })
     useMpvPrismEvent(player, "error", event => {
         log.error("Player error event received:", event.message)

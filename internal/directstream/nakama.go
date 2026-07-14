@@ -21,8 +21,7 @@ var _ Stream = (*Nakama)(nil)
 // Nakama is a stream that is a torrent.
 type Nakama struct {
 	httpBaseStream
-	torrent       *hibiketorrent.AnimeTorrent
-	streamReadyCh chan struct{} // Closed by the initiator when the stream is ready
+	torrent *hibiketorrent.AnimeTorrent
 }
 
 func (s *Nakama) Type() player.PlaybackType {
@@ -97,7 +96,6 @@ func (m *Manager) PlayNakamaStream(ctx context.Context, opts PlayNakamaStreamOpt
 				activeSubtitleStreams: result.NewMap[string, *SubtitleStream](),
 			},
 		},
-		streamReadyCh: make(chan struct{}),
 	}
 
 	go func() {

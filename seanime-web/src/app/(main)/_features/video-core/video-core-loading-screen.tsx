@@ -1,6 +1,10 @@
 import { AL_BaseAnime } from "@/api/generated/types"
 import { vc_loadingMediaIdAtom, vc_loadingScreenVisibleAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
-import { __debridstream_stateAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-overlay"
+// Read the LIVE debrid-stream atom — the one handle-debrid-stream.ts actually writes. The
+// identically-named atom in debrid-stream-overlay.tsx is never written (that overlay was
+// unmounted by the v3.9.0 merge), so importing it here left the loading screen's detailed
+// debrid message/torrent-name permanently null.
+import { __debridstream_stateAtom } from "@/app/(main)/entry/_containers/torrent-stream/playback-play-pill"
 import { GradientBackground } from "@/components/shared/gradient-background"
 import { cn } from "@/components/ui/core/styling"
 import { useServerQuery } from "@/api/client/requests"

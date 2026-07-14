@@ -236,13 +236,11 @@ func (h *Handler) HandleGetAnimeCollectionSchedule(c echo.Context) error {
 		anime.ClearScheduleCache()
 	})
 
-	// The schedule is derived from the user's own collection. The schedule cache is a
-	// single global value, so only the admin reads/writes it; other users compute
-	// fresh to avoid leaking the admin's schedule (ponytail: fine — not a hot path).
-	if sess.IsAdmin {
-		if ret, ok := anime.GetScheduleCache(); ok {
-			return h.RespondWithData(c, ret)
-		}
+	// The schedule is derived from the user's own collection. The cache is keyed per-user,
+	// so every user (not just the admin) gets a cache hit instead of paying an uncached
+	// AniList airing-schedule call on every Schedule-page load / poll.
+	if ret, ok := anime.GetScheduleCache(sess.UserID); ok {
+		return h.RespondWithData(c, ret)
 	}
 
 	animeSchedule, err := sess.Platform().GetAnimeAiringSchedule(c.Request().Context())
@@ -257,9 +255,7 @@ func (h *Handler) HandleGetAnimeCollectionSchedule(c echo.Context) error {
 
 	ret := anime.GetScheduleItems(animeSchedule, animeCollection)
 
-	if sess.IsAdmin {
-		anime.SetScheduleCache(ret)
-	}
+	anime.SetScheduleCache(sess.UserID, ret)
 
 	return h.RespondWithData(c, ret)
 }

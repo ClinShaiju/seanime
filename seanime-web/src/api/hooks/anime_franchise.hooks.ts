@@ -41,8 +41,10 @@ export function useGetFranchiseRefs(mediaIds: number[], enabled = true) {
         endpoint: API_ENDPOINTS.ANIME_FRANCHISE.GetFranchiseRefs.endpoint,
         method: API_ENDPOINTS.ANIME_FRANCHISE.GetFranchiseRefs.methods[0],
         data: { mediaIds: ids },
-        // Cheap stable signature for the key (count + endpoints) to avoid churn.
-        queryKey: [API_ENDPOINTS.ANIME_FRANCHISE.GetFranchiseRefs.key, ids.length, ids[0] ?? 0, ids[ids.length - 1] ?? 0],
+        // Key on the exact (sorted) id set. The previous (count, min, max) signature collided for
+        // two different lists that happened to share those three values, serving one list's cached
+        // franchise refs against the other's media ids (silently uncollapsed grouping for ≤30 min).
+        queryKey: [API_ENDPOINTS.ANIME_FRANCHISE.GetFranchiseRefs.key, ids.join(",")],
         enabled: enabled && ids.length > 0,
         staleTime: 1000 * 60 * 30,
         gcTime: 1000 * 60 * 60,

@@ -654,6 +654,25 @@ type DummyDebridSettings struct {
 	JitterMs                int              `gorm:"column:jitter_ms" json:"jitterMs"`
 }
 
+// NewDefaultDummyDebridSettings returns a dummy-debrid config with sensible playback-simulation
+// defaults, serving the given file as the fallback for any requested stream. Mirrors the
+// first-run bootstrap defaults in core/modules.go and is used to seed the dummy provider in tests.
+func NewDefaultDummyDebridSettings(fallbackFilePath string) *DummyDebridSettings {
+	return &DummyDebridSettings{
+		Enabled:                 true,
+		ProfileName:             "Dummy Profile",
+		FallbackFilePath:        fallbackFilePath,
+		Files:                   DummyDebridFiles{},
+		Cached:                  true,
+		ReadyDelayMs:            1500,
+		ProgressIntervalMs:      250,
+		FirstByteDelayMs:        350,
+		BandwidthBytesPerSecond: 8 * 1024 * 1024,
+		ChunkSize:               64 * 1024,
+		JitterMs:                30,
+	}
+}
+
 type DummyDebridFile struct {
 	ID            string `json:"id"`
 	Path          string `json:"path"`

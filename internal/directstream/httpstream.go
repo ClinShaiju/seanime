@@ -57,9 +57,12 @@ var videoProxyClient = &http.Client{
 		MaxIdleConnsPerHost: 10,
 		// Bound concurrent connections to a single CDN host so a burst of range requests
 		// (stream start + metadata + a seek) can't hammer the debrid CDN into 429ing the
-		// token. Excess requests queue rather than fail. Generous enough for several
-		// concurrent streams at this deployment's scale; tune if it ever blocks legit reads.
-		MaxConnsPerHost:     8,
+		// token. Excess requests queue rather than fail. This is a PROCESS-WIDE cap shared by
+		// every user, and a proxy serve holds a connection for a range's whole live-tee
+		// duration, so 8 serialized concurrent viewers on a multi-user server. The per-link
+		// cdngate (cap 2/link) already prevents any single link from flooding the CDN, so raise
+		// the cross-user ceiling to 16 to avoid queueing legit concurrent streams.
+		MaxConnsPerHost:     16,
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
 		ForceAttemptHTTP2:   false, // Fixes issues on Linux
@@ -293,6 +296,20 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType player.PlaybackType) (ret *
 
 		contentType := s.LoadContentType()
 
+		// A dead/expired debrid link (or an unreachable nakama host) can't produce a streamable
+		// content type: FetchStreamInfo rejects the text/plain (or html/json) error body a CDN
+		// returns for a 404/expired token, so LoadContentType comes back empty. VideoCore already
+		// aborts on this in loadStream; MpvCore (Denshi) skips that gate and would otherwise open the
+		// player on the error page and buffer FOREVER. Fail the open here so the client gets an error
+		// and recovers — a watch-room follower's auto-follow / "Join room stream" re-resolves a fresh
+		// link (nakama-room-sync treats a server abort as "not a user close"), instead of hanging.
+		if contentType == "" {
+			err = fmt.Errorf("stream url returned no streamable content type (link likely dead or expired)")
+			s.logger.Error().Str("url", s.streamUrl).Msg("directstream(http): No streamable content type; aborting open (link likely dead/expired)")
+			s.playbackInfoErr = err
+			return
+		}
+
 		// Direct CDN mode: the player pulls straight from the debrid CDN (no {{SERVER_URL}}
 		// template, no HMAC — the CDN URL carries its own token). Proxy URL otherwise.
 		// Exception: MpvCore stays on the proxy even in direct mode — its MKV probe
@@ -456,8 +473,19 @@ func (s *httpBaseStream) getStreamHandler(outer Stream) http.Handler {
 				return
 			}
 			if ra.Start < s.contentLength-1024*1024 {
-				// subReader is closed inside the subtitle goroutine
-				go s.StartSubtitleStreamP(outer, s.manager.playbackCtx, subReader, ra.Start, 0)
+				// subReader is closed inside the subtitle goroutine. Snapshot playbackCtx under
+				// lock (racing the release path that nils it) and recover: this is a detached
+				// goroutine, so an unrecovered panic here would take down the whole server.
+				pbCtx := s.manager.PlaybackCtx()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							s.logger.Error().Interface("panic", r).Msg("directstream(http): recovered panic in subtitle stream goroutine")
+							_ = subReader.Close()
+						}
+					}()
+					s.StartSubtitleStreamP(outer, pbCtx, subReader, ra.Start, 0)
+				}()
 			} else {
 				_ = subReader.Close()
 			}

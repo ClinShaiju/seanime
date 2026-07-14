@@ -529,25 +529,31 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 			continue
 		}
 
-		// Language requirement
+		// Language requirement. Check three sources per preferred language, matching what the
+		// ranking path (audioLanguageScore) credits: (1) habari-parsed language, (2) flag-emoji
+		// languages decoded from the raw name — aggregator releases (AIOStreams) often express
+		// language ONLY as flag emoji, which CleanReleaseName strips before habari parses, so
+		// parsed.Language is empty for them, and (3) a bounded name match. The name match runs
+		// unconditionally (not only when parsed.Language is empty), so a release that parsed one
+		// non-matching language still gets the textual check.
 		if profile.RequireLanguage && len(preferredLanguages) > 0 {
 			foundLang := false
-			// Check parsed language
-			if len(parsed.Language) > 0 {
-				for _, lang := range preferredLanguages {
-					if slices.ContainsFunc(parsed.Language, func(pl string) bool {
-						return strings.EqualFold(pl, lang)
-					}) {
-						foundLang = true
-						break
-					}
+			for _, lang := range preferredLanguages {
+				if slices.ContainsFunc(parsed.Language, func(pl string) bool {
+					return strings.EqualFold(pl, lang)
+				}) {
+					foundLang = true
+					break
 				}
-			} else { // Fallback to string matching
-				for _, lang := range preferredLanguages {
-					if len(lang) > 3 && containsBoundedTerm(c.lowerName, lang) {
-						foundLang = true
-						break
-					}
+				if slices.ContainsFunc(c.flagLanguages, func(fl string) bool {
+					return strings.EqualFold(fl, lang)
+				}) {
+					foundLang = true
+					break
+				}
+				if len(lang) > 3 && containsBoundedTerm(c.lowerName, lang) {
+					foundLang = true
+					break
 				}
 			}
 			if !foundLang {
@@ -643,19 +649,61 @@ func (s *AutoSelect) sortCandidates(candidates []*candidate, profile *anime.Auto
 			return cmp.Compare(b.score, a.score)
 		}
 
-		// Tie-break by size (higher bitrate ≈ better quality at the same resolution), then seeders.
-		if a.torrent.Size != b.torrent.Size {
-			return cmp.Compare(b.torrent.Size, a.torrent.Size)
+		if tb := sizeTieBreak(a.torrent, b.torrent); tb != 0 {
+			return tb
 		}
 		return cmp.Compare(b.torrent.Seeders, a.torrent.Seeders)
 	})
 }
 
+// resolutionTier ranks a candidate by video resolution (higher = better). It is the quality
+// floor for cache prioritization: cache status may only reorder releases WITHIN the same
+// resolution tier, never let a cached low-res release outrank an uncached higher-res one
+// (the decreed quality-over-cache invariant). 0 = resolution unknown/other (ranked lowest).
+func resolutionTier(c *candidate) int {
+	res := ""
+	if c.parsed != nil {
+		res = strings.ToLower(c.parsed.VideoResolution)
+	}
+	name := c.lowerName
+	has := func(needle string) bool { return strings.Contains(res, needle) || strings.Contains(name, needle) }
+	switch {
+	case has("2160") || has("4k"):
+		return 4
+	case has("1080"):
+		return 3
+	case has("720"):
+		return 2
+	case has("480") || has("576"):
+		return 1
+	default:
+		return 0
+	}
+}
+
+// sizeTieBreak orders two releases when every stronger signal is equal. A multi-episode batch's
+// total size is NOT a per-episode bitrate signal, so when exactly one side is a batch the single
+// episode wins (its size reflects real bitrate); otherwise larger size ≈ higher bitrate. Returns
+// <0 if a should rank first, >0 if b, 0 if still tied. Batch PREFERENCE is already folded into
+// score upstream, so this only fires on a genuine score tie.
+func sizeTieBreak(a, b *hibiketorrent.AnimeTorrent) int {
+	if a.IsBatch != b.IsBatch {
+		if a.IsBatch {
+			return 1
+		}
+		return -1
+	}
+	if a.Size != b.Size {
+		return cmp.Compare(b.Size, a.Size)
+	}
+	return 0
+}
+
 // smartCachedPrioritization applies the postSearchSort (which identifies cached torrents) and
-// puts ALL cached torrents before all uncached ones, preserving the existing score order within
-// each group. Cache is the outermost sort key (cached first), then the per-candidate score
-// (English dub → format quality). For debrid streaming a cached stream plays instantly, so it
-// always wins; the score order then surfaces the best English dub within each cache group.
+// orders releases within each audio/episode band by: resolution tier (quality floor) → cache
+// status → per-candidate score (English dub → codec/source) → per-episode size → seeders. A
+// cached stream plays instantly, so cache wins as a tie-break WITHIN a resolution tier, but it
+// never lets a lower-resolution cached release outrank a higher-resolution uncached one.
 func (s *AutoSelect) smartCachedPrioritization(
 	torrents []*hibiketorrent.AnimeTorrent,
 	candidates []*candidate,
@@ -676,22 +724,31 @@ func (s *AutoSelect) smartCachedPrioritization(
 		torrent *hibiketorrent.AnimeTorrent
 		score   int
 		cached  bool
+		resTier int
 	}
 	items := make([]rankItem, 0, len(torrents))
 	for _, tws := range postSearchSort(torrents) {
 		score := 0
+		resTier := 0
 		if c, ok := candidateMap[tws.Torrent.InfoHash]; ok {
 			score = c.score
+			resTier = resolutionTier(c)
 		}
-		items = append(items, rankItem{torrent: tws.Torrent, score: score, cached: tws.IsCached})
+		items = append(items, rankItem{torrent: tws.Torrent, score: score, cached: tws.IsCached, resTier: resTier})
 	}
 
-	// Sort lexicographically: audio/episode band (from the score magnitude) → cached within the
-	// band → format score → seeders. So order is correct-episode English dub → … → foreign →
-	// wrong-episode, and within each band the cached releases come first, then by format.
+	// Sort lexicographically: audio/episode band → resolution tier (quality floor) → cached
+	// within the tier → format score → per-episode size → seeders. So order is correct-episode
+	// English dub → … → foreign → wrong-episode; within a band a higher resolution always wins,
+	// and only within one resolution tier does a cached release come first.
 	slices.SortStableFunc(items, func(a, b rankItem) int {
 		if ba, bb := scoreBand(a.score), scoreBand(b.score); ba != bb {
 			return cmp.Compare(bb, ba)
+		}
+		// Quality floor: never let a cached lower-resolution release outrank an uncached
+		// higher-resolution one (decreed quality-over-cache invariant).
+		if a.resTier != b.resTier {
+			return cmp.Compare(b.resTier, a.resTier)
 		}
 		if a.cached != b.cached {
 			if a.cached {
@@ -702,9 +759,8 @@ func (s *AutoSelect) smartCachedPrioritization(
 		if a.score != b.score {
 			return cmp.Compare(b.score, a.score)
 		}
-		// Tie-break by size (higher bitrate ≈ better quality at the same resolution), then seeders.
-		if a.torrent.Size != b.torrent.Size {
-			return cmp.Compare(b.torrent.Size, a.torrent.Size)
+		if tb := sizeTieBreak(a.torrent, b.torrent); tb != 0 {
+			return tb
 		}
 		return cmp.Compare(b.torrent.Seeders, a.torrent.Seeders)
 	})

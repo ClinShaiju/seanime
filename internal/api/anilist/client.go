@@ -462,7 +462,7 @@ func doAniListRequestWithRetries(
 		sleep = sleepWithContext
 	}
 
-	const retryCount = 2
+	const retryCount = 4
 
 	for i := 0; i < retryCount; i++ {
 		if err := req.Context().Err(); err != nil {
@@ -493,22 +493,37 @@ func doAniListRequestWithRetries(
 		}
 
 		rlRemainingStr = resp.Header.Get("X-Ratelimit-Remaining")
-		responseTime := time.Now()
-		if responseDate, ok := parseResponseDate(resp.Header); ok {
-			responseTime = responseDate
-		}
-		if resetAt, ok := parseAniListRateLimitResetTime(resp.Header, responseTime); ok {
-			if rateBlocker == nil || rateBlocker.BlockUntil(resetAt) {
-				if onRateLimited != nil {
-					waitSeconds := int(resetAt.Sub(responseTime).Round(time.Second) / time.Second)
-					if waitSeconds < 1 {
-						waitSeconds = 1
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			responseTime := time.Now()
+			if responseDate, ok := parseResponseDate(resp.Header); ok {
+				responseTime = responseDate
+			}
+			if resetAt, ok := parseAniListRateLimitResetTime(resp.Header, responseTime); ok {
+				if rateBlocker == nil || rateBlocker.BlockUntil(resetAt) {
+					if onRateLimited != nil {
+						waitSeconds := int(resetAt.Sub(responseTime).Round(time.Second) / time.Second)
+						if waitSeconds < 1 {
+							waitSeconds = 1
+						}
+						onRateLimited(waitSeconds)
 					}
-					onRateLimited(waitSeconds)
 				}
 			}
 			closeAniListResponseBody(resp)
 			continue
+		}
+
+		// ponytail: preemptive block — remaining=0 means the NEXT request will 429,
+		// but THIS response is valid, so return it instead of discarding + retrying into a wall
+		if rlRemainingStr == "0" && rateBlocker != nil {
+			responseTime := time.Now()
+			if responseDate, ok := parseResponseDate(resp.Header); ok {
+				responseTime = responseDate
+			}
+			if resetAt, ok := parseAniListRateLimitResetTime(resp.Header, responseTime); ok {
+				rateBlocker.BlockUntil(resetAt)
+			}
 		}
 
 		return resp, rlRemainingStr, nil

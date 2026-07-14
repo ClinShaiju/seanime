@@ -46,11 +46,12 @@ type (
 // generateHMACToken generates an HMAC token for stream authentication
 func (m *Manager) generateHMACToken(endpoint string) (string, error) {
 	// Use the Nakama password as the base secret - HostPassword for hosts, RemoteServerPassword for peers
+	s := m.settings.Load()
 	var secret string
-	if m.settings.IsHost {
-		secret = m.settings.HostPassword
+	if s.IsHost {
+		secret = s.HostPassword
 	} else {
-		secret = m.settings.RemoteServerPassword
+		secret = s.RemoteServerPassword
 	}
 
 	hmacAuth := util.NewHMACAuth(secret, 24*time.Hour)
@@ -58,7 +59,8 @@ func (m *Manager) generateHMACToken(endpoint string) (string, error) {
 }
 
 func (m *Manager) GetHostAnimeLibraryFiles(ctx context.Context, mId ...int) (lfs []*anime.LocalFile, customSourceMap NakamaCustomSourceMap, hydrated bool) {
-	if !m.settings.Enabled || !m.settings.IncludeNakamaAnimeLibrary || !m.IsConnectedToHost() || m.IsRoomConnection() {
+	s := m.settings.Load()
+	if !s.Enabled || !s.IncludeNakamaAnimeLibrary || !m.IsConnectedToHost() || m.IsRoomConnection() {
 		return nil, nil, false
 	}
 
@@ -74,7 +76,7 @@ func (m *Manager) GetHostAnimeLibraryFiles(ctx context.Context, mId ...int) (lfs
 	if len(mId) > 0 {
 		response, err = m.reqClient.R().
 			SetContext(ctx).
-			SetHeader("X-Seanime-Nakama-Token", m.settings.RemoteServerPassword).
+			SetHeader("X-Seanime-Nakama-Token", s.RemoteServerPassword).
 			Get(m.GetHostBaseServerURL() + "/api/v1/nakama/host/anime/library/files/" + strconv.Itoa(mId[0]))
 		if err != nil {
 			return nil, nil, false
@@ -82,7 +84,7 @@ func (m *Manager) GetHostAnimeLibraryFiles(ctx context.Context, mId ...int) (lfs
 	} else {
 		response, err = m.reqClient.R().
 			SetContext(ctx).
-			SetHeader("X-Seanime-Nakama-Token", m.settings.RemoteServerPassword).
+			SetHeader("X-Seanime-Nakama-Token", s.RemoteServerPassword).
 			Get(m.GetHostBaseServerURL() + "/api/v1/nakama/host/anime/library/files")
 		if err != nil {
 			return nil, nil, false
@@ -107,7 +109,8 @@ func (m *Manager) GetHostAnimeLibraryFiles(ctx context.Context, mId ...int) (lfs
 }
 
 func (m *Manager) GetHostAnimeLibrary(ctx context.Context) (ac *NakamaAnimeLibrary, hydrated bool) {
-	if !m.settings.Enabled || !m.settings.IncludeNakamaAnimeLibrary || !m.IsConnectedToHost() || m.IsRoomConnection() {
+	s := m.settings.Load()
+	if !s.Enabled || !s.IncludeNakamaAnimeLibrary || !m.IsConnectedToHost() || m.IsRoomConnection() {
 		return nil, false
 	}
 
@@ -116,7 +119,7 @@ func (m *Manager) GetHostAnimeLibrary(ctx context.Context) (ac *NakamaAnimeLibra
 
 	response, err = m.reqClient.R().
 		SetContext(ctx).
-		SetHeader("X-Seanime-Nakama-Token", m.settings.RemoteServerPassword).
+		SetHeader("X-Seanime-Nakama-Token", s.RemoteServerPassword).
 		Get(m.GetHostBaseServerURL() + "/api/v1/nakama/host/anime/library")
 	if err != nil {
 		return nil, false
@@ -144,7 +147,8 @@ func (m *Manager) GetHostAnimeLibrary(ctx context.Context) (ac *NakamaAnimeLibra
 }
 
 func (m *Manager) PlayHostAnimeLibraryFile(path string, userAgent string, clientId string, media *anilist.BaseAnime, aniDBEpisode string, forcePlaybackMethod string) error {
-	if !m.settings.Enabled || !m.IsConnectedToHost() || m.IsRoomConnection() {
+	s := m.settings.Load()
+	if !s.Enabled || !m.IsConnectedToHost() || m.IsRoomConnection() {
 		return errors.New("not connected to host")
 	}
 
@@ -157,7 +161,7 @@ func (m *Manager) PlayHostAnimeLibraryFile(path string, userAgent string, client
 	// Send a HTTP request to the host to get the anime library
 	// If we can access it then the host is sharing its anime library
 	response, err := m.reqClient.R().
-		SetHeader("X-Seanime-Nakama-Token", m.settings.RemoteServerPassword).
+		SetHeader("X-Seanime-Nakama-Token", s.RemoteServerPassword).
 		Get(m.GetHostBaseServerURL() + "/api/v1/nakama/host/anime/library/shared")
 	if err != nil {
 		return fmt.Errorf("cannot access host's anime library: %w", err)
@@ -223,7 +227,7 @@ func (m *Manager) PlayHostAnimeLibraryFile(path string, userAgent string, client
 			MediaId:            media.ID,
 			AnidbEpisode:       aniDBEpisode,
 			Media:              media,
-			NakamaHostPassword: m.settings.RemoteServerPassword,
+			NakamaHostPassword: s.RemoteServerPassword,
 			ClientId:           clientId,
 		})
 		if err != nil {
@@ -239,7 +243,8 @@ func (m *Manager) PlayHostAnimeLibraryFile(path string, userAgent string, client
 }
 
 func (m *Manager) PlayHostAnimeStream(streamType WatchPartyStreamType, userAgent string, clientId string, media *anilist.BaseAnime, aniDBEpisode string) error {
-	if !m.settings.Enabled || !m.IsConnectedToHost() {
+	s := m.settings.Load()
+	if !s.Enabled || !m.IsConnectedToHost() {
 		return errors.New("not connected to host")
 	}
 
@@ -292,7 +297,7 @@ func (m *Manager) PlayHostAnimeStream(streamType WatchPartyStreamType, userAgent
 			MediaId:            media.ID,
 			AnidbEpisode:       aniDBEpisode,
 			Media:              media,
-			NakamaHostPassword: m.settings.RemoteServerPassword,
+			NakamaHostPassword: s.RemoteServerPassword,
 			ClientId:           clientId,
 		})
 		if err != nil {

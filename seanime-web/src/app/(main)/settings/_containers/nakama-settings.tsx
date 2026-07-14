@@ -152,12 +152,12 @@ export function NakamaSettings(props: Props) {
 
                 <TabsContent value="peer" className={tabContentClass}>
                     <SettingsCard>
-                        {serverStatus?.settings?.nakama?.isHost && <Alert intent="info" description="Cannot connect to a host while in host mode." />}
+                        {nakamaIsHost && <Alert intent="info" description="Cannot connect to a host while in host mode." />}
 
                         <div
                             className={cn(
                                 "space-y-4",
-                                serverStatus?.settings?.nakama?.isHost ? "hidden" : "",
+                                nakamaIsHost ? "hidden" : "",
                             )}
                         >
 

@@ -6,7 +6,7 @@ import { logger } from "@/lib/helpers/debug"
 import { SeaWebsocketEvent, SeaWebsocketPluginEvent } from "@/lib/server/queries.types"
 import { WSEvents } from "@/lib/server/ws-events"
 import { useAtom, useAtomValue } from "jotai"
-import { useContext, useEffect, useRef } from "react"
+import { useCallback, useContext, useEffect, useMemo, useRef } from "react"
 import useUpdateEffect from "react-use/lib/useUpdateEffect"
 
 export function useWebsocketSender() {
@@ -118,7 +118,9 @@ export function useWebsocketSender() {
         }
     }
 
-    function sendMessage<TData>(data: SeaWebsocketEvent<TData>) {
+    // Stable identity: body only closes over refs (latestSocketRef/messageQueue), so an
+    // empty dep array is safe and keeps effects that depend on sendMessage from re-running.
+    const sendMessage = useCallback(<TData>(data: SeaWebsocketEvent<TData>) => {
         // Always use the latest socket reference
         const currentSocket = latestSocketRef.current
 
@@ -149,7 +151,7 @@ export function useWebsocketSender() {
             ensureQueueProcessorIsRunning()
             return false
         }
-    }
+    }, [])
 
     // Add a plugin event to the batch
     function addPluginEventToBatch(type: string, payload: any, extensionId?: string) {
@@ -256,14 +258,17 @@ export function useWebsocketSender() {
         }
     }, [isConnected])
 
-    return {
+    // Stable identity: only closes over pluginEventBatchRef/pluginBatchTimerRef.
+    const sendPluginMessage = useCallback((type: string, payload: any, extensionId?: string) => {
+        // Use batching for plugin messages
+        addPluginEventToBatch(type, payload, extensionId)
+        return true
+    }, [])
+
+    return useMemo(() => ({
         sendMessage,
-        sendPluginMessage: (type: string, payload: any, extensionId?: string) => {
-            // Use batching for plugin messages
-            addPluginEventToBatch(type, payload, extensionId)
-            return true
-        },
-    }
+        sendPluginMessage,
+    }), [sendMessage, sendPluginMessage])
 }
 
 export function useWebsocketSendEffect<TData>(data: SeaWebsocketEvent<TData>, ...deps: any[]) {

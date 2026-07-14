@@ -68,3 +68,34 @@ export const vc_skipEndingTime = atom<number | null>(null)
 
 export const vc_globalMiniPlayerAtom = atom(false)
 
+// PlayerSyncControl: a player-agnostic surface that watch-room sync reads instead of a raw
+// HTMLVideoElement. Both the VideoCore DOM bridge and the MpvCore native player populate it.
+// This lets the sync hook drive whichever player is active without reaching for either one's
+// private internals (the MpvCore mpv-prism instance has no DOM element).
+export type PlayerSyncControl = {
+    readonly currentTime: number
+    readonly paused: boolean
+    readonly duration: number
+    /** true while the player is buffering/seeking (not a user-initiated pause) */
+    readonly seeking: boolean
+    /** HTML readyState-like: >=3 means enough data, <3 means stalled. */
+    readonly readyState: number
+    play(): void
+    pause(): void
+    seek(time: number): void
+    setPlaybackRate(rate: number): void
+    readonly playbackRate: number
+    /** The underlying DOM element (only for VideoCore — MpvCore has no DOM element). Used by
+     * the watch-room sync hook to attach discrete play/pause/seeked event listeners for
+     * immediate relay. */
+    readonly domElement?: HTMLVideoElement
+    /** Subscribe to discrete player actions (play/pause/seek). MpvCore fires these from its
+     * IPC event handlers since it has no DOM element to addEventListener on. Returns an
+     * unsubscribe function. */
+    subscribe?(cb: (action: "play" | "pause" | "seeked") => void): () => void
+}
+
+// The active player's sync control. null when no player is mounted (the sync hook early-returns
+// on null, same as it does on null videoElement today).
+export const vc_globalPlayerSyncControl = atom<PlayerSyncControl | null>(null)
+

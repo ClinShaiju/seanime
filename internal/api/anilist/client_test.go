@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"seanime/internal/util"
+	"strconv"
 	"testing"
 	"time"
 
@@ -249,6 +250,34 @@ func TestDoAniListRequestWithRetriesDoesNotRetryWhenRateLimitHeadersAreMissing(t
 	assert.Equal(t, "", rlRemainingStr)
 }
 
+func TestDoAniListRequestWithRetriesReturnsSuccessWhenRemainingZero(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, time.April, 7, 12, 0, 0, 0, time.UTC)}
+	rateBlocker := newAniListRateBlocker()
+	rateBlocker.now = clock.Now
+	attempt := 0
+
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		attempt++
+		return newAniListTestResponse(http.StatusOK, `{"data":{"ok":true}}`, map[string]string{
+			"Date":                  clock.Now().Format(http.TimeFormat),
+			"X-Ratelimit-Remaining": "0",
+			"X-RateLimit-Reset":     strconv.FormatInt(clock.Now().Add(60*time.Second).Unix(), 10),
+		}), nil
+	})}
+
+	req, err := http.NewRequest(http.MethodPost, "https://anilist.test/graphql", bytes.NewBufferString(`{"query":"test"}`))
+	require.NoError(t, err)
+
+	resp, rlRemainingStr, err := doAniListRequestWithRetries(client, req, rateBlocker, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	assert.Equal(t, 1, attempt, "should not retry a successful response")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "0", rlRemainingStr)
+}
+
 func TestDoAniListRequestWithRetriesExhaustsRetries(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, time.April, 7, 12, 0, 0, 0, time.UTC)}
 	rateBlocker := newAniListRateBlocker()
@@ -280,7 +309,7 @@ func TestDoAniListRequestWithRetriesExhaustsRetries(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limit exceeded, retries exhausted")
 	assert.Nil(t, resp)
-	assert.Equal(t, 2, attempt)
+	assert.Equal(t, 4, attempt)
 }
 
 func TestUseCustomAPIUsesRuntimeConfig(t *testing.T) {

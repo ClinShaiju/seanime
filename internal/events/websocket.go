@@ -96,6 +96,10 @@ type (
 		// UserID associates the connection with a Seanime user (multi-user event
 		// scoping). 0 means unassociated (legacy / not logged in).
 		UserID uint
+		// writeMu serializes writes to Conn. Gorilla conns are not safe for concurrent
+		// writes to the SAME conn, so senders snapshot targets under m.mu, release it, then
+		// write under this per-conn lock — one slow client no longer stalls all ws traffic (F7).
+		writeMu sync.Mutex
 	}
 
 	WSEvent struct {
@@ -216,12 +220,16 @@ func (m *WSEventManager) SendEventToUser(userID uint, t string, payload interfac
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	conns := make([]*WSConn, 0, len(m.Conns))
 	for _, conn := range m.Conns {
 		if conn.UserID != userID {
 			continue
 		}
-		_ = conn.Conn.WriteJSON(WSEvent{
+		conns = append(conns, conn)
+	}
+	m.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.writeJSON(WSEvent{
 			Type:    t,
 			Payload: payload,
 		})
@@ -235,14 +243,18 @@ func (m *WSEventManager) SendEventToUser(userID uint, t string, payload interfac
 // and must still receive scoped playback/stream events.
 func (m *WSEventManager) SendEventToUserOrUnscoped(userID uint, t string, payload interface{}) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	conns := make([]*WSConn, 0, len(m.Conns))
 	for _, conn := range m.Conns {
 		// On a networked server, UserID==0 is an anonymous pre-login client — don't leak
 		// the owner's per-user events (e.g. DebridStreamState carries the torrent name) to it.
 		if conn.UserID != userID && (m.requireUserScoping || conn.UserID != 0) {
 			continue
 		}
-		_ = conn.Conn.WriteJSON(WSEvent{
+		conns = append(conns, conn)
+	}
+	m.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.writeJSON(WSEvent{
 			Type:    t,
 			Payload: payload,
 		})
@@ -255,17 +267,23 @@ func (m *WSEventManager) SendEventToUserOrUnscoped(userID uint, t string, payloa
 // so a different user's reconnecting client cannot pull the global playback state.
 func (m *WSEventManager) SendEventToIfOwner(clientId string, ownerUserID uint, t string, payload interface{}, noLog ...bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	var target *WSConn
 	for _, conn := range m.Conns {
 		if conn.ID != clientId {
 			continue
 		}
-		if conn.UserID != ownerUserID && conn.UserID != 0 {
-			return // client belongs to another user — drop
+		// Only keep it if it belongs to the owner (or is an unidentified local client);
+		// otherwise leave target nil so a different user's client can't pull the state.
+		if conn.UserID == ownerUserID || conn.UserID == 0 {
+			target = conn
 		}
-		_ = conn.Conn.WriteJSON(WSEvent{Type: t, Payload: payload})
+		break // clientId is unique — stop at the first match either way
+	}
+	m.mu.Unlock()
+	if target == nil {
 		return
 	}
+	_ = target.writeJSON(WSEvent{Type: t, Payload: payload})
 }
 
 func (m *WSEventManager) RemoveConn(id string) {
@@ -277,10 +295,26 @@ func (m *WSEventManager) RemoveConn(id string) {
 	}
 }
 
+// writeJSON serializes writes to this conn via its own write mutex and bounds a stalled
+// peer with a write deadline, so a slow/hung client can't block the caller indefinitely
+// (F7). Call it OUTSIDE m.mu, after snapshotting the target conns under m.mu.
+func (c *WSConn) writeJSON(v interface{}) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	return c.Conn.WriteJSON(v)
+}
+
+// writeMessage is writeJSON's raw-message counterpart (see SendStringTo).
+func (c *WSConn) writeMessage(messageType int, data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	return c.Conn.WriteMessage(messageType, data)
+}
+
 // SendEvent sends a websocket event to the client.
 func (m *WSEventManager) SendEvent(t string, payload interface{}) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	// If there's no connection, do nothing
 	//if m.Conn == nil {
 	//	return
@@ -290,8 +324,15 @@ func (m *WSEventManager) SendEvent(t string, payload interface{}) {
 		m.Logger.Trace().Str("type", t).Msg("ws: Sending message")
 	}
 
-	for _, conn := range m.Conns {
-		err := conn.Conn.WriteJSON(WSEvent{
+	// Snapshot the conns under m.mu, then write outside it: holding m.mu across the
+	// blocking WriteJSON lets one slow/hung client stall all ws traffic process-wide (F7).
+	m.mu.Lock()
+	conns := make([]*WSConn, len(m.Conns))
+	copy(conns, m.Conns)
+	m.mu.Unlock()
+
+	for _, conn := range conns {
+		err := conn.writeJSON(WSEvent{
 			Type:    t,
 			Payload: payload,
 		})
@@ -317,47 +358,59 @@ func (m *WSEventManager) SendEvent(t string, payload interface{}) {
 // connections, so there it behaves exactly like SendEvent.
 func (m *WSEventManager) SendEventToLoggedIn(t string, payload interface{}) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	conns := make([]*WSConn, 0, len(m.Conns))
 	for _, conn := range m.Conns {
 		if m.requireUserScoping && conn.UserID == 0 {
 			continue
 		}
-		_ = conn.Conn.WriteJSON(WSEvent{Type: t, Payload: payload})
+		conns = append(conns, conn)
+	}
+	m.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.writeJSON(WSEvent{Type: t, Payload: payload})
 	}
 }
 
 // SendEventTo sends a websocket event to the specified client.
 func (m *WSEventManager) SendEventTo(clientId string, t string, payload interface{}, noLog ...bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	conns := make([]*WSConn, 0, 1)
 	for _, conn := range m.Conns {
 		if conn.ID == clientId {
-			if t != "pong" {
-				if len(noLog) == 0 || !noLog[0] {
-					truncated := spew.Sprint(payload)
-					if len(truncated) > 500 {
-						truncated = truncated[:500] + "..."
-					}
-					m.Logger.Trace().Str("to", clientId).Str("type", t).Str("payload", truncated).Msg("ws: Sending message")
-				}
-			}
-			_ = conn.Conn.WriteJSON(WSEvent{
-				Type:    t,
-				Payload: payload,
-			})
+			conns = append(conns, conn)
 		}
+	}
+	m.mu.Unlock()
+
+	for _, conn := range conns {
+		if t != "pong" {
+			if len(noLog) == 0 || !noLog[0] {
+				truncated := spew.Sprint(payload)
+				if len(truncated) > 500 {
+					truncated = truncated[:500] + "..."
+				}
+				m.Logger.Trace().Str("to", clientId).Str("type", t).Str("payload", truncated).Msg("ws: Sending message")
+			}
+		}
+		_ = conn.writeJSON(WSEvent{
+			Type:    t,
+			Payload: payload,
+		})
 	}
 }
 
 func (m *WSEventManager) SendStringTo(clientId string, s string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	conns := make([]*WSConn, 0, 1)
 	for _, conn := range m.Conns {
 		if conn.ID == clientId {
-			_ = conn.Conn.WriteMessage(websocket.TextMessage, []byte(s))
+			conns = append(conns, conn)
 		}
+	}
+	m.mu.Unlock()
+
+	for _, conn := range conns {
+		_ = conn.writeMessage(websocket.TextMessage, []byte(s))
 	}
 }
 

@@ -30,7 +30,7 @@ func (h *Handler) nakamaPoolUser(c echo.Context) nakama.PoolUser {
 // install dataUserID resolves to the admin, so only networked-anon (knows the server
 // password, not logged in) is blocked — you need an identity to be in the pool.
 func (h *Handler) requireRoomIdentity(c echo.Context) error {
-	if h.dataUserID(c) == 0 || h.RequestUsername(c) == "anon" {
+	if h.dataUserID(c) == 0 {
 		return h.RespondWithStatusError(c, http.StatusForbidden, errors.New("log in to use watch rooms"))
 	}
 	return nil
@@ -224,6 +224,15 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 	if err := c.Bind(&b); err != nil {
 		return h.RespondWithError(c, err)
 	}
+
+	// Membership gate: this endpoint reuses the controller's already-resolved debrid selection,
+	// but performs no room-password check of its own (unlike JoinRoom). Require the caller to be
+	// an actual participant — otherwise any authenticated user who discovers a roomId (they are
+	// broadcast via ListRooms) could piggyback the controller's stream in a room they never joined.
+	if !h.App.NakamaManager.GetWatchRoomHub().IsParticipant(b.RoomId, h.nakamaPoolUser(c).Key()) {
+		return h.RespondWithStatusError(c, http.StatusForbidden, errors.New("join the room before starting its stream"))
+	}
+
 	b.ClientId = getRequestClientId(c, b.ClientId)
 
 	info := h.App.NakamaManager.GetWatchRoomHub().StreamInfo(b.RoomId)
@@ -258,6 +267,13 @@ func (h *Handler) HandleNakamaWatchRoomJoinStream(c echo.Context) error {
 			case <-c.Request().Context().Done():
 				return h.RespondWithError(c, c.Request().Context().Err())
 			case <-time.After(750 * time.Millisecond):
+			}
+			// Re-read the stream info each iteration: control can be handed off mid-wait, so poll
+			// the CURRENT controller's share, not the one captured before the loop. If the stream
+			// went inactive while we waited, stop retrying and fall through to the not-ready error.
+			info = h.App.NakamaManager.GetWatchRoomHub().StreamInfo(b.RoomId)
+			if !info.Active {
+				break
 			}
 			share, ok = h.App.DebridClientRepository.GetUserStreamShare(info.ControllerUserID)
 		}

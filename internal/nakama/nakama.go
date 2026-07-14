@@ -18,6 +18,7 @@ import (
 	"seanime/internal/util/result"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -37,7 +38,7 @@ type Manager struct {
 	serverPort              int
 	username                string
 	logger                  *zerolog.Logger
-	settings                *models.NakamaSettings
+	settings                atomic.Pointer[models.NakamaSettings]
 	wsEventManager          events.WSEventManagerInterface
 	platformRef             *util.Ref[platform.Platform]
 	playbackManager         *playbackmanager.PlaybackManager
@@ -55,6 +56,7 @@ type Manager struct {
 	hostConnection       *HostConnection
 	hostConnectionCtx    context.Context
 	hostConnectionCancel context.CancelFunc
+	roomReconnectTimer   *time.Timer // host-side room reconnect timer, guarded by hostMu
 	hostMu               sync.RWMutex
 	reconnecting         bool // Flag to prevent multiple concurrent reconnection attempts
 
@@ -236,7 +238,6 @@ func NewManager(opts *NewManagerOptions) *Manager {
 		reqClient:               req.C(),
 		serverHost:              opts.ServerHost,
 		serverPort:              opts.ServerPort,
-		settings:                &models.NakamaSettings{},
 		torrentstreamRepository: opts.TorrentstreamRepository,
 		debridClientRepository:  opts.DebridClientRepository,
 		previousPath:            "",
@@ -246,6 +247,9 @@ func NewManager(opts *NewManagerOptions) *Manager {
 		isOfflineRef:            opts.IsOfflineRef,
 		connectionMode:          ConnectionModeDirect, // Default to direct mode
 	}
+	// Initialize to a non-nil empty settings so all lock-free reads are safe before the
+	// first SetSettings (callers assume m.settings is never nil).
+	m.settings.Store(&models.NakamaSettings{})
 
 	m.genericPlayer = NewWatchPartyGenericPlayer(m)
 	m.watchPartyManager = NewWatchPartyManager(m)
@@ -348,42 +352,38 @@ func NewManager(opts *NewManagerOptions) *Manager {
 }
 
 func (m *Manager) SetSettings(settings *models.NakamaSettings) {
-	var previousSettings *models.NakamaSettings
-	if m.settings != nil {
-		previousSettings = &[]models.NakamaSettings{*m.settings}[0]
-	}
+	// Snapshot the current settings before storing. All stop/start/connect/disconnect gates
+	// below are computed from this previous snapshot (never from the post-swap value) so a
+	// Host->Peer flip is detected correctly; the store then happens last (F1).
+	previousSettings := m.settings.Load()
+	// Whether we WERE hosting, captured before the swap (fixes shouldStopHost reading the
+	// already-swapped value).
+	wasHost := previousSettings != nil && previousSettings.IsHost
 
 	// If the host password has changed, stop host service
 	// This will cause a restart of the host service
 	disconnectAsHost := false
-	if m.settings != nil && (m.settings.HostPassword != settings.HostPassword || !m.settings.IsHost) {
+	if previousSettings != nil && (previousSettings.HostPassword != settings.HostPassword || !previousSettings.IsHost) {
 		disconnectAsHost = true
 		m.stopHostServices()
 	}
 
-	m.settings = settings
 	m.username = cmp.Or(settings.Username, "Peer_"+util.RandomStringWithAlphabet(8, "bcdefhijklmnopqrstuvwxyz0123456789"))
 	m.logger.Debug().Bool("isHost", settings.IsHost).Str("username", m.username).Str("remoteURL", settings.RemoteServerURL).Msg("nakama: Settings updated")
 
+	var shouldStopHost, shouldStartHost bool
 	if previousSettings == nil || (previousSettings.IsHost != settings.IsHost) || previousSettings.Enabled != settings.Enabled || disconnectAsHost {
 		// Stop host if Nakama is disabled, switching to peer, or password changed
-		shouldStopHost := m.IsHost() && (!settings.Enabled || !settings.IsHost || disconnectAsHost)
+		shouldStopHost = wasHost && (!settings.Enabled || !settings.IsHost || disconnectAsHost)
 
 		// Determine if we should start host services
-		shouldStartHost := settings.IsHost && settings.Enabled
-
-		// Always stop first if needed, then start
-		if shouldStopHost {
-			m.stopHostServices()
-		}
-		if shouldStartHost {
-			m.startHostServices()
-		}
+		shouldStartHost = settings.IsHost && settings.Enabled
 	}
 
+	var shouldDisconnect, shouldConnect bool
 	if previousSettings == nil || previousSettings.IsHost != settings.IsHost || previousSettings.RemoteServerURL != settings.RemoteServerURL || previousSettings.RemoteServerPassword != settings.RemoteServerPassword || previousSettings.Enabled != settings.Enabled {
 		// Determine if we should disconnect from current host
-		shouldDisconnect := m.IsConnectedToHost() && (!settings.Enabled || // Nakama disabled
+		shouldDisconnect = m.IsConnectedToHost() && (!settings.Enabled || // Nakama disabled
 			settings.IsHost || // Switching to host mode
 			settings.RemoteServerURL == "" || // No remote URL
 			settings.RemoteServerPassword == "" || // No password
@@ -392,18 +392,30 @@ func (m *Manager) SetSettings(settings *models.NakamaSettings) {
 			(previousSettings != nil && previousSettings.IsHost != settings.IsHost && settings.IsHost)
 
 		// Determine if we should connect to a host
-		shouldConnect := !settings.IsHost &&
+		shouldConnect = !settings.IsHost &&
 			settings.Enabled &&
 			settings.RemoteServerURL != "" &&
 			settings.RemoteServerPassword != ""
+	}
 
-		// Always disconnect first if needed, then connect
-		if shouldDisconnect {
-			m.disconnectFromHost()
-		}
-		if shouldConnect {
-			m.connectToHost()
-		}
+	// Store last, so the gates above use the previous snapshot while the side effects below
+	// (startHostServices/connectToHost read m.settings) observe the new value.
+	m.settings.Store(settings)
+
+	// Always stop first if needed, then start
+	if shouldStopHost {
+		m.stopHostServices()
+	}
+	if shouldStartHost {
+		m.startHostServices()
+	}
+
+	// Always disconnect first if needed, then connect
+	if shouldDisconnect {
+		m.disconnectFromHost()
+	}
+	if shouldConnect {
+		m.connectToHost()
 	}
 
 	// if previousSettings == nil || previousSettings.Username != settings.Username {
@@ -415,7 +427,7 @@ func (m *Manager) SetSettings(settings *models.NakamaSettings) {
 }
 
 func (m *Manager) GetHostBaseServerURL() string {
-	url := m.settings.RemoteServerURL
+	url := m.settings.Load().RemoteServerURL
 	if strings.HasSuffix(url, "/") {
 		url = strings.TrimSuffix(url, "/")
 	}
@@ -433,7 +445,7 @@ func (m *Manager) Stop() {
 }
 
 func (m *Manager) IsHost() bool {
-	return m.settings.IsHost
+	return m.settings.Load().IsHost
 }
 
 func (m *Manager) GetHostConnection() (*HostConnection, bool) {
@@ -506,7 +518,7 @@ func (m *Manager) RegisterMessageHandler(msgType MessageType, handler func(*Mess
 
 // SendMessage sends a message to all connected peers (when acting as host)
 func (m *Manager) SendMessage(msgType MessageType, payload interface{}) error {
-	if !m.settings.IsHost {
+	if !m.settings.Load().IsHost {
 		return errors.New("not acting as host")
 	}
 
@@ -526,10 +538,16 @@ func (m *Manager) SendMessage(msgType MessageType, payload interface{}) error {
 		return m.SendMessageToRoom(msgType, payload)
 	}
 
-	// Direct mode, send to all connected peers
+	// Direct mode, send to all connected peers.
+	// Marshal once (the payload is identical for every peer) and write the bytes per peer.
+	b, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+
 	var lastError error
 	m.peerConnections.Range(func(id string, conn *PeerConnection) bool {
-		if err := conn.SendMessage(message); err != nil {
+		if err := conn.SendBytes(b); err != nil {
 			m.logger.Error().Err(err).Str("peerId", conn.PeerId).Msg("nakama: Failed to send message to peer")
 			lastError = err
 		}
@@ -541,7 +559,7 @@ func (m *Manager) SendMessage(msgType MessageType, payload interface{}) error {
 
 // SendMessageToPeer sends a message to a specific peer by their PeerID
 func (m *Manager) SendMessageToPeer(peerID string, msgType MessageType, payload interface{}) error {
-	if !m.settings.IsHost {
+	if !m.settings.Load().IsHost {
 		return errors.New("only hosts can send messages to peers")
 	}
 
@@ -588,14 +606,17 @@ func (m *Manager) SendMessageToHost(msgType MessageType, payload interface{}) er
 
 // GetConnectedPeers returns a list of connected peer IDs
 func (m *Manager) GetConnectedPeers() []string {
-	if !m.settings.IsHost {
+	if !m.settings.Load().IsHost {
 		return []string{}
 	}
 
 	peers := make([]string, 0)
 
 	m.peerConnections.Range(func(id string, conn *PeerConnection) bool {
-		if conn.Authenticated {
+		conn.mu.RLock()
+		authenticated := conn.Authenticated
+		conn.mu.RUnlock()
+		if authenticated {
 			// Use PeerID as the primary identifier
 			peerDisplayName := conn.Username
 			if peerDisplayName == "" {
@@ -658,6 +679,14 @@ func (pc *PeerConnection) SendMessage(message *Message) error {
 	return pc.Conn.WriteJSON(message)
 }
 
+// SendBytes writes a pre-marshaled JSON payload to the peer (used by broadcasts that
+// marshal the message once instead of per peer).
+func (pc *PeerConnection) SendBytes(b []byte) error {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	return pc.Conn.WriteMessage(websocket.TextMessage, b)
+}
+
 func (pc *PeerConnection) Close() {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
@@ -686,7 +715,8 @@ func generateConnectionID() string {
 
 // ReconnectToHost attempts to reconnect to the host
 func (m *Manager) ReconnectToHost() error {
-	if m.settings == nil || m.settings.RemoteServerURL == "" || m.settings.RemoteServerPassword == "" {
+	s := m.settings.Load()
+	if s == nil || s.RemoteServerURL == "" || s.RemoteServerPassword == "" {
 		return errors.New("no host connection configured")
 	}
 
@@ -713,7 +743,7 @@ func (m *Manager) ReconnectToHost() error {
 
 // RemoveStaleConnections removes connections that haven't responded to ping in a while
 func (m *Manager) RemoveStaleConnections() {
-	if !m.settings.IsHost {
+	if !m.settings.Load().IsHost {
 		return
 	}
 

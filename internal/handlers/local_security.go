@@ -305,6 +305,15 @@ func (h *Handler) guardPrivilegedExtensionManagement(c echo.Context) error {
 		return nil
 	}
 
+	// On a networked (password-protected) server, installing/uninstalling/editing extensions
+	// runs remote code into the shared plugin sandbox affecting every user, so it requires the
+	// admin identity. canUsePrivilegedExtensionManagement ultimately trusts any password holder
+	// (isTrustedRequest), so without this check any regular user or browse-only anon could
+	// install arbitrary extension code or remove others' extensions.
+	if h.App.Config.Server.Password != "" && !h.IsAdmin(c) {
+		return respondWithAbort(c, http.StatusForbidden, errPrivilegedExecutionDenied)
+	}
+
 	if security.IsStrict() && !isRequestFromTrustedLocal(c.Request()) {
 		return respondWithAbort(c, http.StatusForbidden, errStrictLocalOnlyDenied)
 	}
@@ -435,6 +444,15 @@ func (h *Handler) guardPrivilegedMediastream(c echo.Context, settings *models.Me
 func (h *Handler) guardPrivilegedLocalExecution(c echo.Context) error {
 	if h == nil || h.App == nil || h.App.Config == nil {
 		return nil
+	}
+
+	// On a networked (password-protected) server, privileged local execution — self-update,
+	// release download, host binary swap — requires the admin identity. isTrustedRequest
+	// returns true for ANY password holder, so relying on it alone lets any regular user or
+	// browse-only anon trigger a server update/restart. Knowing the shared password is not
+	// the same as being the admin.
+	if h.App.Config.Server.Password != "" && !h.IsAdmin(c) {
+		return respondWithAbort(c, http.StatusForbidden, errPrivilegedExecutionDenied)
 	}
 
 	if security.IsStrict() && !isRequestFromTrustedLocal(c.Request()) {

@@ -208,6 +208,7 @@ func (s *UserSession) ensureModules() {
 			IsOfflineRef:               a.IsOfflineRef(),
 			ContinuityManager:          s.continuity,
 			RefreshAnimeCollectionFunc: refresh,
+			UserID:                     s.UserID,
 		})
 
 		// Apply the user's effective settings (shared server settings + their overrides).
@@ -520,7 +521,7 @@ func (a *App) LoginUserToAnilist(userID uint, token string) error {
 	}
 
 	// Drop any cached session so the next resolve rebuilds with the new token.
-	a.sessions.Delete(userID)
+	a.evictSession(userID)
 	a.Logger.Info().Uint("userId", userID).Msg("app: User authenticated to AniList")
 	return nil
 }
@@ -543,7 +544,39 @@ func (a *App) logoutUserFromAnilist(userID uint) {
 	if u, err := a.Database.GetUserByID(userID); err == nil && u != nil {
 		_, _ = a.Database.UpsertAccountForUser(userID, "", "", nil)
 	}
+	a.evictSession(userID)
+}
+
+// evictSession tears down a cached user session's per-user streaming engines before removing
+// it, so a relink/logout/token-invalid cycle doesn't leak their listener goroutines. Rebuilds
+// happen lazily on the next resolve.
+func (a *App) evictSession(userID uint) {
+	if sess, ok := a.sessions.Get(userID); ok {
+		sess.shutdown()
+	}
 	a.sessions.Delete(userID)
+}
+
+// shutdown stops this session's per-user streaming/playback engines (each spawns a listener
+// goroutine bound to a subscriber channel that is never closed on eviction otherwise). Safe on
+// an admin/empty session: modules are built lazily, so the nil checks skip unbuilt ones.
+// directStream unsubscribes from mediaCoord, so tear it down before closing the coordinator.
+func (s *UserSession) shutdown() {
+	if s == nil {
+		return
+	}
+	if s.directStream != nil {
+		s.directStream.Shutdown()
+	}
+	if s.mediaCoord != nil {
+		_ = s.mediaCoord.Close()
+	}
+	if s.mpvCore != nil {
+		s.mpvCore.Shutdown()
+	}
+	if s.videoCore != nil {
+		s.videoCore.Shutdown()
+	}
 }
 
 // -------------------------------------------------------------------------------- //

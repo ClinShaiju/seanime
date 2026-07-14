@@ -25,7 +25,7 @@ const log = logger("NAKAMA WATCH PARTY CHAT")
 
 export const watchPartyChat_chatMessagesAtom = atom<ChatMessage[]>([])
 export const watchPartyChat_chatMinimizedAtom = atom<boolean>(true)
-export const watchPartyChat_unreadCountAtom = atom<number>(5) // TODO set to 0
+export const watchPartyChat_unreadCountAtom = atom<number>(0)
 export const watchPartyChat_isPlayerAtom = atom<boolean>(false)
 
 export function NakamaWatchPartyChatProvider() {

@@ -263,7 +263,14 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request, lfStream *LocalFileS
 		lfStream.serveContentCancelFunc()
 	}
 
-	ct, cancel := context.WithCancel(lfStream.manager.playbackCtx)
+	// playbackCtx can be niled by a concurrent stream release/switch; context.WithCancel(nil)
+	// panics. Fall back to the request context (matching the torrentstream serve path) so a
+	// release racing an in-flight local-file serve can't crash the server.
+	playbackCtx := lfStream.manager.PlaybackCtx()
+	if playbackCtx == nil {
+		playbackCtx = r.Context()
+	}
+	ct, cancel := context.WithCancel(playbackCtx)
 	lfStream.serveContentCancelFunc = cancel
 
 	reader, err := lfStream.newReader()

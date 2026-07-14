@@ -876,7 +876,9 @@ autoUpdater.on("error", (err) => {
 // Single instance
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const gotTheLock = _development ? true : app.requestSingleInstanceLock({ development: _development })
+// ponytail: --multi-instance flag for nakama testing with two accounts
+const _multiInstance = process.argv.includes("--multi-instance")
+const gotTheLock = (_development || _multiInstance) ? true : app.requestSingleInstanceLock({ development: _development })
 
 /**
  * Force single instance

@@ -25,18 +25,23 @@ type ScheduleItem struct {
 	IsSeasonFinale bool      `json:"isSeasonFinale"`
 }
 
-var scheduleCache = result.NewCache[int, []*ScheduleItem]()
+// scheduleCache is keyed by user id so each user gets their own cached schedule (derived
+// from their own collection) instead of only the admin caching and every other user paying
+// an uncached AniList airing-schedule call on every request.
+var scheduleCache = result.NewCache[uint, []*ScheduleItem]()
 
-func GetScheduleCache() ([]*ScheduleItem, bool) {
-	return scheduleCache.Get(0)
+func GetScheduleCache(userID uint) ([]*ScheduleItem, bool) {
+	return scheduleCache.Get(userID)
 }
 
-func SetScheduleCache(val []*ScheduleItem) {
-	scheduleCache.Set(0, val)
+func SetScheduleCache(userID uint, val []*ScheduleItem) {
+	scheduleCache.Set(userID, val)
 }
 
+// ClearScheduleCache clears every user's cached schedule. Called when an AniList collection
+// is refreshed; over-invalidating other users is harmless (they simply recompute once).
 func ClearScheduleCache() {
-	scheduleCache.Delete(0)
+	scheduleCache.Clear()
 }
 
 func GetScheduleItems(animeSchedule *anilist.AnimeAiringSchedule, animeCollection *anilist.AnimeCollection) []*ScheduleItem {

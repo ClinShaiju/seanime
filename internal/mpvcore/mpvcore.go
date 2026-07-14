@@ -123,9 +123,22 @@ func (mc *MpvCore) Start() {
 func (mc *MpvCore) Shutdown() {
 	select {
 	case <-mc.stopCh:
+		return
 	default:
 		close(mc.stopCh)
 	}
+	// listenToClientEvents ranges the client subscriber channel, so closing stopCh alone does
+	// not stop it — unsubscribe to close that channel and let the goroutine return. Without this,
+	// every evicted per-session MpvCore (relink/logout) leaks its listener goroutine forever.
+	if mc.wsEventManager != nil {
+		mc.wsEventManager.UnsubscribeFromClientEvents(fmt.Sprintf("mpvcore:u%d", mc.userID))
+	}
+	// Close internal subscribers (e.g. InSight) so their consumer goroutines return too.
+	mc.subscribers.Range(func(id string, sub *Subscriber) bool {
+		sub.closed.Store(true)
+		sub.closeOnce.Do(func() { close(sub.eventCh) })
+		return true
+	})
 }
 
 func (mc *MpvCore) SetSettings(settings *models.Settings) {

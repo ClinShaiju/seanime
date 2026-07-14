@@ -35,7 +35,8 @@ func buildRoomHostWsURL(baseURL, password, version string) (string, error) {
 
 // startHostServices initializes the host services
 func (m *Manager) startHostServices() {
-	if m.settings == nil || !m.settings.IsHost || !m.settings.Enabled {
+	s := m.settings.Load()
+	if s == nil || !s.IsHost || !s.Enabled {
 		return
 	}
 
@@ -89,7 +90,8 @@ func (m *Manager) CreateAndJoinRoom() error {
 		return errors.New("not in host mode")
 	}
 
-	if m.settings == nil || m.settings.HostPassword == "" {
+	s := m.settings.Load()
+	if s == nil || s.HostPassword == "" {
 		return errors.New("host password not set")
 	}
 
@@ -99,7 +101,7 @@ func (m *Manager) CreateAndJoinRoom() error {
 	}
 
 	// Create room
-	room, err := m.createRoom(m.settings.HostPassword)
+	room, err := m.createRoom(s.HostPassword)
 	if err != nil {
 		return fmt.Errorf("failed to create room: %w", err)
 	}
@@ -186,16 +188,18 @@ func (m *Manager) handleRoomHostConnection(conn *websocket.Conn, room *Room) {
 		m.roomMu.RUnlock()
 
 		m.hostMu.Lock()
-		shouldReconnect := isCurrentRoom && m.settings != nil && m.settings.IsHost && m.settings.Enabled && !m.reconnecting
+		s := m.settings.Load()
+		shouldReconnect := isCurrentRoom && s != nil && s.IsHost && s.Enabled && !m.reconnecting
 		if shouldReconnect {
 			m.reconnecting = true
-			m.hostMu.Unlock()
 
 			m.logger.Info().Str("roomId", room.ID).Msg("nakama: Scheduling reconnection to room")
-			// Reconnect after a short delay
-			time.AfterFunc(5*time.Second, func() {
+			// Reconnect after a short delay. Store the timer so stopHostServices/disconnectFromHost
+			// can cancel it if the role flips during the window (F4).
+			m.roomReconnectTimer = time.AfterFunc(5*time.Second, func() {
 				m.reconnectToRoomAsHost(room)
 			})
+			m.hostMu.Unlock()
 		} else {
 			m.hostMu.Unlock()
 
@@ -340,6 +344,19 @@ func (m *Manager) reconnectToRoomAsHost(room *Room) {
 			// Success
 			m.logger.Info().Str("roomId", room.ID).Msg("nakama: Successfully reconnected to room as host")
 
+			// Re-check role before installing the connection — a Host(rooms)->Peer flip (or a
+			// room/mode change) during the reconnect window must not clobber a freshly-set
+			// peer connection (F4).
+			s := m.settings.Load()
+			m.roomMu.RLock()
+			stillRoomHost := s != nil && s.IsHost && m.connectionMode == ConnectionModeRooms && m.currentRoom != nil && m.currentRoom.ID == room.ID
+			m.roomMu.RUnlock()
+			if !stillRoomHost {
+				m.logger.Info().Str("roomId", room.ID).Msg("nakama: Aborting room reconnect, role or mode changed")
+				_ = conn.Close()
+				return
+			}
+
 			// Store connection info
 			m.hostMu.Lock()
 			m.hostConnection = &HostConnection{
@@ -443,6 +460,11 @@ func (m *Manager) stopHostServices() {
 	m.roomMu.Unlock()
 
 	m.hostMu.Lock()
+	// Cancel any pending host-side room reconnect (F4)
+	if m.roomReconnectTimer != nil {
+		m.roomReconnectTimer.Stop()
+		m.roomReconnectTimer = nil
+	}
 	if m.hostConnection != nil && m.hostConnection.ConnectionMode == ConnectionModeRooms {
 		m.hostConnection.Close()
 		m.hostConnection = nil
@@ -464,7 +486,8 @@ func (m *Manager) stopHostServices() {
 
 // HandlePeerConnection handles incoming WebSocket connections from peers
 func (m *Manager) HandlePeerConnection(w http.ResponseWriter, r *http.Request) {
-	if m.settings == nil || !m.settings.IsHost || !m.settings.Enabled {
+	s := m.settings.Load()
+	if s == nil || !s.IsHost || !s.Enabled {
 		http.Error(w, "Host mode not enabled", http.StatusForbidden)
 		return
 	}
@@ -566,7 +589,9 @@ func (m *Manager) handlePeerConnection(peerConn *PeerConnection) {
 
 	// Set up ping/pong handler
 	peerConn.Conn.SetPongHandler(func(appData string) error {
+		peerConn.mu.Lock()
 		peerConn.LastPing = time.Now()
+		peerConn.mu.Unlock()
 		return nil
 	})
 

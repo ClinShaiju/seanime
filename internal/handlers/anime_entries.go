@@ -478,12 +478,10 @@ func (h *Handler) HandleGetMissingEpisodes(c echo.Context) error {
 		anime.ClearMissingEpisodesCache()
 	})
 
-	// Cache is a single global value derived from the user's collection — admin-only
-	// to avoid cross-user leakage (non-admin computes fresh).
-	if sess.IsAdmin {
-		if missingEpisodesCache, ok := anime.GetMissingEpisodesCache(); ok {
-			return h.RespondWithData(c, missingEpisodesCache)
-		}
+	// Cache is keyed per-user (derived from the user's own collection), so every user gets a
+	// cache hit instead of only the admin.
+	if missingEpisodesCache, ok := anime.GetMissingEpisodesCache(sess.UserID); ok {
+		return h.RespondWithData(c, missingEpisodesCache)
 	}
 
 	// Get the user's anilist collection
@@ -516,16 +514,17 @@ func (h *Handler) HandleGetMissingEpisodes(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	if sess.IsAdmin {
-		anime.SetMissingEpisodesCache(event.MissingEpisodes)
-	}
+	anime.SetMissingEpisodesCache(sess.UserID, event.MissingEpisodes)
 
 	return h.RespondWithData(c, event.MissingEpisodes)
 }
 
 //----------------------------------------------------------------------------------------------------------------------
 
-var upcomingEpisodesCache *anime.UpcomingEpisodes
+// upcomingEpisodesCache is keyed per-user (derived from the user's own collection) so every
+// user gets a cache hit, not just the admin. A per-user map also removes the data race the
+// previous unguarded package-level pointer had under concurrent requests.
+var upcomingEpisodesCache = result.NewMap[uint, *anime.UpcomingEpisodes]()
 
 // HandleGetUpcomingEpisodes
 //
@@ -537,12 +536,13 @@ var upcomingEpisodesCache *anime.UpcomingEpisodes
 func (h *Handler) HandleGetUpcomingEpisodes(c echo.Context) error {
 	sess := h.userSession(c)
 	h.App.AddOnRefreshAnilistCollectionFunc("HandleGetUpcomingEpisodes", func() {
-		upcomingEpisodesCache = nil
+		upcomingEpisodesCache.Clear()
 	})
 
-	// Global cache derived from the user's collection — admin-only (non-admin fresh).
-	if sess.IsAdmin && upcomingEpisodesCache != nil {
-		return h.RespondWithData(c, upcomingEpisodesCache)
+	// Cache is keyed per-user (derived from the user's own collection), so every user gets a
+	// cache hit instead of only the admin.
+	if cached, ok := upcomingEpisodesCache.Get(sess.UserID); ok && cached != nil {
+		return h.RespondWithData(c, cached)
 	}
 
 	// Get the user's anilist collection
@@ -562,9 +562,7 @@ func (h *Handler) HandleGetUpcomingEpisodes(c echo.Context) error {
 		return h.RespondWithError(c, err)
 	}
 
-	if sess.IsAdmin {
-		upcomingEpisodesCache = event.UpcomingEpisodes
-	}
+	upcomingEpisodesCache.Set(sess.UserID, event.UpcomingEpisodes)
 
 	return h.RespondWithData(c, event.UpcomingEpisodes)
 }

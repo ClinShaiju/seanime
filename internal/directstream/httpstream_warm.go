@@ -72,9 +72,11 @@ func (s *httpBaseStream) serveHandoff(w http.ResponseWriter, r *http.Request, ra
 	if ra.Start >= s.contentLength-warmTailBytes && s.contentLength > warmHeadBytes+warmTailBytes {
 		warmFailed = &s.warmTailFailed
 	}
-	// Dead warm with nothing cached at this offset → the CDN serves the window bytes
-	// itself (never answer with an empty capped response — that would reconnect-loop).
-	if warmFailed.Load() && s.httpStream.CachedSpanFrom(ra.Start) == 0 {
+	// Dead warm → hand the whole range off to the CDN. Redirect whenever the warm failed, NOT
+	// only when nothing is cached: a PARTIAL fill (0 < cached span < the 1 MiB serve chunk) can
+	// no longer complete, so entering the serve loop below would answer with a zero-payload 206
+	// and the player would reconnect at the same offset forever. The CDN serves the full range.
+	if warmFailed.Load() {
 		s.logger.Debug().Int64("start", ra.Start).Msg("directstream(http): Handoff 302 to CDN (warm dead)")
 		http.Redirect(w, r, s.clientStreamUrl, http.StatusFound)
 		return
@@ -108,6 +110,7 @@ func (s *httpBaseStream) serveHandoff(w http.ResponseWriter, r *http.Request, ra
 		serveEnd = end + 1 // bounded request entirely inside the window
 	}
 	flusher, _ := w.(http.Flusher)
+	pbCtx := s.manager.PlaybackCtx() // snapshot under lock (release path nils it concurrently)
 	off := ra.Start
 	for off < serveEnd {
 		chunk := int64(1 << 20)
@@ -116,7 +119,7 @@ func (s *httpBaseStream) serveHandoff(w http.ResponseWriter, r *http.Request, ra
 		}
 		for !s.httpStream.IsRangeAvailable(off, off+chunk-1) {
 			if warmFailed.Load() || r.Context().Err() != nil ||
-				(s.manager.playbackCtx != nil && s.manager.playbackCtx.Err() != nil) {
+				(pbCtx != nil && pbCtx.Err() != nil) {
 				return
 			}
 			select {

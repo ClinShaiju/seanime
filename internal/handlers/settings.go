@@ -34,6 +34,13 @@ func (h *Handler) HandleGetSettings(c echo.Context) error {
 	clientSettings := db.CloneSettings(settings)
 	db.VirtualizeSettingsPaths(clientSettings)
 
+	// Non-admins must not receive the shared server credentials (torrent-client, VLC,
+	// translate key, nakama passwords) — the redaction is a server-side boundary, not a
+	// client-side hidden tab.
+	if !h.IsAdmin(c) {
+		redactSettingsSecretsForNonAdmin(clientSettings)
+	}
+
 	return h.RespondWithData(c, clientSettings)
 }
 

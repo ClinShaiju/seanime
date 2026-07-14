@@ -97,10 +97,13 @@ func (wpm *WatchPartyManager) startStatusReporting() {
 
 	// Start ticker for regular status reports
 	wpm.statusReportTicker = time.NewTicker(2 * time.Second)
+	// Capture the ticker locally so the goroutine never re-reads the shared field,
+	// which stopStatusReporting may nil out concurrently.
+	ticker := wpm.statusReportTicker
 
 	go func() {
 		defer util.HandlePanicInModuleThen("nakama/startStatusReporting", func() {})
-		defer wpm.statusReportTicker.Stop()
+		defer ticker.Stop()
 
 		hostConn, ok := wpm.manager.GetHostConnection()
 		if !ok {
@@ -114,7 +117,7 @@ func (wpm *WatchPartyManager) startStatusReporting() {
 			case <-ctx.Done():
 				wpm.logger.Debug().Msg("nakama: Stopped status reporting")
 				return
-			case <-wpm.statusReportTicker.C:
+			case <-ticker.C:
 				wpm.sendStatusToHost(hostConn.PeerId)
 			}
 		}

@@ -40,7 +40,10 @@ type (
 		// of the same torrent+file (urlRefreshTTL refresh, replays, cross-consumer reuse) skip
 		// the extra mylist round-trip in GetTorrentDownloadUrl. GetTorrentStreamUrl's readiness
 		// poll primes it, so even the first play skips that fetch.
-		fileIdCache sync.Map
+		// ponytail: mutex+map with a whole-map flush at cap (same as infoCache) — keeps it bounded
+		// on a long-running server instead of growing unboundedly like the old sync.Map.
+		fileIdCacheMu sync.Mutex
+		fileIdCache   map[string]string
 
 		// infoCache memoizes /checkcached//torrentinfo file lists by lowercase infohash. A
 		// torrent's file list is immutable per hash, so GetInstantAvailability (search ranking)
@@ -130,8 +133,9 @@ type (
 )
 
 const (
-	infoCacheTTL = 1 * time.Hour
-	infoCacheCap = 4096
+	infoCacheTTL   = 1 * time.Hour
+	infoCacheCap   = 4096
+	fileIdCacheCap = 4096
 )
 
 func (t *TorBox) storeTorrentInfo(hash string, info *TorrentInfo) {
@@ -154,6 +158,25 @@ func (t *TorBox) loadTorrentInfo(hash string) (*TorrentInfo, bool) {
 		return nil, false
 	}
 	return e.info, true
+}
+
+func (t *TorBox) storeFileId(key, fileID string) {
+	if key == "" {
+		return
+	}
+	t.fileIdCacheMu.Lock()
+	defer t.fileIdCacheMu.Unlock()
+	if t.fileIdCache == nil || len(t.fileIdCache) >= fileIdCacheCap {
+		t.fileIdCache = make(map[string]string)
+	}
+	t.fileIdCache[key] = fileID
+}
+
+func (t *TorBox) loadFileId(key string) (string, bool) {
+	t.fileIdCacheMu.Lock()
+	defer t.fileIdCacheMu.Unlock()
+	v, ok := t.fileIdCache[key]
+	return v, ok
 }
 
 func NewTorBox(logger *zerolog.Logger) debrid.Provider {
@@ -462,6 +485,7 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 		// off 500ms→1s→2s→4s cap.
 		delay := time.Duration(0)
 		var errRetries int
+		var dlErrRetries int // bounds requestdl (download-url) failures on a ready torrent
 
 		checkTorrentReady := func() (string, bool, error) {
 			// Raw fetch (not GetTorrent) so we keep Files — priming fileIdCache below lets
@@ -486,7 +510,7 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 			if torrent.IsReady {
 				for _, f := range rawTorrent.Files {
 					if f.ShortName != "" {
-						t.fileIdCache.Store(opts.ID+"|"+f.ShortName, strconv.Itoa(f.ID))
+						t.storeFileId(opts.ID+"|"+f.ShortName, strconv.Itoa(f.ID))
 					}
 				}
 
@@ -497,9 +521,18 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 					FileId: opts.FileId, // Filename
 				})
 				if dErr != nil {
+					// Cap requestdl failures too — the torrent is ready, so this is not a
+					// "still downloading" poll. Without a cap a persistently-failing requestdl
+					// (e.g. a preload whose ctx has no deadline) would loop every ~4s forever,
+					// leaking the drain goroutine and hammering the shared requestdl limiter.
+					dlErrRetries++
+					if dlErrRetries >= 5 {
+						return "", false, fmt.Errorf("torbox: Failed to get download URL after retries: %w", dErr)
+					}
 					t.logger.Warn().Err(dErr).Msg("torbox: Failed to get download URL, retrying...")
 					return "", false, nil
 				}
+				dlErrRetries = 0
 
 				return downloadUrl, true, nil
 			}
@@ -552,8 +585,8 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 		// same torrent+file (URL refresh, replays, cross-consumer reuse) skip this extra mylist call.
 		cacheKey := opts.ID + "|" + opts.FileId
 		var fId string
-		if v, ok := t.fileIdCache.Load(cacheKey); ok {
-			fId = v.(string)
+		if v, ok := t.loadFileId(cacheKey); ok {
+			fId = v
 		} else {
 			torrent, err := t.getTorrent(opts.ID)
 			if err != nil {
@@ -568,7 +601,7 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 			if fId == "" {
 				return "", fmt.Errorf("torbox: Failed to get download URL, file not found")
 			}
-			t.fileIdCache.Store(cacheKey, fId)
+			t.storeFileId(cacheKey, fId)
 		}
 		url = t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s", apiKey, opts.ID, fId)
 	}

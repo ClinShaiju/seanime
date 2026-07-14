@@ -306,7 +306,9 @@ func (wpm *WatchPartyManager) hostPlaybackHandleStatus(opts hostPlaybackHandleSt
 // listenToPlaybackManager listens to player events from the host.
 // It handles starting a new watch party session and sending player status updates to peers.
 func (wpm *WatchPartyManager) listenToPlaybackAsHost() {
-	id := "nakama:watch-party:host"
+	// Use a per-invocation unique subscriber id so that a stale async Unsubscribe from a
+	// previous session can never close this (newer) session's channel and silently stop broadcasting.
+	id := "nakama:watch-party:host:" + uuid.New().String()
 	playbackSubscriber := wpm.manager.playbackManager.SubscribeToPlaybackStatus(id)
 	mediacoreSubscriber := wpm.manager.mediacoreCoordinator.Subscribe(id)
 
@@ -565,7 +567,9 @@ func (wpm *WatchPartyManager) handleWatchPartyPeerLeftEvent(payload *WatchPartyL
 	}
 
 	// Remove the peer from the session
+	session.mu.Lock()
 	delete(session.Participants, payload.PeerId)
+	session.mu.Unlock()
 
 	// Send session state
 	go wpm.broadcastSessionStateToPeers()
@@ -597,7 +601,9 @@ func (wpm *WatchPartyManager) HandlePeerDisconnected(peerID string) {
 	wpm.logger.Debug().Str("peerId", peerID).Msg("nakama: Peer disconnected, removing from watch party")
 
 	// Remove the peer from the session
+	session.mu.Lock()
 	delete(session.Participants, peerID)
+	session.mu.Unlock()
 
 	// Send session state to remaining peers
 	go wpm.broadcastSessionStateToPeers()
@@ -709,6 +715,7 @@ func (wpm *WatchPartyManager) checkAndManageBuffering() {
 
 	// Count peer states
 	var totalPeers, readyPeers, bufferingPeers int
+	session.mu.RLock()
 	for _, participant := range session.Participants {
 		if !participant.IsHost {
 			totalPeers++
@@ -720,6 +727,7 @@ func (wpm *WatchPartyManager) checkAndManageBuffering() {
 			}
 		}
 	}
+	session.mu.RUnlock()
 
 	// No peers means no buffering management needed
 	if totalPeers == 0 {
@@ -823,6 +831,7 @@ func (wpm *WatchPartyManager) waitForPeersReady(onReady func()) {
 			}
 
 			var totalPeers, readyPeers int
+			session.mu.RLock()
 			for _, participant := range session.Participants {
 				if !participant.IsHost && !participant.IsRelayOrigin {
 					totalPeers++
@@ -831,6 +840,7 @@ func (wpm *WatchPartyManager) waitForPeersReady(onReady func()) {
 					}
 				}
 			}
+			session.mu.RUnlock()
 
 			// If no peers or all peers are ready, resume playback
 			if totalPeers == 0 || readyPeers == totalPeers {

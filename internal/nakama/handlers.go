@@ -49,7 +49,8 @@ func (m *Manager) handleMessage(message *Message, senderID string) error {
 
 // handleAuthMessage handles authentication requests from peers
 func (m *Manager) handleAuthMessage(message *Message, senderID string) error {
-	if !m.settings.IsHost {
+	s := m.settings.Load()
+	if !s.IsHost {
 		return errors.New("not acting as host")
 	}
 
@@ -71,7 +72,7 @@ func (m *Manager) handleAuthMessage(message *Message, senderID string) error {
 	}
 
 	// Verify password
-	success := authPayload.Password == m.settings.HostPassword
+	success := authPayload.Password == s.HostPassword
 	var replyMessage string
 	if success {
 		// Update the peer connection with the PeerID from auth payload if not already set
@@ -79,7 +80,9 @@ func (m *Manager) handleAuthMessage(message *Message, senderID string) error {
 			peerConn.PeerId = authPayload.PeerId
 		}
 
+		peerConn.mu.Lock()
 		peerConn.Authenticated = true
+		peerConn.mu.Unlock()
 		replyMessage = "Authentication successful"
 		m.logger.Info().Str("peerID", peerConn.PeerId).Str("senderID", senderID).Msg("nakama: Peer authenticated successfully")
 
@@ -125,7 +128,7 @@ func (m *Manager) handlePingMessage(message *Message, senderID string) error {
 		Timestamp: time.Now(),
 	}
 
-	if m.settings.IsHost {
+	if m.settings.Load().IsHost {
 		// Check if we're in rooms mode
 		m.roomMu.RLock()
 		connectionMode := m.connectionMode
@@ -161,7 +164,7 @@ func (m *Manager) handlePingMessage(message *Message, senderID string) error {
 // handlePongMessage handles pong messages
 func (m *Manager) handlePongMessage(message *Message, senderID string) error {
 	// Update last ping time
-	if m.settings.IsHost {
+	if m.settings.Load().IsHost {
 		// Check if we're in rooms mode
 		m.roomMu.RLock()
 		connectionMode := m.connectionMode
@@ -178,7 +181,9 @@ func (m *Manager) handlePongMessage(message *Message, senderID string) error {
 			// In direct mode, update peer's last ping time
 			peerConn, exists := m.peerConnections.Get(senderID)
 			if exists {
+				peerConn.mu.Lock()
 				peerConn.LastPing = time.Now()
+				peerConn.mu.Unlock()
 			}
 		}
 	} else {
