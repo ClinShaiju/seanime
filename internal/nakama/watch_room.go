@@ -657,7 +657,23 @@ func (h *WatchRoomHub) RelayPlaybackStatus(senderClientID string, p *RoomPlaybac
 		pausedFlip := room.PlaybackActive && sameMedia && p.Paused != room.paused && posDelta <= echoPosTol
 		flipChatter := pausedFlip && !room.lastPauseFlipAt.IsZero() && time.Since(room.lastPauseFlipAt) < minPauseFlipInterval
 		if noop || crossEcho || flipChatter {
+			// Diagnostic: name which guard dropped this discrete action. crossEcho/flipChatter can
+			// occasionally eat a GENUINE action (a fast human toggle, or a second controller acting
+			// inside the debounce window), which surfaces as "play/pause sometimes missed". Without
+			// this the drop is invisible; the log lets a real miss be told apart from correct echo
+			// rejection and pinned to the exact guard. Captured under lock, logged after unlock.
+			reason := "noop"
+			if crossEcho {
+				reason = "crossEcho"
+			} else if flipChatter {
+				reason = "flipChatter"
+			}
+			roomPaused := room.paused
+			roomPos := room.currentPositionLocked()
+			sinceDiscrete := time.Since(room.lastDiscreteAt).Truncate(time.Millisecond)
 			room.mu.Unlock()
+			h.logf("dropped discrete from %s (%s): recv{paused=%v t=%.1f} room{paused=%v t=%.1f} sinceLastDiscrete=%s",
+				senderClientID, reason, p.Paused, p.CurrentTime, roomPaused, roomPos, sinceDiscrete)
 			return
 		}
 		if pausedFlip {
