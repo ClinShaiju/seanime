@@ -639,6 +639,17 @@ function WatchRoomsSection({ open }: { open: boolean }) {
         if (!was && websocketConnected && currentRoom && clientId) {
             joinRoom({ roomId: currentRoom.id, password: "", clientId }, {
                 onSuccess: (room) => { if (room) setCurrentRoom(room) },
+                onError: (error: any) => {
+                    // The room is gone (server restarted and it wasn't persisted, or it was reaped as
+                    // idle): clear our stale panel instead of sitting frozen on a dead room. Only on a
+                    // 404/not-found — a transient reconnect error must NOT drop us from a live room.
+                    const msg = String(error?.message ?? "")
+                    if (error?.status === 404 || /not found/i.test(msg)) {
+                        setCurrentRoom(null)
+                        setModalView("main")
+                        toast.info("The room is no longer available")
+                    }
+                },
             })
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
