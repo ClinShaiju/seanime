@@ -2,13 +2,18 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
+	"net/http"
+	"os"
 	"seanime/internal/api/anizip"
 	"seanime/internal/database/models"
 	"seanime/internal/library/anime"
 	"seanime/internal/util/filecache"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/labstack/echo/v4"
 )
 
@@ -191,7 +196,60 @@ func (h *Handler) HandleGetAnizipArtwork(c echo.Context) error {
 	}
 
 	artwork := media.GetArtwork()
+
+	// ani.zip's clearlogo comes from fanart.tv, which lacks logos for many new shows.
+	// Fall back to TMDB's title logo (same source Stremio uses) when we have a TMDB mapping.
+	if artwork.Logo == "" {
+		if tmdbID := media.GetMappings().ThemoviedbID; tmdbID != "" {
+			artwork.Logo = tmdbLogoURL(tmdbID)
+		}
+	}
+
 	_ = h.App.FileCacher.Set(anizipArtworkBucket, key, artwork)
 
 	return h.RespondWithData(c, artwork)
+}
+
+// tmdbLogoURL fetches a transparent title logo from TMDB for the given themoviedb id.
+// Returns "" if no key is configured (SEANIME_TMDB_API_KEY), the id is empty, or no logo exists.
+// ponytail: best-effort fallback only; env-var key, degrades silently to the text title.
+func tmdbLogoURL(tmdbID string) string {
+	apiKey := os.Getenv("SEANIME_TMDB_API_KEY")
+	if apiKey == "" || tmdbID == "" {
+		return ""
+	}
+	client := &http.Client{Timeout: 6 * time.Second}
+	// Anime usually maps to a TMDB TV show; fall back to movie.
+	for _, kind := range []string{"tv", "movie"} {
+		u := fmt.Sprintf("https://api.themoviedb.org/3/%s/%s/images?api_key=%s&include_image_language=en,null", kind, tmdbID, apiKey)
+		resp, err := client.Get(u)
+		if err != nil {
+			continue
+		}
+		var body struct {
+			Logos []struct {
+				FilePath string  `json:"file_path"`
+				Vote     float64 `json:"vote_average"`
+			} `json:"logos"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+		if err != nil || len(body.Logos) == 0 {
+			continue
+		}
+		best, bestVote := "", -1.0
+		for _, l := range body.Logos {
+			if strings.HasSuffix(l.FilePath, ".svg") { // prefer raster; svg is a last resort
+				continue
+			}
+			if l.Vote > bestVote {
+				best, bestVote = l.FilePath, l.Vote
+			}
+		}
+		if best == "" {
+			best = body.Logos[0].FilePath // svg-only: take what we have
+		}
+		return "https://image.tmdb.org/t/p/original" + best
+	}
+	return ""
 }
