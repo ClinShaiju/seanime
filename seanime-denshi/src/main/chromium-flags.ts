@@ -7,6 +7,9 @@ export function setupChromiumFlags() {
 
     app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required")
 
+    // NOTE: this only takes effect while mpv-prism is pinned to 0.1.0 (see mpv-prism.lock.json
+    // _forkNote). 0.1.8+ gates WGL on `hardwareAdapterCount === 1` and ignores this request on
+    // multi-GPU hosts, silently falling back to the racy ANGLE path.
     // mpv-prism's ANGLE backend can end up on an unsynchronized shared texture
     // (candidate=nt-handle+shared, keyedMutex=0) -> chromium samples mid-write ->
     // intermittent black frames during playback (verified via CDP frame capture
