@@ -2,7 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
-<<<<<<< HEAD
+## v3.10.1
+
+- 🦺 Debrid: Detect a CDN serving a truncated file instead of playing it — TorBox handed back 12 MB of a 1.43 GB episode (HTTP 200, torrent still reporting `cached: true`), which played ~12s and then refused to seek. The Content-Length is now checked against the size the provider reports and the open fails naming the truncation; the prewarm/preload probes treat a wrong-size or HTML-error link as dead and re-resolve. Costs no extra request.
+- 🦺 Desktop (MpvCore): Pinned mpv-prism back to 0.1.0/0.1.1 — despite upstream 0.1.8's "better support for dual-gpu setups", it gates the WGL backend on `hardwareAdapterCount === 1` and ignores `MPV_PRISM_WIN32_BACKEND=wgl` on multi-GPU hosts, falling back to the ANGLE unsynchronized shared-texture race (black-frame flashing, lost hwdec).
+- ⬆️ Merged upstream v3.10.0 (changes below)
+
+### Merged from upstream v3.10.0
+
+- ⚡️ Manga: Improved source refresh
+  - Refresh saved sources, find missing sources, or compare all installed providers
+  - Retry failed entries or find alternatives when a source stops working
+- ⚡️ Built-in Players: Configure extra chapters to skip
+  - Custom patterns for auto-skip, skip buttons, and timeline highlighting
+- ⚡️ VideoCore: Faster and more reliable subtitles
+- ⚡️ Torrent: Optional availability badges for recently released episodes
+- ⚡️ Online Streaming: Improvement to reliability
+  - Refresh stale source urls before switching providers
+  - Keep provider, server, quality, audio, and subtitle choices during recovery
+  - Remember HLS quality between episodes
+  - Respect provider defaults and per-anime subtitle choices
+  - Support subtitles that require provider headers
+- ⚡️ Denshi: Restore scroll position on Search and Lists
+- ⚡️ Denshi: Export MpvCore logs from Video Playback settings
+- ⚡️ Plugins: Show badge counts for unpinned tray plugins
+- ⚡️ Plugins: Added APIs for custom Discord Rich Presence activities and AniList avatar URLs
+- 🦺 Transcoding / Direct Play: Fixed codec and container detection and stopped reusing stale media containers
+- 🦺 MpvCore: Fixed the player background color
+- 🦺 Nakama: Fixed watch parties using custom-source media
+- 🦺 VideoCore: Fixed stale playback sessions blocking a new client
+- 🦺 MPV/IINA: Restoring watch progress now waits until media is ready
+- 🦺 Cache: Fixed deleted file cache entries remaining active in memory
+- 🦺 UI: Fixed some visual bugs
+- ⬆️ MpvCore: Updated mpv-prism to 0.1.8
+  - Better support for dual-gpu setups
+  - Fixed startup race causing infinite loading
+  - Fixed logging on Windows
+- ⬆️ Updated dependencies
+
 ## v3.9.6
 
 - 🦺 Desktop (MpvCore): Fixed autoplay next episode — `keep-open=yes` prevents mpv's `end-file` event from firing; now detects EOF via the `eof-reached` property change instead
@@ -79,41 +116,6 @@ Full-fork audit fix pass — 43 files, security + crash + sync + ranking + multi
 - ⬆️ Merged upstream v3.9.1 (bugfixes below); kept mpv-prism pinned to 0.1.0 (upstream 0.1.1 fails its own checksum)
 
 ### Merged from upstream v3.9.1
-=======
-## v3.10.0
-
-- ⚡️ Manga: Improved source refresh
-  - Refresh saved sources, find missing sources, or compare all installed providers
-  - Retry failed entries or find alternatives when a source stops working
-- ⚡️ Built-in Players: Configure extra chapters to skip
-  - Custom patterns for auto-skip, skip buttons, and timeline highlighting
-- ⚡️ VideoCore: Faster and more reliable subtitles
-- ⚡️ Torrent: Optional availability badges for recently released episodes
-- ⚡️ Online Streaming: Improvement to reliability
-  - Refresh stale source urls before switching providers
-  - Keep provider, server, quality, audio, and subtitle choices during recovery
-  - Remember HLS quality between episodes
-  - Respect provider defaults and per-anime subtitle choices
-  - Support subtitles that require provider headers
-- ⚡️ Denshi: Restore scroll position on Search and Lists
-- ⚡️ Denshi: Export MpvCore logs from Video Playback settings
-- ⚡️ Plugins: Show badge counts for unpinned tray plugins
-- ⚡️ Plugins: Added APIs for custom Discord Rich Presence activities and AniList avatar URLs
-- 🦺 Transcoding / Direct Play: Fixed codec and container detection and stopped reusing stale media containers
-- 🦺 MpvCore: Fixed the player background color
-- 🦺 Nakama: Fixed watch parties using custom-source media
-- 🦺 VideoCore: Fixed stale playback sessions blocking a new client
-- 🦺 MPV/IINA: Restoring watch progress now waits until media is ready
-- 🦺 Cache: Fixed deleted file cache entries remaining active in memory
-- 🦺 UI: Fixed some visual bugs
-- ⬆️ MpvCore: Updated mpv-prism to 0.1.8
-  - Better support for dual-gpu setups
-  - Fixed startup race causing infinite loading
-  - Fixed logging on Windows
-- ⬆️ Updated dependencies
-
-## v3.9.1
->>>>>>> origin/main
 
 - 🦺 VideoCore/MpvCore: Fixed preferred track selection
 - 🦺 VideoCore/MpvCore: Enforce absolute path for screenshot dir
