@@ -51,7 +51,10 @@ type PlayDebridStreamOptions struct {
 	Media           *anilist.BaseAnime
 	Torrent         *hibiketorrent.AnimeTorrent // Selected torrent
 	FileId          string                      // File ID or index
-	UserAgent       string
+	// ExpectedSize is the file size the debrid provider reports, or 0 when unknown. Non-zero
+	// makes the open fail fast if the CDN serves a different Content-Length (truncated file).
+	ExpectedSize int64
+	UserAgent    string
 	ClientId        string
 	AutoSelect      bool
 }
@@ -79,6 +82,7 @@ func (m *Manager) PlayDebridStream(ctx context.Context, filepath string, opts Pl
 			streamUrl:       opts.StreamUrl,
 			clientStreamUrl: opts.ClientStreamUrl,
 			cdnGated:        true,
+			expectedSize:    opts.ExpectedSize,
 			filepath:        filepath,
 			BaseStream: BaseStream{
 				manager:               m,

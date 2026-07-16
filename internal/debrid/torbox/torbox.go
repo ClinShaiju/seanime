@@ -37,14 +37,16 @@ type (
 		mylist    []*Torrent
 		mylistAt  time.Time
 
-		// fileIdCache maps "torrentID|shortName" -> numeric TorBox file id, so repeat resolves
-		// of the same torrent+file (urlRefreshTTL refresh, replays, cross-consumer reuse) skip
-		// the extra mylist round-trip in GetTorrentDownloadUrl. GetTorrentStreamUrl's readiness
-		// poll primes it, so even the first play skips that fetch.
+		// fileIdCache maps "torrentID|shortName" -> numeric TorBox file id + the file's SIZE, so
+		// repeat resolves of the same torrent+file (urlRefreshTTL refresh, replays, cross-consumer
+		// reuse) skip the extra mylist round-trip in GetTorrentDownloadUrl. GetTorrentStreamUrl's
+		// readiness poll primes it, so even the first play skips that fetch. The size rides along
+		// free (same mylist response) and is what KnownFileSize hands the player to catch a CDN
+		// that serves a truncated file — see KnownFileSize.
 		// ponytail: mutex+map with a whole-map flush at cap (same as infoCache) — keeps it bounded
 		// on a long-running server instead of growing unboundedly like the old sync.Map.
 		fileIdCacheMu sync.Mutex
-		fileIdCache   map[string]string
+		fileIdCache   map[string]fileIdEntry
 
 		// infoCache memoizes /checkcached//torrentinfo file lists by lowercase infohash. A
 		// torrent's file list is immutable per hash, so GetInstantAvailability (search ranking)
@@ -161,23 +163,47 @@ func (t *TorBox) loadTorrentInfo(hash string) (*TorrentInfo, bool) {
 	return e.info, true
 }
 
-func (t *TorBox) storeFileId(key, fileID string) {
+// fileIdEntry is the fileIdCache value: the numeric TorBox file id plus the size TorBox reports
+// for that file. size is 0 when unknown.
+type fileIdEntry struct {
+	id   string
+	size int64
+}
+
+func (t *TorBox) storeFileId(key, fileID string, size int64) {
 	if key == "" {
 		return
 	}
 	t.fileIdCacheMu.Lock()
 	defer t.fileIdCacheMu.Unlock()
 	if t.fileIdCache == nil || len(t.fileIdCache) >= fileIdCacheCap {
-		t.fileIdCache = make(map[string]string)
+		t.fileIdCache = make(map[string]fileIdEntry)
 	}
-	t.fileIdCache[key] = fileID
+	t.fileIdCache[key] = fileIdEntry{id: fileID, size: size}
 }
 
-func (t *TorBox) loadFileId(key string) (string, bool) {
+func (t *TorBox) loadFileId(key string) (fileIdEntry, bool) {
 	t.fileIdCacheMu.Lock()
 	defer t.fileIdCacheMu.Unlock()
 	v, ok := t.fileIdCache[key]
 	return v, ok
+}
+
+// KnownFileSize reports the size TorBox itself reports for a file, when it is already cached from
+// a resolve (no extra API call — returns ok=false rather than fetching). The player compares it to
+// the Content-Length the CDN actually serves: TorBox has been observed handing out a 200 + a
+// truncated file (12.3 MB of a 1.43 GB episode) for a torrent whose API entry still said
+// progress=1/cached=true, which played ~12s and then refused to seek. Implements
+// debrid.FileSizeKnower.
+func (t *TorBox) KnownFileSize(torrentID, fileID string) (int64, bool) {
+	if torrentID == "" || fileID == "" {
+		return 0, false
+	}
+	e, ok := t.loadFileId(torrentID + "|" + fileID)
+	if !ok || e.size <= 0 {
+		return 0, false
+	}
+	return e.size, true
 }
 
 func NewTorBox(logger *zerolog.Logger) debrid.Provider {
@@ -511,7 +537,7 @@ func (t *TorBox) GetTorrentStreamUrl(ctx context.Context, opts debrid.StreamTorr
 			if torrent.IsReady {
 				for _, f := range rawTorrent.Files {
 					if f.ShortName != "" {
-						t.storeFileId(opts.ID+"|"+f.ShortName, strconv.Itoa(f.ID))
+						t.storeFileId(opts.ID+"|"+f.ShortName, strconv.Itoa(f.ID), int64(f.Size))
 					}
 				}
 
@@ -587,22 +613,24 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 		cacheKey := opts.ID + "|" + opts.FileId
 		var fId string
 		if v, ok := t.loadFileId(cacheKey); ok {
-			fId = v
+			fId = v.id
 		} else {
 			torrent, err := t.getTorrent(opts.ID)
 			if err != nil {
 				return "", fmt.Errorf("torbox: Failed to get download URL: %w", err)
 			}
+			var fSize int64
 			for _, f := range torrent.Files {
 				if f.ShortName == opts.FileId {
 					fId = strconv.Itoa(f.ID)
+					fSize = int64(f.Size)
 					break
 				}
 			}
 			if fId == "" {
 				return "", fmt.Errorf("torbox: Failed to get download URL, file not found")
 			}
-			t.storeFileId(cacheKey, fId)
+			t.storeFileId(cacheKey, fId, fSize)
 		}
 		requestUrl = t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s&append_name=true", apiKey, opts.ID, fId)
 	}

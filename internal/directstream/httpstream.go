@@ -33,7 +33,10 @@ type httpBaseStream struct {
 	// through the per-token gate + chunked reader (see cdngate.go — TorBox throttles per-link).
 	// Other http streams (Nakama peers, plain URLs) are not per-link throttled, so they use the
 	// plain lazy reader and issue byte-exact ranges.
-	cdnGated            bool
+	cdnGated bool
+	// expectedSize is the size the debrid provider reports for this file (0 = unknown). The CDN's
+	// Content-Length is checked against it in loadPlaybackInfo.
+	expectedSize        int64
 	contentLength       int64
 	filepath            string
 	requestHeaders      http.Header
@@ -139,6 +142,17 @@ func (s *httpBaseStream) applyReqHeaders(dst http.Header) {
 
 func (s *httpBaseStream) applyHeadRespHeaders(dst http.Header) {
 	overrideHeaders(dst, s.headResponseHeaders)
+}
+
+// truncatedStreamErr reports a CDN serving fewer bytes than the provider says the file has.
+// served/expected <= 0 means "no opinion" (unknown size, or the length wasn't fetched) and never
+// trips, so this is inert for providers that can't report a size.
+func truncatedStreamErr(served, expected int64) error {
+	if expected <= 0 || served <= 0 || served == expected {
+		return nil
+	}
+	return fmt.Errorf("debrid CDN served a truncated file: %d of %d bytes (%.2f%%) — the torrent's cached copy is incomplete on the provider; re-add it or pick another release",
+		served, expected, float64(served)/float64(expected)*100)
 }
 
 func (s *httpBaseStream) newMetadataReader() (io.ReadSeekCloser, error) {
@@ -314,6 +328,25 @@ func (s *httpBaseStream) loadPlaybackInfo(streamType player.PlaybackType) (ret *
 		if contentType == "" {
 			err = fmt.Errorf("stream url returned no streamable content type (link likely dead or expired)")
 			s.logger.Error().Str("url", s.streamUrl).Msg("directstream(http): No streamable content type; aborting open (link likely dead/expired)")
+			s.playbackInfoErr = err
+			return
+		}
+
+		// A CDN can answer 200 with a TRUNCATED file: TorBox served 12,360,092 bytes of a
+		// 1,427,264,036-byte episode (0.87% ≈ 12s) for a torrent whose own API entry still said
+		// progress=1/cached=true — valid mkv magic, so the content-type gate above passes and the
+		// container's header still declares the full duration. That plays a few seconds and then
+		// silently refuses to seek (there is nothing past it). contentLength is already fetched by
+		// LoadContentType, so this costs nothing. Only trips when the provider told us the real
+		// size (expectedSize > 0); re-resolving does NOT help (the same torrent hands back the same
+		// rotten link), so fail loudly and name the truncation instead of playing a fragment.
+		if truncErr := truncatedStreamErr(s.contentLength, s.expectedSize); truncErr != nil {
+			err = truncErr
+			s.logger.Error().
+				Str("url", s.streamUrl).
+				Int64("served", s.contentLength).
+				Int64("expected", s.expectedSize).
+				Msg("directstream(http): CDN Content-Length disagrees with the provider's file size; aborting open (truncated/rotten cached copy)")
 			s.playbackInfoErr = err
 			return
 		}

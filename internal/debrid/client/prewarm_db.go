@@ -13,6 +13,8 @@ import (
 	"seanime/internal/events"
 	"seanime/internal/library/anime"
 	"seanime/internal/util"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -197,7 +199,9 @@ func (s *StreamManager) hydratePrewarmFromDB(ctx context.Context, opts *StartStr
 	urlResolvedAt := p.UrlResolvedAt
 	// Validate the link cheaply (CDN range probe — NOT a rate-limited API call). Re-resolve from the
 	// torrentItemId only if it's dead; drop the row if the torrent item itself is gone.
-	if !probeStreamURL(ctx, streamUrl, probeTimeout) {
+	// Size-check too: a truncated cached copy answers 200 and would otherwise hydrate as "alive".
+	// Dead -> the re-resolve below runs, same as an expired link.
+	if !probeStreamURLWithSize(ctx, streamUrl, probeTimeout, s.knownFileSizeFor(p.TorrentItemId, p.FileId)) {
 		fresh, rerr := s.reresolveURL(ctx, p.TorrentItemId, p.FileId)
 		if rerr != nil || fresh == "" {
 			_ = s.repository.db.DeleteDebridPrewarmByID(rec.ID)
@@ -254,6 +258,17 @@ func (s *StreamManager) reresolveURL(ctx context.Context, torrentItemId, fileId 
 // the CDN, not the rate-limited TorBox API, so it's cheap to use as a liveness check before reusing
 // a cached link (avoids the blind time-based re-resolve while the link is still valid).
 func probeStreamURL(ctx context.Context, url string, timeout time.Duration) bool {
+	return probeStreamURLWithSize(ctx, url, timeout, 0)
+}
+
+// probeStreamURLWithSize is probeStreamURL plus a size sanity-check. expectedSize <= 0 skips it
+// (identical behaviour to the plain probe). The Range: bytes=0-0 request already made here comes
+// back as a 206 carrying "Content-Range: bytes 0-0/<total>", so the file's real size is free —
+// no extra round-trip. A CDN can serve 200 + a TRUNCATED file (TorBox handed out 12,360,092 of
+// 1,427,264,036 bytes for a torrent still reporting cached=true), which the status check alone
+// calls ALIVE; the player then stops a few seconds in and can't seek. An HTML body is the other
+// shape of the same rot (a 159-byte openresty "404 Not Found" page).
+func probeStreamURLWithSize(ctx context.Context, url string, timeout time.Duration, expectedSize int64) bool {
 	if url == "" {
 		return false
 	}
@@ -271,6 +286,15 @@ func probeStreamURL(ctx context.Context, url string, timeout time.Duration) bool
 	defer resp.Body.Close()
 	_, _ = io.CopyN(io.Discard, resp.Body, 1)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// An error page dressed as a success — never a video.
+		if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(strings.ToLower(ct), "text/html") {
+			return false
+		}
+		if expectedSize > 0 {
+			if total, ok := parseContentRangeTotal(resp.Header.Get("Content-Range")); ok && total != expectedSize {
+				return false
+			}
+		}
 		return true
 	}
 	// A throttled (429) or transiently-erroring link is ALIVE, not dead — treating it as dead
@@ -281,6 +305,21 @@ func probeStreamURL(ctx context.Context, url string, timeout time.Duration) bool
 		return true
 	}
 	return false
+}
+
+// parseContentRangeTotal pulls <total> out of "bytes 0-0/<total>". Returns ok=false for a missing
+// header or the unknown-length form ("bytes 0-0/*"), so callers treat it as "no opinion" rather
+// than a mismatch.
+func parseContentRangeTotal(v string) (int64, bool) {
+	i := strings.LastIndex(v, "/")
+	if i < 0 {
+		return 0, false
+	}
+	total, err := strconv.ParseInt(strings.TrimSpace(v[i+1:]), 10, 64)
+	if err != nil || total <= 0 {
+		return 0, false
+	}
+	return total, true
 }
 
 // SweepExpiredPrewarms drops shared prewarm rows past their TTL. Cheap (small table); runs on the

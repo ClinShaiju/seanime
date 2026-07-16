@@ -96,12 +96,12 @@ type (
 	}
 
 	StartStreamOptions struct {
-		MediaId           int
-		EpisodeNumber     int                         // RELATIVE Episode number to identify the file
-		AniDBEpisode      string                      // Anizip episode
-		Torrent           *hibiketorrent.AnimeTorrent // Selected torrent
-		FileId            string                      // File ID or index
-		FileIndex         *int                        // Index of the file to stream (Manual selection)
+		MediaId       int
+		EpisodeNumber int                         // RELATIVE Episode number to identify the file
+		AniDBEpisode  string                      // Anizip episode
+		Torrent       *hibiketorrent.AnimeTorrent // Selected torrent
+		FileId        string                      // File ID or index
+		FileIndex     *int                        // Index of the file to stream (Manual selection)
 		// SharedTorrentItemId, when set (with AutoSelect=false), reuses an ALREADY-ADDED debrid
 		// torrent item instead of adding one: the stream skips AddTorrent and resolves its own
 		// fresh CDN link from this item id (cheap — no createtorrent). The watch-room join path
@@ -111,9 +111,9 @@ type (
 		// DirectCdnCapable is set by clients that can play a raw debrid CDN URL themselves
 		// (Denshi injects CORS headers in its main process; a plain web tab cannot). Combined
 		// with the DirectCdnPlayback setting + provider allowlist to decide direct mode.
-		DirectCdnCapable  bool
-		UserAgent         string
-		ClientId          string
+		DirectCdnCapable bool
+		UserAgent        string
+		ClientId         string
 		// UserID is the Seanime user who owns this stream; routes playback/events to
 		// their per-session modules so users stream independently. 0 = admin/global.
 		UserID            uint
@@ -368,6 +368,34 @@ func directCdnEligibleWith(settings *models.DebridSettings, opts *StartStreamOpt
 // the per-link connection gate, paced subtitle walk, and transient-429 retries.
 // ponytail: if a future allowlisted provider mints distinct links per request, do a real
 // second resolve here — the ClientStreamUrl plumbing downstream already supports it.
+// knownFileSizeFor is knownFileSize with the manager's provider resolved for it. Returns 0 (skip
+// the check) when there is no provider or it can't answer for free.
+func (s *StreamManager) knownFileSizeFor(torrentItemId, fileId string) int64 {
+	provider, err := s.repository.GetProvider()
+	if err != nil {
+		return 0
+	}
+	return knownFileSize(provider, torrentItemId, fileId)
+}
+
+// knownFileSize returns the size the provider reports for a file, or 0 when it can't answer for
+// free. Providers opt in via debrid.FileSizeKnower; it must never cost an API call, so a miss just
+// means the truncation check is skipped for this play (see httpBaseStream.expectedSize).
+func knownFileSize(provider debrid.Provider, torrentItemId, fileId string) int64 {
+	if provider == nil || torrentItemId == "" || fileId == "" {
+		return 0
+	}
+	k, ok := provider.(debrid.FileSizeKnower)
+	if !ok {
+		return 0
+	}
+	size, ok := k.KnownFileSize(torrentItemId, fileId)
+	if !ok {
+		return 0
+	}
+	return size
+}
+
 func (s *StreamManager) resolveClientCdnUrl(torrentItemId, fileId, serverUrl string) string {
 	return serverUrl
 }
@@ -436,8 +464,8 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 	streamStartedAt := time.Now()
 	var mediaInfoDur, selectionDur, addTorrentDur time.Duration
 
-	s.setPreviousStreamOptions(opts)                 // this user's last stream (for cancel)
-	s.repository.setPreviousStreamOptions(opts)      // last-active (host/plugin accessors)
+	s.setPreviousStreamOptions(opts)            // this user's last stream (for cancel)
+	s.repository.setPreviousStreamOptions(opts) // last-active (host/plugin accessors)
 
 	s.repository.logger.Info().
 		Str("user", s.repository.usernameFor(opts.UserID)).
@@ -957,6 +985,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 				Media:           media,
 				Torrent:         selectedTorrent,
 				FileId:          fileId,
+				ExpectedSize:    knownFileSize(provider, torrentItemId, fileId),
 				UserAgent:       opts.UserAgent,
 				ClientId:        opts.ClientId,
 				AutoSelect:      false,
@@ -1628,7 +1657,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 		}
 		// Refresh failed → the stale cached link is the only candidate; verify it before
 		// handing it to the player. Dead → cold fallback instead of a dead first frame.
-		if !refreshed && !probeStreamURL(ctx, streamUrl, prewarmProbeTimeoutPlay) {
+		if !refreshed && !probeStreamURLWithSize(ctx, streamUrl, prewarmProbeTimeoutPlay, s.knownFileSizeFor(torrentItemId, cached.fileId)) {
 			return dropDeadPreload()
 		}
 	}

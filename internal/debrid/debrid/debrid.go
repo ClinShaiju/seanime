@@ -126,3 +126,12 @@ func FilterVideoFiles(files []*TorrentItemFile) []*TorrentItemFile {
 	}
 	return filtered
 }
+
+// FileSizeKnower is an OPTIONAL provider capability: the size the provider itself reports for a
+// file, when the provider already knows it (i.e. free — implementations must NOT make an API call;
+// return ok=false instead). Used to sanity-check the Content-Length a CDN actually serves: a
+// truncated file still answers 200, so without this a partial download plays for a few seconds and
+// then refuses to seek. Providers that cannot answer cheaply simply don't implement it.
+type FileSizeKnower interface {
+	KnownFileSize(torrentID, fileID string) (int64, bool)
+}
