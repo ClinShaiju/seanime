@@ -45,6 +45,10 @@ type EpisodeCardProps = {
     length?: string | number | null
     imageClass?: string
     badge?: React.ReactNode
+    // availabilityBadge is rendered TOP-LEFT. Distinct from `badge` (top-right) on
+    // purpose: upstream and this fork independently picked the name `badge`, and one
+    // prop feeding both corners painted the same node twice.
+    availabilityBadge?: React.ReactNode
     isAdult?: boolean
     percentageComplete?: number
     minutesRemaining?: number
@@ -88,6 +92,7 @@ export function EpisodeCard(props: EpisodeCardProps) {
         length,
         imageClass,
         badge,
+        availabilityBadge,
         isAdult,
         percentageComplete,
         minutesRemaining,
@@ -269,6 +274,10 @@ export function EpisodeCard(props: EpisodeCardProps) {
 
                         {/*[CUSTOM UI] BOTTOM GRADIENT*/}
                         <EpisodeItemBottomGradient isSingleContainer={isSingleContainer} className="rounded-b-xl" />
+
+                        {!!availabilityBadge && <div className="absolute left-2 top-2 z-[3]">
+                            {availabilityBadge}
+                        </div>}
 
                         {isSingleContainer && (
                             <div className="absolute bottom-0 left-0 w-full h-fit z-[3] p-3">

@@ -29,7 +29,8 @@ const (
 )
 
 var (
-	ErrNoFileFound = fmt.Errorf("no file found")
+	ErrNoFileFound     = fmt.Errorf("no file found")
+	ErrNoTorrentsFound = fmt.Errorf("no torrents found")
 )
 
 type (
@@ -134,6 +135,8 @@ type statusRouting struct {
 func WithStatusRouting(ctx context.Context, userID uint, silent bool) context.Context {
 	return context.WithValue(ctx, statusRoutingKey, statusRouting{userID: userID, silent: silent})
 }
+
+const freshSearchKey contextKey = "autoselect-fresh-search"
 
 func (s *AutoSelect) updateStatus(status StreamAutoSelectStatusPayload) {
 	if s.onStatus != nil {

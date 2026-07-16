@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -38,6 +39,8 @@ type Stream interface {
 	ListEntryData() *anime.EntryListData
 	// EpisodeCollection returns the episode collection for the media of the current stream.
 	EpisodeCollection() *anime.EpisodeCollection
+	// GetBaseStream returns the BaseStream instance.
+	GetBaseStream() *BaseStream
 	// LoadPlaybackInfo loads and returns the playback info.
 	LoadPlaybackInfo() (*player.PlaybackInfo, error)
 	// GetAttachmentByName returns the attachment by name for the stream.
@@ -486,17 +489,18 @@ func (m *Manager) listenToPlayerEvents() {
 
 			m.playbackMu.Lock()
 			_, isTerminated := event.(*player.TerminatedEvent)
+			if isTerminated && key.PlaybackID != "" && key.PlaybackID == m.replacedPlaybackId &&
+				(m.replacedPlaybackClient == "" || key.ClientID == "" || key.ClientID == m.replacedPlaybackClient) {
+				m.playbackMu.Unlock()
+				m.Logger.Debug().Str("playbackId", key.PlaybackID).Msg("directstream: Ignoring termination event of replaced playback session during preparation")
+				continue
+			}
 			cs, ok := m.currentStream.Get()
 			if !ok {
 				var cancelFunc func()
 				shouldCancel := false
 				if isTerminated {
-					isReplacedSession := key.PlaybackID != "" && m.replacedPlaybackId != "" && key.PlaybackID == m.replacedPlaybackId
-					if !isReplacedSession {
-						cancelFunc, shouldCancel = m.cancelPreparationLocked(key.ClientID, true)
-					} else {
-						m.Logger.Debug().Str("playbackId", key.PlaybackID).Msg("directstream: Ignoring termination event of replaced playback session during preparation")
-					}
+					cancelFunc, shouldCancel = m.cancelPreparationLocked(key.ClientID, true)
 				}
 				m.playbackMu.Unlock()
 				if shouldCancel && cancelFunc != nil {
@@ -636,6 +640,9 @@ type BaseStream struct {
 	subtitleEventCache     *result.Map[string, *mkvparser.SubtitleEvent]
 	subtitleSendMu         sync.Mutex
 	subtitleLastSent       time.Time
+	subtitleLastSentGen    int64
+	subtitleGeneration     atomic.Int64
+	subtitleSeekMu         sync.Mutex
 	terminateOnce          sync.Once
 	serveContentCancelFunc context.CancelFunc
 	filename               string // Name of the file being streamed, if applicable
@@ -713,7 +720,7 @@ func (s *BaseStream) Terminate() {
 
 		// Cancel all active subtitle streams
 		s.activeSubtitleStreams.Range(func(_ string, s *SubtitleStream) bool {
-			s.Stop(s.completed)
+			s.Stop(s.completed.Load())
 			return true
 		})
 		s.activeSubtitleStreams.Clear()
@@ -734,6 +741,10 @@ func (s *BaseStream) StreamError(err error) {
 
 	s.manager.streamError(s.clientId, err, target)
 	s.manager.unloadStream(s)
+}
+
+func (s *BaseStream) GetBaseStream() *BaseStream {
+	return s
 }
 
 func (s *BaseStream) GetSubtitleEventCache() *result.Map[string, *mkvparser.SubtitleEvent] {

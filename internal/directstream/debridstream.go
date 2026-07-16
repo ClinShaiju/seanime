@@ -78,6 +78,7 @@ func (m *Manager) PlayDebridStream(ctx context.Context, filepath string, opts Pl
 		httpBaseStream: httpBaseStream{
 			streamUrl:       opts.StreamUrl,
 			clientStreamUrl: opts.ClientStreamUrl,
+			cdnGated:        true,
 			filepath:        filepath,
 			BaseStream: BaseStream{
 				manager:               m,

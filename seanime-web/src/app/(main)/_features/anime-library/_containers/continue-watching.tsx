@@ -3,6 +3,7 @@ import { getEpisodeMinutesRemaining, getEpisodePercentageComplete, useGetContinu
 import { usePlayNext } from "@/app/(main)/_atoms/playback.atoms"
 import { __libraryHeaderImageAtom } from "@/app/(main)/_features/anime-library/_components/library-header"
 import { EpisodeCard } from "@/app/(main)/_features/anime/_components/episode-card"
+import { EpisodeTorrentAvailabilityBadge } from "@/app/(main)/_features/anime/_components/episode-torrent-availability-badge"
 import { PrewarmBadge } from "@/app/(main)/_features/media/_components/media-entry-prewarm-badge"
 import { useSeaCommandInject } from "@/app/(main)/_features/sea-command/use-inject"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
@@ -243,6 +244,7 @@ const _EpisodeCard = React.memo(({ episode, mRef, overrideLink, spoilerActive, w
             progressTotal={episode.baseAnime?.episodes}
             progressNumber={episode.progressNumber}
             episodeNumber={episode.episodeNumber}
+            availabilityBadge={<EpisodeTorrentAvailabilityBadge status={episode.torrentAvailability} />}
             length={episode.episodeMetadata?.length}
             hasDiscrepancy={episode.episodeNumber !== episode.progressNumber}
             percentageComplete={getEpisodePercentageComplete(watchHistory, episode.baseAnime?.id || 0, episode.episodeNumber)}
@@ -280,4 +282,3 @@ const _EpisodeCard = React.memo(({ episode, mRef, overrideLink, spoilerActive, w
         />
     )
 })
-

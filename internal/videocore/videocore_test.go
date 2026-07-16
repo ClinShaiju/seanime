@@ -20,6 +20,7 @@ type recordedWSEvent struct {
 type recordingWSEventManager struct {
 	videoCoreSubscriber *events.ClientEventSubscriber
 	sent                []recordedWSEvent
+	clientIds           []string
 }
 
 func newRecordingWSEventManager() *recordingWSEventManager {
@@ -36,7 +37,7 @@ func (m *recordingWSEventManager) SendEventTo(clientId string, eventType string,
 	m.sent = append(m.sent, recordedWSEvent{clientId: clientId, eventType: eventType, payload: payload})
 }
 
-func (m *recordingWSEventManager) GetClientIds() []string { return nil }
+func (m *recordingWSEventManager) GetClientIds() []string { return m.clientIds }
 
 func (m *recordingWSEventManager) GetClientPlatform(string) string { return "" }
 
@@ -454,4 +455,112 @@ func TestVideoStatusRecoversAfterZeroDurationLoadedMetadata(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected recovered video status event")
 	}
+}
+
+// FORK DIVERGENCE (e6dbfaaf, #814): upstream v3.10.0 blocks a new client's video load while the
+// bound owner is still connected (its TestConnectedPlaybackOwnerBlocksAnotherClient). This fork
+// keeps "one player at a time": an explicit new video load ALWAYS takes over. Upstream's policy
+// would silently drop playback started on a second device of the same user — the "playback does
+// nothing, no error" class #814 fixed. VideoCore is per-user scoped here, so "another client" is
+// the same user's other device, not a stranger.
+func TestVideoLoadedTakesOverFromConnectedOwner(t *testing.T) {
+	logger := util.NewLogger()
+	ws := newRecordingWSEventManager()
+	ws.clientIds = []string{"owner-client", "new-client"}
+	vc := New(NewVideoCoreOptions{WsEventManager: ws, Logger: logger})
+	t.Cleanup(vc.Shutdown)
+
+	ownerState := newPlaybackState("owner-playback")
+	ownerState.ClientId = "owner-client"
+	vc.setPlaybackState(ownerState)
+
+	newState := newPlaybackState("new-playback")
+	newState.ClientId = "new-client"
+	ws.MockSendVideoCoreEvent(ClientEvent{
+		ClientId: "new-client",
+		Type:     PlayerEventVideoLoaded,
+		Payload:  mustMarshalRaw(t, clientVideoLoadedPayload{State: *newState}),
+	})
+
+	require.Eventually(t, func() bool {
+		state, ok := vc.GetPlaybackState()
+		return ok && state.ClientId == "new-client" && state.PlaybackInfo.Id == "new-playback"
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestVideoLoadedTakesOverFromDisconnectedOwner(t *testing.T) {
+	logger := util.NewLogger()
+	ws := newRecordingWSEventManager()
+	ws.clientIds = []string{"new-client"}
+	vc := New(NewVideoCoreOptions{WsEventManager: ws, Logger: logger})
+	t.Cleanup(vc.Shutdown)
+
+	ownerState := newPlaybackState("owner-playback")
+	ownerState.ClientId = "owner-client"
+	vc.setPlaybackState(ownerState)
+	vc.setPlaybackStatus(&PlaybackStatus{
+		Id:          "owner-playback",
+		ClientId:    "owner-client",
+		CurrentTime: 20,
+		Duration:    100,
+	})
+
+	newState := newPlaybackState("new-playback")
+	newState.ClientId = "new-client"
+	ws.MockSendVideoCoreEvent(ClientEvent{
+		ClientId: "new-client",
+		Type:     PlayerEventVideoLoaded,
+		Payload:  mustMarshalRaw(t, clientVideoLoadedPayload{State: *newState}),
+	})
+
+	require.Eventually(t, func() bool {
+		state, ok := vc.GetPlaybackState()
+		return ok && state.ClientId == "new-client" && state.PlaybackInfo.Id == "new-playback"
+	}, time.Second, 10*time.Millisecond)
+
+	vc.playbackStatusMu.RLock()
+	defer vc.playbackStatusMu.RUnlock()
+	require.Nil(t, vc.playbackStatus)
+}
+
+// FORK DIVERGENCE (e6dbfaaf, #814): upstream v3.10.0 drops non-load events from another client
+// even when the bound owner is gone (its TestNonLoadEventCannotClaimDisconnectedPlayback). This
+// fork rebinds to the live client instead: after a mid-playback ws drop the client reconnects
+// under a NEW client id, and dropping its progress/subtitle events strands them until the next
+// video load. Upstream's own TestVideoLoadedTakesOverFromDisconnectedOwner (kept, passing) only
+// covers the video-load path.
+func TestNonLoadEventRebindsDisconnectedPlayback(t *testing.T) {
+	logger := util.NewLogger()
+	ws := newRecordingWSEventManager()
+	ws.clientIds = []string{"new-client"}
+	vc := New(NewVideoCoreOptions{WsEventManager: ws, Logger: logger})
+	t.Cleanup(vc.Shutdown)
+
+	ownerState := newPlaybackState("owner-playback")
+	ownerState.ClientId = "owner-client"
+	vc.setPlaybackState(ownerState)
+	vc.setPlaybackStatus(&PlaybackStatus{
+		Id:          "owner-playback",
+		ClientId:    "owner-client",
+		CurrentTime: 20,
+		Duration:    100,
+	})
+
+	ws.MockSendVideoCoreEvent(ClientEvent{
+		ClientId: "new-client",
+		Type:     PlayerEventVideoStatus,
+		Payload: mustMarshalRaw(t, clientVideoStatusPayload{
+			CurrentTime: 80,
+			Duration:    100,
+		}),
+	})
+
+	require.Eventually(t, func() bool {
+		status, ok := vc.GetPlaybackStatus()
+		return ok && status.CurrentTime == 80
+	}, time.Second, 10*time.Millisecond)
+
+	state, ok := vc.GetPlaybackState()
+	require.True(t, ok)
+	require.Equal(t, "new-client", state.ClientId)
 }

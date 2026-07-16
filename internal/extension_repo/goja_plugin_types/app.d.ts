@@ -3351,6 +3351,8 @@ declare namespace $app {
          */
         metadataIssue?: string;
         baseAnime?: AL_BaseAnime;
+        torrentAvailability?: Anime_EpisodeTorrentAvailability;
+        isMissingGroup?: boolean;
         _isNakamaEpisode: boolean;
     }
 
@@ -3380,6 +3382,11 @@ declare namespace $app {
         hasImage?: boolean;
         title?: string;
     }
+
+    /**
+     * - Filepath: internal/library/anime/episode.go
+     */
+    export type Anime_EpisodeTorrentAvailability = "available" | "checking" | "waiting" | "unknown";
 
     /**
      * - Filepath: internal/library/anime/collection.go
@@ -3651,6 +3658,14 @@ declare namespace $app {
     /**
      * - Filepath: internal/api/anizip/anizip.go
      */
+    interface Anizip_Image {
+        coverType?: string;
+        url?: string;
+    }
+
+    /**
+     * - Filepath: internal/api/anizip/anizip.go
+     */
     interface Anizip_Mappings {
         animeplanet_id?: string;
         kitsu_id?: number;
@@ -3674,6 +3689,7 @@ declare namespace $app {
         episodes?: Record<string, Anizip_Episode>;
         episodeCount: number;
         specialCount: number;
+        images?: Array<Anizip_Image>;
         mappings?: Anizip_Mappings;
     }
 
@@ -3815,6 +3831,22 @@ declare namespace $app {
     interface DiscordRPC_Button {
         label?: string;
         url?: string;
+    }
+
+    /**
+     * - Filepath: internal/discordrpc/presence/presence.go
+     */
+    interface DiscordRPC_CustomActivity {
+        type?: number;
+        details: string;
+        state?: string;
+        largeImageKey?: string;
+        largeImageText?: string;
+        smallImageKey?: string;
+        smallImageText?: string;
+        buttons?: Array<DiscordRPC_Button>;
+        startTimestamp?: number;
+        endTimestamp?: number;
     }
 
     /**

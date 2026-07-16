@@ -171,6 +171,7 @@ jobs:
         run: |
           cd seanime-denshi
           npm ci
+          npm run build:main
           npm run sync:mpv-prism -- ${{ matrix.mpv_prism_target }}
           DIST_ARG=""
           if [ -n "${{ steps.custom-electron.outputs.dir }}" ]; then

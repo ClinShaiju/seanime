@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"seanime/internal/constants"
 	"seanime/internal/debrid/debrid"
 	"seanime/internal/util"
@@ -579,7 +580,7 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 		return "", fmt.Errorf("torbox: Failed to get download URL: %w", debrid.ErrNotAuthenticated)
 	}
 
-	url := t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&zip_link=true", apiKey, opts.ID)
+	requestUrl := t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&zip_link=true&append_name=true", apiKey, opts.ID)
 	if opts.FileId != "" {
 		// Map the short-name FileId -> numeric TorBox file id. Cache it so repeat resolves of the
 		// same torrent+file (URL refresh, replays, cross-consumer reuse) skip this extra mylist call.
@@ -603,7 +604,7 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 			}
 			t.storeFileId(cacheKey, fId)
 		}
-		url = t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s", apiKey, opts.ID, fId)
+		requestUrl = t.baseUrl + fmt.Sprintf("/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s&append_name=true", apiKey, opts.ID, fId)
 	}
 
 	// Pace requestdl (see requestdlLimiter) — waiting a few seconds beats a 429 + backoff cycle.
@@ -611,7 +612,7 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 		_ = t.requestdlLimiter.Wait(context.Background())
 	}
 
-	resp, err := t.doQuery("GET", url, nil, "application/json")
+	resp, err := t.doQuery("GET", requestUrl, nil, "application/json")
 	if err != nil {
 		return "", fmt.Errorf("torbox: Failed to get download URL: %w", err)
 	}
@@ -623,10 +624,33 @@ func (t *TorBox) GetTorrentDownloadUrl(opts debrid.DownloadTorrentOptions) (down
 	if err != nil {
 		return "", fmt.Errorf("torbox: Failed to get download URL: %w", err)
 	}
+	d, err = normalizeDownloadUrl(d)
+	if err != nil {
+		return "", fmt.Errorf("torbox: Failed to get download URL: %w", err)
+	}
 
 	t.logger.Debug().Str("downloadUrl", d).Msg("torbox: Download link retrieved")
 
 	return d, nil
+}
+
+func normalizeDownloadUrl(downloadUrl string) (string, error) {
+	parsedUrl, err := url.Parse(downloadUrl)
+	if err != nil {
+		return "", err
+	}
+
+	query := strings.Split(parsedUrl.RawQuery, "&")
+	for idx, part := range query {
+		key, value, ok := strings.Cut(part, "=")
+		if !ok || key != "filename" {
+			continue
+		}
+		query[idx] = key + "=" + strings.ReplaceAll(value, " ", "%20")
+	}
+	parsedUrl.RawQuery = strings.Join(query, "&")
+
+	return parsedUrl.String(), nil
 }
 
 func (t *TorBox) GetTorrent(id string) (ret *debrid.TorrentItem, err error) {

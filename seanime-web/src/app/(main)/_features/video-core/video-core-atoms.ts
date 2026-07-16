@@ -63,10 +63,14 @@ export const vc_lastKnownProgress = atom<{ mediaId: number, progressNumber: numb
 // be scoped too and the bridge would break.
 export const vc_globalVideoElement = atom<HTMLVideoElement | null>(null)
 export const vc_globalLastProgress = atom<{ mediaId: number, progressNumber: number, time: number } | null>(null)
-export const vc_skipOpeningTime = atom<number | null>(null)
-export const vc_skipEndingTime = atom<number | null>(null)
 
 export const vc_globalMiniPlayerAtom = atom(false)
+
+export const vc_skipChapter = atom<{
+    end: number
+    label: string
+    side: "left" | "right"
+} | null>(null)
 
 // PlayerSyncControl: a player-agnostic surface that watch-room sync reads instead of a raw
 // HTMLVideoElement. Both the VideoCore DOM bridge and the MpvCore native player populate it.

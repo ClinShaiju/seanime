@@ -17,6 +17,9 @@ export function useGetLibraryCollection({ enabled }: { enabled?: boolean } = { e
         queryKey: [API_ENDPOINTS.ANIME_COLLECTION.GetLibraryCollection.key],
         enabled: enabled,
         placeholderData,
+        refetchInterval: query => query.state.data?.stream?.continueWatchingList?.some(episode => episode.torrentAvailability === "checking")
+            ? 1_000
+            : false,
     })
     useQuerySnapshot("library-collection", query)
     return query

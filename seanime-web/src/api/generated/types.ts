@@ -1592,6 +1592,8 @@ export type Anime_Episode = {
      */
     metadataIssue?: string
     baseAnime?: AL_BaseAnime
+    torrentAvailability?: Anime_EpisodeTorrentAvailability
+    isMissingGroup?: boolean
     _isNakamaEpisode: boolean
 }
 
@@ -1625,6 +1627,13 @@ export type Anime_EpisodeMetadata = {
     hasImage?: boolean
     title?: string
 }
+
+/**
+ * - Filepath: internal/library/anime/episode.go
+ * - Filename: episode.go
+ * - Package: anime
+ */
+export type Anime_EpisodeTorrentAvailability = "available" | "checking" | "waiting" | "unknown"
 
 /**
  * - Filepath: internal/library/anime/franchise.go
@@ -1970,6 +1979,21 @@ export type Anime_UpcomingEpisodes = {
  * - Package: anime
  */
 export type Anime_WatchType = "localfile" | "debrid" | "torrent" | "nakama" | "online"
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Anizip
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * - Filepath: internal/api/anizip/anizip_helper.go
+ * - Filename: anizip_helper.go
+ * - Package: anizip
+ */
+export type Anizip_Artwork = {
+    fanart?: string
+    logo?: string
+    title?: string
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Autodownloader
@@ -3488,6 +3512,16 @@ export type Manga_EntryListData = {
 }
 
 /**
+ * - Filepath: internal/manga/preferences.go
+ * - Filename: preferences.go
+ * - Package: manga
+ */
+export type Manga_MangaEntryPreference = {
+    provider: string
+    filters?: Record<string, Manga_MangaProviderFilter>
+}
+
+/**
  * - Filepath: internal/manga/chapter_container.go
  * - Filename: chapter_container.go
  * - Package: manga
@@ -3497,6 +3531,114 @@ export type Manga_MangaLatestChapterNumberItem = {
     scanlator: string
     language: string
     number: number
+}
+
+/**
+ * - Filepath: internal/manga/preferences.go
+ * - Filename: preferences.go
+ * - Package: manga
+ */
+export type Manga_MangaPreferences = {
+    entries?: Record<number, Manga_MangaEntryPreference>
+}
+
+/**
+ * - Filepath: internal/manga/preferences.go
+ * - Filename: preferences.go
+ * - Package: manga
+ */
+export type Manga_MangaProviderFilter = {
+    scanlators?: Array<string>
+    language: string
+}
+
+/**
+ * - Filepath: internal/manga/source_refresh.go
+ * - Filename: source_refresh.go
+ * - Package: manga
+ */
+export type Manga_MangaSourceRefreshChange = {
+    mediaId: number
+    title: string
+    fromProvider: string
+    toProvider: string
+    kind: string
+}
+
+/**
+ * - Filepath: internal/manga/source_refresh.go
+ * - Filename: source_refresh.go
+ * - Package: manga
+ */
+export type Manga_MangaSourceRefreshIssue = {
+    mediaId: number
+    title: string
+    kind: string
+    providers?: Array<string>
+}
+
+/**
+ * - Filepath: internal/manga/source_refresh.go
+ * - Filename: source_refresh.go
+ * - Package: manga
+ */
+export type Manga_MangaSourceRefreshJob = {
+    id: string
+    mode: Manga_MangaSourceRefreshMode
+    status: Manga_MangaSourceRefreshStatus
+    stage: Manga_MangaSourceRefreshStage
+    current: number
+    total: number
+    result: Manga_MangaSourceRefreshResult
+    error?: string
+}
+
+/**
+ * - Filepath: internal/manga/source_refresh.go
+ * - Filename: source_refresh.go
+ * - Package: manga
+ */
+export type Manga_MangaSourceRefreshMode = "refresh_selected" | "find_missing" | "refresh_and_find" | "reevaluate_all"
+
+/**
+ * - Filepath: internal/manga/source_refresh.go
+ * - Filename: source_refresh.go
+ * - Package: manga
+ */
+export type Manga_MangaSourceRefreshResult = {
+    refreshed: number
+    found: number
+    replaced: number
+    notFound: number
+    failed: number
+    changes?: Array<Manga_MangaSourceRefreshChange>
+    issues?: Array<Manga_MangaSourceRefreshIssue>
+}
+
+/**
+ * - Filepath: internal/manga/source_refresh.go
+ * - Filename: source_refresh.go
+ * - Package: manga
+ */
+export type Manga_MangaSourceRefreshStage = "refreshing" | "discovering" | "done"
+
+/**
+ * - Filepath: internal/manga/source_refresh.go
+ * - Filename: source_refresh.go
+ * - Package: manga
+ */
+export type Manga_MangaSourceRefreshStatus = "running" | "stopping" | "completed" | "cancelled" | "failed"
+
+/**
+ * - Filepath: internal/manga/chapter_container_mapping.go
+ * - Filename: chapter_container_mapping.go
+ * - Package: manga
+ */
+export type Manga_MappingPreview = {
+    chapterCount: number
+    latest: string
+    languages?: Array<string>
+    scanlators?: Array<string>
 }
 
 /**
@@ -3760,6 +3902,22 @@ export type MKVParser_ContentEncoding = {
  */
 export type MKVParser_ContentEncodings = {
     ContentEncoding?: Array<MKVParser_ContentEncoding>
+}
+
+/**
+ * - Filepath: internal/mkvparser/metadata.go
+ * - Filename: metadata.go
+ * - Package: mkvparser
+ */
+export type MKVParser_CueInfo = {
+    /**
+     * Time in nanoseconds
+     */
+    Time: number
+    /**
+     * Absolute byte position of the cluster
+     */
+    Position: number
 }
 
 /**
@@ -4105,6 +4263,7 @@ export type Models_LibrarySettings = {
      * "", "library", "torrentstream", "debridstream", "onlinestream", "ext:[extensionId]"
      */
     defaultPlaybackSource: string
+    showTorrentAvailability: boolean
     groupSeasons: boolean
     hideFranchiseSpinoffs: boolean
     hideFranchiseRecaps: boolean
@@ -4983,6 +5142,18 @@ export type NativePlayer_ServerEvent = "open-and-await" |
 export type NativePlayer_StreamType = "torrent" | "localfile" | "debrid" | "url" | "nakama"
 
 /**
+ * - Filepath: internal/nativeplayer/events.go
+ * - Filename: events.go
+ * - Package: nativeplayer
+ */
+export type NativePlayer_SubtitleEventsPayload = {
+    events?: Array<MKVParser_SubtitleEvent>
+    playbackId: string
+    generationId: number
+    seekTime: number
+}
+
+/**
  * - Filepath: internal/nativeplayer/nativeplayer.go
  * - Filename: nativeplayer.go
  * - Package: nativeplayer
@@ -5056,6 +5227,7 @@ export type Onlinestream_MappingResponse = {
 export type Onlinestream_Subtitle = {
     url: string
     language: string
+    isDefault: boolean
 }
 
 /**

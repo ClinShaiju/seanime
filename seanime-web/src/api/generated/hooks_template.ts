@@ -1517,6 +1517,68 @@
 // manga
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// export function useGetMangaPreferences() {
+//     return useServerQuery<Manga_MangaPreferences>({
+//         endpoint: API_ENDPOINTS.MANGA.GetMangaPreferences.endpoint,
+//         method: API_ENDPOINTS.MANGA.GetMangaPreferences.methods[0],
+//         queryKey: [API_ENDPOINTS.MANGA.GetMangaPreferences.key],
+//         enabled: true,
+//     })
+// }
+
+// export function useImportMangaPreferences() {
+//     return useServerMutation<Manga_MangaPreferences>({
+//         endpoint: API_ENDPOINTS.MANGA.ImportMangaPreferences.endpoint,
+//         method: API_ENDPOINTS.MANGA.ImportMangaPreferences.methods[0],
+//         mutationKey: [API_ENDPOINTS.MANGA.ImportMangaPreferences.key],
+//         onSuccess: async () => {
+//
+//         },
+//     })
+// }
+
+// export function usePatchMangaPreference() {
+//     return useServerMutation<Manga_MangaEntryPreference>({
+//         endpoint: API_ENDPOINTS.MANGA.PatchMangaPreference.endpoint,
+//         method: API_ENDPOINTS.MANGA.PatchMangaPreference.methods[0],
+//         mutationKey: [API_ENDPOINTS.MANGA.PatchMangaPreference.key],
+//         onSuccess: async () => {
+//
+//         },
+//     })
+// }
+
+// export function useStartMangaSourceRefresh() {
+//     return useServerMutation<Manga_MangaSourceRefreshJob, StartMangaSourceRefresh_Variables>({
+//         endpoint: API_ENDPOINTS.MANGA.StartMangaSourceRefresh.endpoint,
+//         method: API_ENDPOINTS.MANGA.StartMangaSourceRefresh.methods[0],
+//         mutationKey: [API_ENDPOINTS.MANGA.StartMangaSourceRefresh.key],
+//         onSuccess: async () => {
+//
+//         },
+//     })
+// }
+
+// export function useGetMangaSourceRefresh() {
+//     return useServerQuery<Manga_MangaSourceRefreshJob>({
+//         endpoint: API_ENDPOINTS.MANGA.GetMangaSourceRefresh.endpoint,
+//         method: API_ENDPOINTS.MANGA.GetMangaSourceRefresh.methods[0],
+//         queryKey: [API_ENDPOINTS.MANGA.GetMangaSourceRefresh.key],
+//         enabled: true,
+//     })
+// }
+
+// export function useStopMangaSourceRefresh() {
+//     return useServerMutation<Manga_MangaSourceRefreshJob>({
+//         endpoint: API_ENDPOINTS.MANGA.StopMangaSourceRefresh.endpoint,
+//         method: API_ENDPOINTS.MANGA.StopMangaSourceRefresh.methods[0],
+//         mutationKey: [API_ENDPOINTS.MANGA.StopMangaSourceRefresh.key],
+//         onSuccess: async () => {
+//
+//         },
+//     })
+// }
+
 // export function useGetAnilistMangaCollection() {
 //     return useServerQuery<AL_MangaCollection, GetAnilistMangaCollection_Variables>({
 //         endpoint: API_ENDPOINTS.MANGA.GetAnilistMangaCollection.endpoint,
@@ -1671,6 +1733,17 @@
 //         endpoint: API_ENDPOINTS.MANGA.MangaManualSearch.endpoint,
 //         method: API_ENDPOINTS.MANGA.MangaManualSearch.methods[0],
 //         mutationKey: [API_ENDPOINTS.MANGA.MangaManualSearch.key],
+//         onSuccess: async () => {
+//
+//         },
+//     })
+// }
+
+// export function usePreviewMangaMapping() {
+//     return useServerMutation<Manga_MappingPreview, PreviewMangaMapping_Variables>({
+//         endpoint: API_ENDPOINTS.MANGA.PreviewMangaMapping.endpoint,
+//         method: API_ENDPOINTS.MANGA.PreviewMangaMapping.methods[0],
+//         mutationKey: [API_ENDPOINTS.MANGA.PreviewMangaMapping.key],
 //         onSuccess: async () => {
 //
 //         },
@@ -1968,6 +2041,15 @@
 //         onSuccess: async () => {
 //
 //         },
+//     })
+// }
+
+// export function useGetAnizipArtwork(id: number) {
+//     return useServerQuery<Anizip_Artwork>({
+//         endpoint: API_ENDPOINTS.METADATA.GetAnizipArtwork.endpoint.replace("{id}", String(id)),
+//         method: API_ENDPOINTS.METADATA.GetAnizipArtwork.methods[0],
+//         queryKey: [API_ENDPOINTS.METADATA.GetAnizipArtwork.key],
+//         enabled: true,
 //     })
 // }
 

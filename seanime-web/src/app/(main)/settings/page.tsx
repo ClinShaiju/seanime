@@ -31,6 +31,7 @@ import { UsersSettings } from "@/app/(main)/settings/_containers/users-settings"
 import { PageWrapper } from "@/components/shared/page-wrapper"
 import { SeaLink } from "@/components/shared/sea-link"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { cn } from "@/components/ui/core/styling"
@@ -396,6 +397,7 @@ export default function Page() {
                                         groupSeasons: data.groupSeasons ?? false,
                                         hideFranchiseSpinoffs: data.hideFranchiseSpinoffs ?? false,
                                         hideFranchiseRecaps: data.hideFranchiseRecaps ?? false,
+                                        showTorrentAvailability: data.showTorrentAvailability ?? false,
                                     },
                                     nakama: {
                                         enabled: data.nakamaEnabled ?? false,
@@ -621,10 +623,14 @@ export default function Page() {
                                 hideAnimeSpoilerTitles: status?.themeSettings?.hideAnimeSpoilerTitles ?? THEME_DEFAULT_VALUES.hideAnimeSpoilerTitles,
                                 hideAnimeSpoilerDescriptions: status?.themeSettings?.hideAnimeSpoilerDescriptions ?? THEME_DEFAULT_VALUES.hideAnimeSpoilerDescriptions,
                                 hideAnimeSpoilerSkipNextEpisode: status?.themeSettings?.hideAnimeSpoilerSkipNextEpisode ?? THEME_DEFAULT_VALUES.hideAnimeSpoilerSkipNextEpisode,
+                                showTorrentAvailability: status?.settings?.library?.showTorrentAvailability ?? false,
                             }}
                             stackClass="space-y-0 relative"
                         >
                             {(f) => {
+                                const selectedTorrentProvider = torrentProviderExtensions?.find(ext => ext.id === f.watch("torrentProvider"))
+                                const torrentProviderMissing = !!torrentProviderExtensions && !selectedTorrentProvider
+
                                 return <>
                                     <SettingsIsDirty />
                                     <TabsContent value="seanime" className={tabContentClass}>
@@ -794,6 +800,18 @@ export default function Page() {
                                                     { label: "None", value: TORRENT_PROVIDER.NONE },
                                                 ]}
                                             />
+                                            <Field.Switch
+                                                data-settings-show-torrent-availability
+                                                side="right"
+                                                name="showTorrentAvailability"
+                                                label="Show torrent availability on recent episodes"
+                                                help="Adds a badge to recent episodes missing from your library, and to Continue Watching when using torrent or Debrid streaming."
+                                                disabled={torrentProviderMissing}
+                                            />
+                                            {torrentProviderMissing && <Alert
+                                                intent="warning"
+                                                description="Choose a torrent provider to check episode availability."
+                                            />}
                                         </SettingsCard>
 
 

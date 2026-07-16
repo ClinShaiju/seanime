@@ -75,6 +75,14 @@ type (
 )
 
 func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (ret *SearchData, retErr error) {
+	return r.searchAnime(ctx, opts, false)
+}
+
+func (r *Repository) SearchAnimeFresh(ctx context.Context, opts AnimeSearchOptions) (ret *SearchData, retErr error) {
+	return r.searchAnime(ctx, opts, true)
+}
+
+func (r *Repository) searchAnime(ctx context.Context, opts AnimeSearchOptions, skipCache bool) (ret *SearchData, retErr error) {
 	defer util.HandlePanicInModuleWithError("torrents/torrent/SearchAnime", &retErr)
 
 	requestedEvent := &TorrentSearchRequestedEvent{Options: opts}
@@ -157,7 +165,7 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 	}
 
 	var cacheHit bool
-	if searchCacheKey != "" {
+	if searchCacheKey != "" && !skipCache {
 		cache := getAnimeSearchCache(r.animeProviderSearchCaches.Load(), providerCacheKey)
 		ret, cacheHit = cache.Get(searchCacheKey)
 	}
@@ -173,7 +181,7 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 
 			ret = new(*ret)
 			ret.Previews = previews
-			if searchCacheKey != "" {
+			if searchCacheKey != "" && !skipCache {
 				cache := getAnimeSearchCache(r.animeProviderSearchCaches.Load(), providerCacheKey)
 				cache.Set(searchCacheKey, ret)
 			}
@@ -394,7 +402,7 @@ func (r *Repository) SearchAnime(ctx context.Context, opts AnimeSearchOptions) (
 		sortSearchData(ret)
 	}
 
-	if searchCacheKey != "" {
+	if searchCacheKey != "" && !skipCache {
 		cache := getAnimeSearchCache(r.animeProviderSearchCaches.Load(), providerCacheKey)
 		cache.Set(searchCacheKey, ret)
 	}

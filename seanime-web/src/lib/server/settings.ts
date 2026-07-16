@@ -136,6 +136,7 @@ export const settingsSchema = z.object({
     groupSeasons: z.boolean().optional().default(false),
     hideFranchiseSpinoffs: z.boolean().optional().default(false),
     hideFranchiseRecaps: z.boolean().optional().default(false),
+    showTorrentAvailability: z.boolean().optional().default(false),
     hideAnimeSpoilers: z.boolean().optional().default(false),
     hideAnimeSpoilerThumbnails: z.boolean().optional().default(true),
     hideAnimeSpoilerTitles: z.boolean().optional().default(true),
@@ -178,6 +179,7 @@ export const getDefaultSettings = (data: z.infer<typeof gettingStartedSchema>): 
         groupSeasons: false,
         hideFranchiseSpinoffs: false,
         hideFranchiseRecaps: false,
+        showTorrentAvailability: false,
     },
     nakama: {
         enabled: false,

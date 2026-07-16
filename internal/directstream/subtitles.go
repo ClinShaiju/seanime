@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,16 +29,23 @@ type SubtitleStream struct {
 	parser    *mkvparser.MetadataParser
 	reader    io.ReadSeekCloser
 	offset    int64
-	completed bool // ran until the EOF
+	request   subtitleRequest
+	completed atomic.Bool // ran until the EOF
 
 	cleanupFunc func()
 	onStop      func()
 	stopOnce    sync.Once
 }
 
+type subtitleRequest struct {
+	playbackID string
+	generation int64
+	seekTime   float64
+}
+
 const (
-	defaultSubtitleBackoffBytes    int64 = 1024 * 1024
-	subtitleStreamDedupWindowBytes       = 1024 * 1024
+	subtitleBackoffBytes   int64 = 1024 * 1024
+	streamDedupWindowBytes       = 1024 * 1024
 )
 
 type subtitleFlushConfig struct {
@@ -87,6 +95,16 @@ func subtitleFlushConfigFor(streamType player.PlaybackType, offset int64) subtit
 		}
 	}
 
+	if streamType == player.PlaybackTypeDebrid || streamType == player.PlaybackTypeURL || streamType == player.PlaybackTypeNakama {
+		if offset > 0 {
+			config = subtitleFlushConfig{
+				flushInterval:       10 * time.Millisecond,
+				maxBatchSize:        1000,
+				sleepAfterFullBatch: 0 * time.Millisecond,
+			}
+		}
+	}
+
 	return config
 }
 
@@ -127,9 +145,12 @@ func (s *BaseStream) shouldSendSubtitleEvent(event *mkvparser.SubtitleEvent) boo
 	return !loaded
 }
 
-func (s *BaseStream) sendSubtitleEvents(ctx context.Context, stream Stream, events []*mkvparser.SubtitleEvent, config subtitleFlushConfig) bool {
+func (s *BaseStream) sendSubtitleEvents(ctx context.Context, stream Stream, events []*mkvparser.SubtitleEvent, config subtitleFlushConfig, request subtitleRequest) bool {
 	if len(events) == 0 {
 		return true
+	}
+	if ctx.Err() != nil || request.generation != s.subtitleGeneration.Load() {
+		return false
 	}
 
 	s.manager.playbackMu.Lock()
@@ -140,17 +161,24 @@ func (s *BaseStream) sendSubtitleEvents(ctx context.Context, stream Stream, even
 		return true
 	}
 
-	if config.minSendInterval <= 0 {
-		s.manager.nativePlayer.SubtitleEvents(stream.ClientId(), events)
-		return true
-	}
-
 	s.subtitleSendMu.Lock()
 	defer s.subtitleSendMu.Unlock()
-	if !s.waitForSubtitleSend(ctx, config.minSendInterval) {
+
+	if ctx.Err() != nil || request.generation != s.subtitleGeneration.Load() {
 		return false
 	}
-	s.manager.nativePlayer.SubtitleEvents(stream.ClientId(), events)
+
+	if !s.subtitleLastSent.IsZero() && s.subtitleLastSentGen == request.generation && config.minSendInterval > 0 {
+		if !s.waitForSubtitleSend(ctx, config.minSendInterval) {
+			return false
+		}
+		if request.generation != s.subtitleGeneration.Load() {
+			return false
+		}
+	}
+
+	s.manager.nativePlayer.SubtitleEventsWithGen(stream.ClientId(), events, request.playbackID, request.generation, request.seekTime)
+	s.subtitleLastSentGen = request.generation
 	s.subtitleLastSent = time.Now()
 	return true
 }
@@ -181,6 +209,33 @@ func subtitleOffsetForTime(playbackInfo *player.PlaybackInfo, currentTime float6
 		return 0
 	}
 
+	// Try to seek using Matroska cues if available
+	if playbackInfo.MkvMetadata != nil && len(playbackInfo.MkvMetadata.Cues) > 0 {
+		preroll := 10.0 // 10 seconds default for text formats
+		for _, track := range playbackInfo.MkvMetadata.SubtitleTracks {
+			if track.CodecID == "S_HDMV/PGS" {
+				preroll = 30.0 // 30 seconds for PGS
+				break
+			}
+		}
+
+		targetTimeNs := uint64(math.Max(currentTime-preroll, 0) * 1e9)
+		i := sort.Search(len(playbackInfo.MkvMetadata.Cues), func(i int) bool {
+			return playbackInfo.MkvMetadata.Cues[i].Time >= targetTimeNs
+		})
+
+		if i > 0 && (i == len(playbackInfo.MkvMetadata.Cues) || playbackInfo.MkvMetadata.Cues[i].Time > targetTimeNs) {
+			i--
+		}
+
+		if i >= len(playbackInfo.MkvMetadata.Cues) {
+			i = len(playbackInfo.MkvMetadata.Cues) - 1
+		}
+
+		cue := playbackInfo.MkvMetadata.Cues[i]
+		return int64(cue.Position)
+	}
+
 	effectiveDuration := duration
 	if effectiveDuration <= 0 && playbackInfo.MkvMetadata != nil {
 		effectiveDuration = playbackInfo.MkvMetadata.Duration
@@ -196,7 +251,7 @@ func subtitleOffsetForTime(playbackInfo *player.PlaybackInfo, currentTime float6
 	progress = min(max(progress, 0), 1)
 
 	offset := int64(progress * float64(playbackInfo.ContentLength))
-	maxOffset := max(playbackInfo.ContentLength-defaultSubtitleBackoffBytes, 0)
+	maxOffset := max(playbackInfo.ContentLength-subtitleBackoffBytes, 0)
 	return min(max(offset, 0), maxOffset)
 }
 
@@ -217,6 +272,9 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player
 
 	offset := subtitleOffsetForTime(playbackInfo, currentTime, duration)
 
+	baseStream := stream.GetBaseStream()
+	request := baseStream.beginSubtitleSeek(currentTime)
+
 	switch s := stream.(type) {
 	case *LocalFileStream:
 		reader, err := s.newReader()
@@ -224,17 +282,17 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
+		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
 	case *TorrentStream:
 		reader := s.newSubtitleReader()
-		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
+		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
 	case *UrlStream:
 		reader, err := s.newMetadataReader()
 		if err != nil {
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
+		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
 	case *DebridStream:
 		// Direct CDN mode reads the server link via a gated chunked reader (the proxy never
 		// fills the FileStream cache); proxy mode keeps the FileStream reader.
@@ -243,14 +301,14 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
+		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
 	case *Nakama:
 		reader, err := s.newMetadataReader()
 		if err != nil {
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.StartSubtitleStream(s, m.PlaybackCtx(), reader, offset)
+		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
 	}
 }
 
@@ -285,7 +343,7 @@ func newSubtitleReaderForStream(stream Stream) (io.ReadSeekCloser, error) {
 // video, so momentary throttling past the reader's own retry budget shouldn't strand the
 // rest of the episode without subtitles. Resumes from the last delivered cluster instead of
 // re-walking, waits out a cooldown first, and is rate-limited per stream.
-func (s *BaseStream) maybeRetrySubtitleStream(stream Stream, playbackCtx context.Context, cause error, offset int64, resumePos int64) {
+func (s *BaseStream) maybeRetrySubtitleStream(stream Stream, playbackCtx context.Context, cause error, offset int64, resumePos int64, request subtitleRequest) {
 	if !httputil.IsTransientStatusError(cause) || playbackCtx == nil || playbackCtx.Err() != nil {
 		return
 	}
@@ -312,14 +370,34 @@ func (s *BaseStream) maybeRetrySubtitleStream(stream Stream, playbackCtx context
 			return
 		}
 		s.logger.Info().Int64("offset", retryOffset).Msg("directstream: Retrying subtitle stream after transient CDN error")
-		s.StartSubtitleStream(stream, playbackCtx, reader, retryOffset)
+		s.startSubtitleStream(stream, playbackCtx, reader, retryOffset, request)
 	}()
+}
+
+func (s *BaseStream) beginSubtitleSeek(seekTime float64) subtitleRequest {
+	s.subtitleSeekMu.Lock()
+	defer s.subtitleSeekMu.Unlock()
+
+	request := subtitleRequest{
+		generation: s.subtitleGeneration.Add(1),
+		seekTime:   seekTime,
+	}
+	if s.playbackInfo != nil {
+		request.playbackID = s.playbackInfo.ID
+	}
+
+	s.activeSubtitleStreams.Range(func(_ string, value *SubtitleStream) bool {
+		value.Stop(false)
+		return true
+	})
+
+	return request
 }
 
 func (s *SubtitleStream) Stop(completed bool) {
 	s.stopOnce.Do(func() {
 		s.logger.Debug().Int64("offset", s.offset).Msg("directstream: Stopping subtitle stream")
-		s.completed = completed
+		s.completed.Store(completed)
 		if s.onStop != nil {
 			s.onStop()
 		}
@@ -330,6 +408,18 @@ func (s *SubtitleStream) Stop(completed bool) {
 }
 
 // StartSubtitleStreamP starts a subtitle stream for the given stream at the given offset with a specified backoff bytes.
+// currentSubtitleRequest tags a walk started outside a seek (initial load, proxy-mode range
+// kick, transient-429 retry) with the CURRENT generation, so it is dropped only if a NEWER
+// seek lands while it is in flight. A zero-valued request would be discarded outright once
+// any seek has happened.
+func (s *BaseStream) currentSubtitleRequest() subtitleRequest {
+	request := subtitleRequest{generation: s.subtitleGeneration.Load()}
+	if s.playbackInfo != nil {
+		request.playbackID = s.playbackInfo.ID
+	}
+	return request
+}
+
 func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Context, newReader io.ReadSeekCloser, offset int64, backoffBytes int64) {
 	// playbackCtx can be niled by a concurrent stream release/switch (releaseCurrentStreamLocked
 	// sets manager.playbackCtx = nil) while an in-flight range handler or a seek event is still
@@ -342,8 +432,32 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 		}
 		return
 	}
+	s.startSubtitleStreamP(stream, playbackCtx, newReader, offset, backoffBytes, s.currentSubtitleRequest())
+}
+
+func (s *BaseStream) startSubtitleStreamP(stream Stream, playbackCtx context.Context, newReader io.ReadSeekCloser, offset int64, backoffBytes int64, request subtitleRequest) {
+	// Same nil-ctx guard as the exported wrapper: the retry path and the proxy-mode
+	// range kick reach this directly.
+	if playbackCtx == nil {
+		if newReader != nil {
+			_ = newReader.Close()
+		}
+		return
+	}
+	if request.generation != s.subtitleGeneration.Load() {
+		_ = newReader.Close()
+		return
+	}
+
 	mkvMetadataParser, ok := s.playbackInfo.MkvMetadataParser.Get()
 	if !ok {
+		_ = newReader.Close()
+		return
+	}
+
+	s.subtitleSeekMu.Lock()
+	if request.generation != s.subtitleGeneration.Load() {
+		s.subtitleSeekMu.Unlock()
 		_ = newReader.Close()
 		return
 	}
@@ -352,7 +466,10 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 	shouldContinue := true
 	skipReason := ""
 	s.activeSubtitleStreams.Range(func(key string, value *SubtitleStream) bool {
-		if subtitleOffsetDistance(value.offset, offset) <= subtitleStreamDedupWindowBytes {
+		if value.request.generation != request.generation {
+			return true
+		}
+		if subtitleOffsetDistance(value.offset, offset) <= streamDedupWindowBytes {
 			skipReason = "nearby stream already active"
 			shouldContinue = false
 			return false
@@ -362,7 +479,7 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 		// |------------------------------->| other stream
 		//                    |               this stream
 		//                   ^^^ starting in an area the other stream has already completed
-		if offset > 0 && value.offset <= offset && value.completed {
+		if offset > 0 && value.offset <= offset && value.completed.Load() {
 			skipReason = "range already fulfilled"
 			shouldContinue = false
 			return false
@@ -371,6 +488,7 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 	})
 
 	if !shouldContinue {
+		s.subtitleSeekMu.Unlock()
 		s.logger.Debug().Int64("offset", offset).Str("reason", skipReason).Msg("directstream: Skipping subtitle stream")
 		_ = newReader.Close()
 		return
@@ -378,11 +496,12 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 
 	s.logger.Trace().Int64("offset", offset).Msg("directstream: Starting new subtitle stream")
 	subtitleStream := &SubtitleStream{
-		stream: stream,
-		logger: s.logger,
-		parser: mkvMetadataParser,
-		reader: newReader,
-		offset: offset,
+		stream:  stream,
+		logger:  s.logger,
+		parser:  mkvMetadataParser,
+		reader:  newReader,
+		offset:  offset,
+		request: request,
 	}
 
 	ctx, subtitleCtxCancel := context.WithCancel(playbackCtx)
@@ -393,8 +512,9 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 		s.activeSubtitleStreams.Delete(subtitleStreamId)
 	}
 	s.activeSubtitleStreams.Set(subtitleStreamId, subtitleStream)
+	s.subtitleSeekMu.Unlock()
 
-	subtitleCh, errCh, _ := subtitleStream.parser.ExtractSubtitles(ctx, newReader, offset, backoffBytes)
+	subtitleCh, errCh, _ := subtitleStream.parser.ExtractSubtitles(ctx, newReader, offset, backoffBytes, request.seekTime)
 
 	firstEventSentCh := make(chan struct{}) // no-op
 	closeFirstEventSentOnce := sync.Once{}
@@ -438,7 +558,7 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 						// |--------------->                   this stream
 						//                     |-------------> other stream
 						//                    ^^^ stop this stream where it reached the tail of the other stream
-						if offset > 0 && offset < value.offset && lastEvent.HeadPos >= value.offset {
+						if offset < value.offset && lastEvent.HeadPos >= value.offset {
 							shouldEnd = true
 						}
 					}
@@ -459,7 +579,7 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 		}(newReader)
 		defer func() {
 			onFirstEventSent()
-			subtitleStream.Stop(subtitleStream.completed)
+			subtitleStream.Stop(subtitleStream.completed.Load())
 		}()
 
 		// Keep track if channels are active to manage loop termination
@@ -476,7 +596,8 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 			if len(eventBatch) == 0 {
 				return
 			}
-			if !s.sendSubtitleEvents(ctx, stream, eventBatch, flushConfig) {
+			if !s.sendSubtitleEvents(ctx, stream, eventBatch, flushConfig, request) {
+				eventBatch = eventBatch[:0]
 				return
 			}
 
@@ -495,7 +616,6 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 			select {
 			case <-ctx.Done():
 				s.logger.Debug().Int64("offset", offset).Msg("directstream: Subtitle streaming cancelled by context")
-				flushBatch(false)
 				return
 
 			case <-ticker.C:
@@ -514,12 +634,20 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 				if subtitle != nil {
 					onFirstEventSent()
 					setLastSubtitleEvent(subtitle)
-					if stream.Type() == player.PlaybackTypeTorrent && !s.shouldSendSubtitleEvent(subtitle) {
+					if !s.shouldSendSubtitleEvent(subtitle) {
 						continue
 					}
 
 					eventBatch = append(eventBatch, subtitle)
-					if len(eventBatch) >= maxBatchSize {
+
+					isFirstBatch := false
+					s.subtitleSendMu.Lock()
+					if s.subtitleLastSent.IsZero() || s.subtitleLastSentGen != request.generation {
+						isFirstBatch = true
+					}
+					s.subtitleSendMu.Unlock()
+
+					if isFirstBatch || len(eventBatch) >= maxBatchSize {
 						flushBatch(true)
 					}
 				}
@@ -544,7 +672,7 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 						resumePos = lastSubtitleEvent.HeadPos
 					}
 					lastSubtitleEventRWMutex.RUnlock()
-					s.maybeRetrySubtitleStream(stream, playbackCtx, err, offset, resumePos)
+					s.maybeRetrySubtitleStream(stream, playbackCtx, err, offset, resumePos, request)
 				} else {
 					s.logger.Info().Int64("offset", offset).Msg("directstream: Subtitle streaming completed by parser.")
 					subtitleStream.Stop(true)
@@ -576,8 +704,16 @@ func (s *BaseStream) StartSubtitleStreamP(stream Stream, playbackCtx context.Con
 //
 // If the media has no MKV metadata, this function will do nothing.
 func (s *BaseStream) StartSubtitleStream(stream Stream, playbackCtx context.Context, newReader io.ReadSeekCloser, offset int64) {
-	// use 1MB as the cluster padding for subtitle streams
-	s.StartSubtitleStreamP(stream, playbackCtx, newReader, offset, defaultSubtitleBackoffBytes)
+	s.startSubtitleStream(stream, playbackCtx, newReader, offset, s.currentSubtitleRequest())
+}
+
+func (s *BaseStream) startSubtitleStream(stream Stream, playbackCtx context.Context, newReader io.ReadSeekCloser, offset int64, request subtitleRequest) {
+	backoff := subtitleBackoffBytes
+	if s.playbackInfo != nil && s.playbackInfo.MkvMetadata != nil && len(s.playbackInfo.MkvMetadata.Cues) > 0 {
+		// If cues are available, offset is precise. No backoff needed.
+		backoff = 0
+	}
+	s.startSubtitleStreamP(stream, playbackCtx, newReader, offset, backoff, request)
 }
 
 // OnSubtitleFileUploaded adds a subtitle track, converts it to ASS if needed.

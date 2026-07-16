@@ -938,6 +938,7 @@ func (vc *VideoCore) listenToClientEvents() {
 				}
 
 				// Validate that the event is from the current client
+				takeover := false
 				currentState, hasState := vc.GetPlaybackState()
 				if hasState && eventClientID != "" && eventClientID != currentState.ClientId {
 					// #814: a mid-playback disconnect leaves a dead ClientId bound here, and
@@ -946,7 +947,9 @@ func (vc *VideoCore) listenToClientEvents() {
 					// takes over ("one player at a time"); other events pass only when the
 					// bound connection no longer exists, in which case we adopt the live one.
 					if playerEvent.Type == PlayerEventVideoLoaded {
-						// fall through — the handler below sets the new state
+						// fall through — the handler below sets the new state, and takeover
+						// makes it clear the outgoing player's stale state first.
+						takeover = true
 					} else if slices.Contains(vc.wsEventManager.GetClientIds(), currentState.ClientId) {
 						continue // bound client is alive — ignore the stranger
 					} else {
@@ -959,6 +962,9 @@ func (vc *VideoCore) listenToClientEvents() {
 				case PlayerEventVideoLoaded:
 					payload := &clientVideoLoadedPayload{}
 					if err := playerEvent.UnmarshalAs(&payload); err == nil {
+						if takeover {
+							vc.clearPlayback()
+						}
 						vc.setPlaybackState(&payload.State)
 						vc.PushEvent(&VideoLoadedEvent{
 							State: payload.State,

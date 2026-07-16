@@ -43,8 +43,7 @@ import { vc_globalVideoElement, vc_globalLastProgress, vc_globalPlayerSyncContro
 import { vc_containerElement } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_previousPausedState } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_lastKnownProgress } from "@/app/(main)/_features/video-core/video-core-atoms"
-import { vc_skipOpeningTime } from "@/app/(main)/_features/video-core/video-core-atoms"
-import { vc_skipEndingTime } from "@/app/(main)/_features/video-core/video-core-atoms"
+import { vc_skipChapter } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { VideoCoreAudioManager } from "@/app/(main)/_features/video-core/video-core-audio"
 import { VideoCoreAudioMenu } from "@/app/(main)/_features/video-core/video-core-audio-menu"
 import { CastPlaybackControls, useCastSubtitleRelay, vc_isCasting, VideoCoreCastButton } from "@/app/(main)/_features/video-core/video-core-cast"
@@ -94,7 +93,7 @@ import { VideoCorePreviewManager } from "@/app/(main)/_features/video-core/video
 import { VideoCoreResolutionMenu } from "@/app/(main)/_features/video-core/video-core-resolution-menu"
 import { VideoCoreSettingsMenu } from "@/app/(main)/_features/video-core/video-core-settings-menu"
 import { VideoCoreStatsForNerds } from "@/app/(main)/_features/video-core/video-core-stats"
-import { VideoCoreSubtitleMenu } from "@/app/(main)/_features/video-core/video-core-subtitle-menu"
+import { VideoCoreSubtitleMenu, type VideoCoreSubtitleSelection } from "@/app/(main)/_features/video-core/video-core-subtitle-menu"
 import { VideoCoreSubtitleManager } from "@/app/(main)/_features/video-core/video-core-subtitles"
 import { vc_timeRangeElement, VideoCoreTimeRange } from "@/app/(main)/_features/video-core/video-core-time-range"
 import { VideoCoreTopPlaybackInfo, VideoCoreTopSection } from "@/app/(main)/_features/video-core/video-core-top-section"
@@ -300,8 +299,7 @@ export function VideoCoreProvider(props: { id: string, children: React.ReactNode
                 vc_pipElement,
                 vc_previousPausedState,
                 vc_lastKnownProgress,
-                vc_skipOpeningTime,
-                vc_skipEndingTime,
+                vc_skipChapter,
                 vc_dispatchAction,
                 vc_hoveringControlBar,
                 vc_menuOpen,
@@ -362,6 +360,8 @@ interface PlayerContentProps {
     handleStalled: (e: React.SyntheticEvent<HTMLVideoElement>) => void
     onTerminateStream: () => void
     onVideoSourceChange: ((source: VideoCore_VideoSource) => void) | undefined
+    onHlsQualityChange: ((quality: string) => void) | undefined
+    onSubtitlePreferenceChange: ((selection: VideoCoreSubtitleSelection) => void) | undefined
 }
 
 const PlayerContent = React.memo<PlayerContentProps>(({
@@ -392,6 +392,8 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     handleStalled,
     onTerminateStream,
     onVideoSourceChange,
+    onHlsQualityChange,
+    onSubtitlePreferenceChange,
 }) => {
     const isMobile = useAtomValue(vc_isMobile)
     const isMiniPlayer = useAtomValue(vc_miniPlayer)
@@ -402,8 +404,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     const beautifyImage = useAtomValue(vc_beautifyImageAtom)
     const isPip = useAtomValue(vc_pip)
     const fullscreen = useAtomValue(vc_isFullscreen)
-    const skipOpeningTime = useAtomValue(vc_skipOpeningTime)
-    const skipEndingTime = useAtomValue(vc_skipEndingTime)
+    const skipChapter = useAtomValue(vc_skipChapter)
     const pipManager = useAtomValue(vc_pipManager)
     const action = useSetAtom(vc_dispatchAction)
     const [autoPlay] = useAtom(vc_autoPlayVideoAtom)
@@ -469,42 +470,25 @@ const PlayerContent = React.memo<PlayerContentProps>(({
 
                         {busy && (
                             <>
-                                {!!skipOpeningTime && !isMiniPlayer && (
+                                {!!skipChapter && !isMiniPlayer && (
                                     <div
                                         data-vc-element="skip-oped-button-container"
-                                        data-vc-for="opening"
-                                        className="absolute left-5 bottom-28 z-[60] native-player-hide-on-fullscreen"
+                                        data-vc-for="chapter"
+                                        className={cn(
+                                            "absolute bottom-28 z-[60] native-player-hide-on-fullscreen",
+                                            skipChapter.side === "left" ? "left-5" : "right-5",
+                                        )}
                                     >
                                         <Button
                                             size="sm"
                                             intent="gray-basic"
                                             onClick={e => {
                                                 e.stopPropagation()
-                                                action({ type: "seekTo", payload: { time: skipOpeningTime || 0 } })
+                                                action({ type: "seekTo", payload: { time: skipChapter.end } })
                                             }}
                                             onPointerMove={e => e.stopPropagation()}
                                         >
-                                            Skip Opening
-                                        </Button>
-                                    </div>
-                                )}
-
-                                {!!skipEndingTime && !isMiniPlayer && (
-                                    <div
-                                        data-vc-element="skip-oped-button-container"
-                                        data-vc-for="ending"
-                                        className="absolute right-5 bottom-28 z-[60] native-player-hide-on-fullscreen"
-                                    >
-                                        <Button
-                                            size="sm"
-                                            intent="gray-basic"
-                                            onClick={e => {
-                                                e.stopPropagation()
-                                                action({ type: "seekTo", payload: { time: skipEndingTime || 0 } })
-                                            }}
-                                            onPointerMove={e => e.stopPropagation()}
-                                        >
-                                            Skip Ending
+                                            Skip {skipChapter.label}
                                         </Button>
                                     </div>
                                 )}
@@ -622,8 +606,12 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             {!inline && <PlaybackPlayPill isNativePlayerComponent="control-bar" show={!isMiniPlayer} />}
                             <VideoCoreWatchPartyChat />
                             <VideoCoreSettingsMenu />
-                            <VideoCoreResolutionMenu state={state} onVideoSourceChange={onVideoSourceChange} />
-                            <VideoCoreSubtitleMenu inline={inline} />
+                            <VideoCoreResolutionMenu
+                                state={state}
+                                onVideoSourceChange={onVideoSourceChange}
+                                onHlsQualityChange={onHlsQualityChange}
+                            />
+                            <VideoCoreSubtitleMenu inline={inline} onPreferenceChange={onSubtitlePreferenceChange} />
                             <VideoCoreAudioMenu />
                             <VideoCoreCastButton />
                             <VideoCorePipButton />
@@ -635,8 +623,12 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             </>}
                             topRightSection={<>
                                 <VideoCoreSettingsMenu />
-                                <VideoCoreResolutionMenu state={state} onVideoSourceChange={onVideoSourceChange} />
-                                <VideoCoreSubtitleMenu inline={inline} />
+                                <VideoCoreResolutionMenu
+                                    state={state}
+                                    onVideoSourceChange={onVideoSourceChange}
+                                    onHlsQualityChange={onHlsQualityChange}
+                                />
+                                <VideoCoreSubtitleMenu inline={inline} onPreferenceChange={onSubtitlePreferenceChange} />
                                 <VideoCoreAudioMenu />
                                 <VideoCoreCastButton />
                                 <VideoCorePipButton />
@@ -698,10 +690,13 @@ export interface VideoCoreProps {
     onPlaybackRateChange?: () => void
     // onFileUploaded: (data: { name: string, content: string }) => void
     onVideoSourceChange?: ((source: VideoCore_VideoSource) => void) | undefined
+    hlsPreferredQuality?: string
+    onHlsQualityChange?: (quality: string) => void
     onPlayEpisode?: (which: "previous" | "next") => void
     inlineClassName?: string
     onHlsMediaDetached?: () => void
     onHlsFatalError?: (error: ErrorData) => void
+    onSubtitlePreferenceChange?: (selection: VideoCoreSubtitleSelection) => void
     onChangePlaybackType?: (type: VideoCore_VideoPlaybackInfo["streamType"]) => void
     inline?: boolean
     mRef?: React.MutableRefObject<HTMLVideoElement | null>
@@ -734,8 +729,11 @@ export function VideoCore(props: VideoCoreProps) {
         inline = false,
         inlineClassName,
         onVideoSourceChange,
+        hlsPreferredQuality,
+        onHlsQualityChange,
         onHlsMediaDetached,
         onHlsFatalError,
+        onSubtitlePreferenceChange,
         onPlayEpisode,
         onChangePlaybackType,
         mRef,
@@ -863,8 +861,7 @@ export function VideoCore(props: VideoCoreProps) {
     const showOverlayFeedback = useSetAtom(vc_showOverlayFeedback)
     const cursorBusy = useAtomValue(vc_cursorBusy)
 
-    const [skipOpeningTime, setSkipOpeningTime] = useAtom(vc_skipOpeningTime)
-    const [skipEndingTime, setSkipEndingTime] = useAtom(vc_skipEndingTime)
+    const setSkipChapter = useSetAtom(vc_skipChapter)
 
     const [autoNext] = useAtom(vc_autoNextAtom)
     const [autoPlay] = useAtom(vc_autoPlayVideoAtom)
@@ -1170,6 +1167,7 @@ export function VideoCore(props: VideoCoreProps) {
         videoElement: videoRef.current,
         streamUrl: streamUrl,
         streamType: streamType,
+        preferredQuality: hlsPreferredQuality,
         onMediaDetached: onHlsMediaDetached,
         onFatalError: onHlsFatalError,
         onStalled: err => onStalled?.(`HLS stalled: ${err.error?.message || err.details}`),
@@ -1222,8 +1220,7 @@ export function VideoCore(props: VideoCoreProps) {
         log.info("Audio tracks", v.audioTracks)
         log.info("Text tracks", v.textTracks)
 
-        setSkipOpeningTime(null)
-        setSkipEndingTime(null)
+        setSkipChapter(null)
 
         // onCaptionsChange() not needed?
         onAudioChange()
@@ -1926,6 +1923,8 @@ export function VideoCore(props: VideoCoreProps) {
                         handleStalled={handleStalled}
                         onTerminateStream={onTerminateStream}
                         onVideoSourceChange={onVideoSourceChange}
+                        onHlsQualityChange={onHlsQualityChange}
+                        onSubtitlePreferenceChange={onSubtitlePreferenceChange}
                     />
                 </div>
             </ScopeProvider>
@@ -2020,6 +2019,8 @@ export function VideoCore(props: VideoCoreProps) {
                         handleStalled={handleStalled}
                         onTerminateStream={onTerminateStream}
                         onVideoSourceChange={onVideoSourceChange}
+                        onHlsQualityChange={onHlsQualityChange}
+                        onSubtitlePreferenceChange={onSubtitlePreferenceChange}
                     />
                 </VideoCoreDrawer>
 

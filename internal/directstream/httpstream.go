@@ -28,7 +28,12 @@ type httpBaseStream struct {
 	// this raw URL to the player (no proxy), and subtitle readers pull from streamUrl (the
 	// server's own link) via chunked CDN readers instead of the proxy-fed FileStream. The
 	// proxy endpoint stays alive for thumbnails / non-capable consumers.
-	clientStreamUrl     string
+	clientStreamUrl string
+	// cdnGated marks a stream whose streamUrl is a debrid CDN link: metadata/subtitle reads go
+	// through the per-token gate + chunked reader (see cdngate.go — TorBox throttles per-link).
+	// Other http streams (Nakama peers, plain URLs) are not per-link throttled, so they use the
+	// plain lazy reader and issue byte-exact ranges.
+	cdnGated            bool
 	contentLength       int64
 	filepath            string
 	requestHeaders      http.Header
@@ -137,6 +142,9 @@ func (s *httpBaseStream) applyHeadRespHeaders(dst http.Header) {
 }
 
 func (s *httpBaseStream) newMetadataReader() (io.ReadSeekCloser, error) {
+	if !s.cdnGated {
+		return httputil.NewLazyHttpReadSeekerFromURLWithHeaders(s.streamUrl, s.requestHeaders)
+	}
 	return fetchMetadataReader(s.manager.playbackCtx, s.logger, s.streamUrl, s.requestHeaders)
 }
 

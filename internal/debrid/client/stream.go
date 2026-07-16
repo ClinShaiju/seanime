@@ -936,6 +936,12 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 				Message:     "External player link sent",
 			})
 		case PlaybackTypeNativePlayer:
+			s.ev(opts).SendEvent(events.DebridStreamState, StreamState{
+				Status:      StreamStatusReady,
+				TorrentName: selectedTorrent.Name,
+				Message:     "",
+			})
+
 			if !s.ds(opts).IsOpenActive(opts.ClientId) {
 				return
 			}

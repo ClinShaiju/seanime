@@ -6631,6 +6631,187 @@
     }
   },
   {
+    "name": "HandleGetMangaPreferences",
+    "trimmedName": "GetMangaPreferences",
+    "comments": [
+      "HandleGetMangaPreferences",
+      "",
+      "\t@summary returns server-backed manga source preferences.",
+      "\t@route /api/v1/manga/preferences [GET]",
+      "\t@returns manga.MangaPreferences",
+      ""
+    ],
+    "filepath": "internal/handlers/manga.go",
+    "filename": "manga.go",
+    "api": {
+      "summary": "returns server-backed manga source preferences.",
+      "descriptions": [],
+      "endpoint": "/api/v1/manga/preferences",
+      "methods": [
+        "GET"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "manga.MangaPreferences",
+      "returnGoType": "manga.MangaPreferences",
+      "returnTypescriptType": "Manga_MangaPreferences"
+    }
+  },
+  {
+    "name": "HandleImportMangaPreferences",
+    "trimmedName": "ImportMangaPreferences",
+    "comments": [
+      "HandleImportMangaPreferences",
+      "",
+      "\t@summary imports client manga preferences missing from the server.",
+      "\t@route /api/v1/manga/preferences/import [POST]",
+      "\t@returns manga.MangaPreferences",
+      ""
+    ],
+    "filepath": "internal/handlers/manga.go",
+    "filename": "manga.go",
+    "api": {
+      "summary": "imports client manga preferences missing from the server.",
+      "descriptions": [],
+      "endpoint": "/api/v1/manga/preferences/import",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "manga.MangaPreferences",
+      "returnGoType": "manga.MangaPreferences",
+      "returnTypescriptType": "Manga_MangaPreferences"
+    }
+  },
+  {
+    "name": "HandlePatchMangaPreference",
+    "trimmedName": "PatchMangaPreference",
+    "comments": [
+      "HandlePatchMangaPreference",
+      "",
+      "\t@summary updates a manga source preference.",
+      "\t@route /api/v1/manga/preferences/{mediaId} [PATCH]",
+      "\t@returns manga.MangaEntryPreference",
+      ""
+    ],
+    "filepath": "internal/handlers/manga.go",
+    "filename": "manga.go",
+    "api": {
+      "summary": "updates a manga source preference.",
+      "descriptions": [],
+      "endpoint": "/api/v1/manga/preferences/{mediaId}",
+      "methods": [
+        "PATCH"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "manga.MangaEntryPreference",
+      "returnGoType": "manga.MangaEntryPreference",
+      "returnTypescriptType": "Manga_MangaEntryPreference"
+    }
+  },
+  {
+    "name": "HandleStartMangaSourceRefresh",
+    "trimmedName": "StartMangaSourceRefresh",
+    "comments": [
+      "HandleStartMangaSourceRefresh",
+      "",
+      "\t@summary starts a background manga source refresh.",
+      "\t@route /api/v1/manga/source-refresh [POST]",
+      "\t@returns manga.MangaSourceRefreshJob",
+      ""
+    ],
+    "filepath": "internal/handlers/manga.go",
+    "filename": "manga.go",
+    "api": {
+      "summary": "starts a background manga source refresh.",
+      "descriptions": [],
+      "endpoint": "/api/v1/manga/source-refresh",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "Mode",
+          "jsonName": "mode",
+          "goType": "manga.MangaSourceRefreshMode",
+          "usedStructType": "manga.MangaSourceRefreshMode",
+          "typescriptType": "Manga_MangaSourceRefreshMode",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "MediaIds",
+          "jsonName": "mediaIds",
+          "goType": "[]int",
+          "usedStructType": "",
+          "typescriptType": "Array\u003cnumber\u003e",
+          "required": false,
+          "descriptions": []
+        }
+      ],
+      "returns": "manga.MangaSourceRefreshJob",
+      "returnGoType": "manga.MangaSourceRefreshJob",
+      "returnTypescriptType": "Manga_MangaSourceRefreshJob"
+    }
+  },
+  {
+    "name": "HandleGetMangaSourceRefresh",
+    "trimmedName": "GetMangaSourceRefresh",
+    "comments": [
+      "HandleGetMangaSourceRefresh",
+      "",
+      "\t@summary returns the client's active or latest manga source refresh.",
+      "\t@route /api/v1/manga/source-refresh [GET]",
+      "\t@returns manga.MangaSourceRefreshJob",
+      ""
+    ],
+    "filepath": "internal/handlers/manga.go",
+    "filename": "manga.go",
+    "api": {
+      "summary": "returns the client's active or latest manga source refresh.",
+      "descriptions": [],
+      "endpoint": "/api/v1/manga/source-refresh",
+      "methods": [
+        "GET"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "manga.MangaSourceRefreshJob",
+      "returnGoType": "manga.MangaSourceRefreshJob",
+      "returnTypescriptType": "Manga_MangaSourceRefreshJob"
+    }
+  },
+  {
+    "name": "HandleStopMangaSourceRefresh",
+    "trimmedName": "StopMangaSourceRefresh",
+    "comments": [
+      "HandleStopMangaSourceRefresh",
+      "",
+      "\t@summary stops or dismisses the client's manga source refresh.",
+      "\t@route /api/v1/manga/source-refresh [DELETE]",
+      "\t@returns manga.MangaSourceRefreshJob",
+      ""
+    ],
+    "filepath": "internal/handlers/manga.go",
+    "filename": "manga.go",
+    "api": {
+      "summary": "stops or dismisses the client's manga source refresh.",
+      "descriptions": [],
+      "endpoint": "/api/v1/manga/source-refresh",
+      "methods": [
+        "DELETE"
+      ],
+      "params": [],
+      "bodyFields": [],
+      "returns": "manga.MangaSourceRefreshJob",
+      "returnGoType": "manga.MangaSourceRefreshJob",
+      "returnTypescriptType": "Manga_MangaSourceRefreshJob"
+    }
+  },
+  {
     "name": "HandleGetAnilistMangaCollection",
     "trimmedName": "GetAnilistMangaCollection",
     "comments": [
@@ -7363,6 +7544,52 @@
       "returns": "[]hibikemanga.SearchResult",
       "returnGoType": "hibikemanga.SearchResult",
       "returnTypescriptType": "Array\u003cHibikeManga_SearchResult\u003e"
+    }
+  },
+  {
+    "name": "HandlePreviewMangaMapping",
+    "trimmedName": "PreviewMangaMapping",
+    "comments": [
+      "HandlePreviewMangaMapping",
+      "",
+      "\t@summary returns a chapter summary for a manual manga mapping.",
+      "\t@route /api/v1/manga/manual-mapping/preview [POST]",
+      "\t@returns manga.MappingPreview",
+      ""
+    ],
+    "filepath": "internal/handlers/manga.go",
+    "filename": "manga.go",
+    "api": {
+      "summary": "returns a chapter summary for a manual manga mapping.",
+      "descriptions": [],
+      "endpoint": "/api/v1/manga/manual-mapping/preview",
+      "methods": [
+        "POST"
+      ],
+      "params": [],
+      "bodyFields": [
+        {
+          "name": "Provider",
+          "jsonName": "provider",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "MangaId",
+          "jsonName": "mangaId",
+          "goType": "string",
+          "usedStructType": "",
+          "typescriptType": "string",
+          "required": true,
+          "descriptions": []
+        }
+      ],
+      "returns": "manga.MappingPreview",
+      "returnGoType": "manga.MappingPreview",
+      "returnTypescriptType": "Manga_MappingPreview"
     }
   },
   {
@@ -8438,6 +8665,69 @@
     }
   },
   {
+    "name": "HandleGetAnizipArtwork",
+    "trimmedName": "GetAnizipArtwork",
+    "comments": [
+      "HandleGetAnizipArtwork",
+      "",
+      "\t@summary returns cached artwork URLs (fanart, clearlogo, title) for the loading screen.",
+      "\t@route /api/v1/anizip-artwork/{id} [GET]",
+      "\t@param id - int - true - \"The AniList media ID\"",
+      "\t@returns anizip.Artwork",
+      ""
+    ],
+    "filepath": "internal/handlers/metadata.go",
+    "filename": "metadata.go",
+    "api": {
+      "summary": "returns cached artwork URLs (fanart, clearlogo, title) for the loading screen.",
+      "descriptions": [],
+      "endpoint": "/api/v1/anizip-artwork/{id}",
+      "methods": [
+        "GET"
+      ],
+      "params": [
+        {
+          "name": "id",
+          "jsonName": "id",
+          "goType": "int",
+          "usedStructType": "",
+          "typescriptType": "number",
+          "required": true,
+          "descriptions": [
+            "The AniList media ID"
+          ]
+        }
+      ],
+      "bodyFields": [],
+      "returns": "anizip.Artwork",
+      "returnGoType": "anizip.Artwork",
+      "returnTypescriptType": "Anizip_Artwork"
+    }
+  },
+  {
+    "name": "tmdbLogoURL",
+    "trimmedName": "tmdbLogoURL",
+    "comments": [
+      "tmdbLogoURL fetches a transparent title logo from TMDB for the given themoviedb id.",
+      "Returns \"\" if no key is configured (SEANIME_TMDB_API_KEY), the id is empty, or no logo exists.",
+      "ponytail: best-effort fallback only; env-var key, degrades silently to the text title.",
+      ""
+    ],
+    "filepath": "internal/handlers/metadata.go",
+    "filename": "metadata.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
     "name": "HandleMpvCoreInSightGetCharacterDetails",
     "trimmedName": "MpvCoreInSightGetCharacterDetails",
     "comments": [
@@ -9271,6 +9561,28 @@
     }
   },
   {
+    "name": "respondRoomError",
+    "trimmedName": "respondRoomError",
+    "comments": [
+      "respondRoomError maps watch-room hub sentinel errors to terminal HTTP statuses so the client can",
+      "react (clear a stale room on 404 instead of tight-looping a logged 500). Unknown sentinels stay 500.",
+      ""
+    ],
+    "filepath": "internal/handlers/nakama_rooms.go",
+    "filename": "nakama_rooms.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
     "name": "HandleNakamaWatchRoomList",
     "trimmedName": "NakamaWatchRoomList",
     "comments": [
@@ -9797,6 +10109,15 @@
           "usedStructType": "",
           "typescriptType": "boolean",
           "required": true,
+          "descriptions": []
+        },
+        {
+          "name": "Refresh",
+          "jsonName": "refresh",
+          "goType": "bool",
+          "usedStructType": "",
+          "typescriptType": "boolean",
+          "required": false,
           "descriptions": []
         }
       ],
@@ -11587,6 +11908,31 @@
     "comments": [
       "NewStatus returns a new Status struct.",
       "It uses the RouteCtx to get the App instance containing the Database instance.",
+      ""
+    ],
+    "filepath": "internal/handlers/status.go",
+    "filename": "status.go",
+    "api": {
+      "summary": "",
+      "descriptions": [],
+      "endpoint": "",
+      "methods": null,
+      "params": [],
+      "bodyFields": [],
+      "returns": "bool",
+      "returnGoType": "bool",
+      "returnTypescriptType": "boolean"
+    }
+  },
+  {
+    "name": "redactSettingsSecretsForNonAdmin",
+    "trimmedName": "redactSettingsSecretsForNonAdmin",
+    "comments": [
+      "redactSettingsSecretsForNonAdmin blanks the shared server credentials embedded in",
+      "models.Settings so they never reach a non-admin user or an anon holding the server",
+      "password. It reassigns fresh sub-struct copies rather than mutating in place, so it is",
+      "safe even if the passed Settings shares its embedded pointers with the DB-cached value",
+      "(CloneSettings only deep-copies Library/Manga). Callers must still pass a cloned Settings.",
       ""
     ],
     "filepath": "internal/handlers/status.go",

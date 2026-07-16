@@ -1,5 +1,10 @@
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
-import { MKVParser_SubtitleEvent, NativePlayer_PlaybackInfo, NativePlayer_ServerEvent } from "@/api/generated/types"
+import {
+    MKVParser_SubtitleEvent,
+    NativePlayer_PlaybackInfo,
+    NativePlayer_ServerEvent,
+    NativePlayer_SubtitleEventsPayload,
+} from "@/api/generated/types"
 import { vc_subtitleManager } from "@/app/(main)/_features/video-core/video-core"
 import { VideoCore } from "@/app/(main)/_features/video-core/video-core"
 import { vc_miniPlayer } from "@/app/(main)/_features/video-core/video-core-atoms"
@@ -15,6 +20,7 @@ import { toast } from "sonner"
 import { useWebsocketMessageListener, useWebsocketSender } from "../../_hooks/handle-websockets"
 import { useSkipData } from "../video-core/_lib/aniskip"
 import { useDebridReconnectResume } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-reconnect"
+import { getSubtitleEvents, isSubtitleBatchCurrent } from "./native-player-subtitles"
 import { nativePlayer_stateAtom, nativePlayer_terminateRequestedAtom } from "./native-player.atoms"
 
 const log = logger("NATIVE PLAYER")
@@ -49,11 +55,13 @@ export function NativePlayer() {
     // Accumulate incoming subtitle events and flush them to the subtitle manager
     //
 
-    const subtitleBufferRef = React.useRef<MKVParser_SubtitleEvent[]>([])
+    const subtitleBufferRef = React.useRef<NativePlayer_SubtitleEventsPayload[]>([])
     const subtitleFlushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
     const subtitleIdleHandleRef = React.useRef<number | null>(null)
     const subtitleManagerRef = React.useRef(subtitleManager)
-    subtitleManagerRef.current = subtitleManager
+    const staleSubtitleManagerRef = React.useRef<typeof subtitleManager>(null)
+    const activePlaybackIdRef = React.useRef(state.playbackInfo?.id ?? "")
+    const latestSubtitleGenRef = React.useRef(-1)
 
     const resetSubtitleBuffer = React.useCallback(() => {
         subtitleBufferRef.current = []
@@ -69,16 +77,38 @@ export function NativePlayer() {
         }
     }, [])
 
+    const resetSubtitleState = React.useCallback((playbackId: string) => {
+        resetSubtitleBuffer()
+        if (subtitleManagerRef.current) {
+            staleSubtitleManagerRef.current = subtitleManagerRef.current
+        }
+        subtitleManagerRef.current = null
+        activePlaybackIdRef.current = playbackId
+        latestSubtitleGenRef.current = -1
+    }, [resetSubtitleBuffer])
+
     const flushSubtitleBuffer = React.useCallback(() => {
         subtitleFlushTimerRef.current = null
         subtitleIdleHandleRef.current = null
 
-        const events = subtitleBufferRef.current
-        if (events.length === 0) return
+        const batches = subtitleBufferRef.current
+        if (batches.length === 0) return
+
+        const manager = subtitleManagerRef.current
+        if (!manager) {
+            // Keep events until VideoCore creates the subtitle manager.
+            return
+        }
+
+        const playbackId = activePlaybackIdRef.current
+        const generationId = latestSubtitleGenRef.current
+        const events = getSubtitleEvents(batches, playbackId, generationId)
+
         subtitleBufferRef.current = []
+        if (events.length === 0) return
 
         // process outside the websocket message handler
-        subtitleManagerRef.current?.onSubtitleEvents(events)?.then()
+        manager.onSubtitleEvents(events).then()
     }, [])
 
     const scheduleSubtitleFlush = React.useCallback(() => {
@@ -101,6 +131,20 @@ export function NativePlayer() {
         }, SUBTITLE_FLUSH_INTERVAL_MS)
     }, [flushSubtitleBuffer])
 
+    React.useEffect(() => {
+        if (!subtitleManager) {
+            subtitleManagerRef.current = null
+            return
+        }
+        if (subtitleManager === staleSubtitleManagerRef.current) return
+
+        subtitleManagerRef.current = subtitleManager
+        staleSubtitleManagerRef.current = null
+        if (subtitleBufferRef.current.length > 0) {
+            flushSubtitleBuffer()
+        }
+    }, [subtitleManager, flushSubtitleBuffer])
+
     // cleanup subtitle buffer timers on unmount
     React.useEffect(() => {
         return () => {
@@ -120,7 +164,7 @@ export function NativePlayer() {
                 // The server is loading the stream
                 case "open-and-await":
                     log.info("Open and await event received", { payload })
-                    resetSubtitleBuffer()
+                    resetSubtitleState("")
                     _preserveMiniPlayerRef.current = state.active && miniPlayer
                     setState(draft => {
                         draft.active = true
@@ -136,7 +180,7 @@ export function NativePlayer() {
                     break
                 case "abort-open":
                     log.info("Abort open event received", { payload })
-                    resetSubtitleBuffer()
+                    resetSubtitleState("")
                     setLoadingMediaId(null)
                     _preserveMiniPlayerRef.current = false
                     if (!(payload as string)) {
@@ -165,9 +209,10 @@ export function NativePlayer() {
                 // We received the playback info
                 case "watch":
                     log.info("Watch event received", { payload })
-                    resetSubtitleBuffer()
+                    const playbackInfo = payload as NativePlayer_PlaybackInfo
+                    resetSubtitleState(playbackInfo.id)
                     setState(draft => {
-                        draft.playbackInfo = payload as NativePlayer_PlaybackInfo
+                        draft.playbackInfo = playbackInfo
                         draft.loadingState = null
                         draft.playbackError = null
                         return
@@ -180,13 +225,43 @@ export function NativePlayer() {
                 // 3. Subtitle event (MKV)
                 // We receive the subtitle events after the server received the loaded-metadata event.
                 // Buffer the events and process them off the main thread
-                case "subtitle-event":
-                    if (Array.isArray(payload)) {
-                        subtitleBufferRef.current.push(...(payload as MKVParser_SubtitleEvent[]))
+                case "subtitle-event": {
+                    let batch: NativePlayer_SubtitleEventsPayload
+
+                    if (payload && typeof payload === "object" && !Array.isArray(payload) && "events" in payload) {
+                        batch = payload as NativePlayer_SubtitleEventsPayload
                     } else {
-                        subtitleBufferRef.current.push(payload as MKVParser_SubtitleEvent)
+                        const events = Array.isArray(payload)
+                            ? payload as MKVParser_SubtitleEvent[]
+                            : payload ? [payload as MKVParser_SubtitleEvent] : []
+                        batch = {
+                            events,
+                            playbackId: activePlaybackIdRef.current,
+                            generationId: Math.max(latestSubtitleGenRef.current, 0),
+                            seekTime: 0,
+                        }
                     }
+
+                    if (!isSubtitleBatchCurrent(batch, activePlaybackIdRef.current, latestSubtitleGenRef.current)) {
+                        break
+                    }
+
+                    const isNewGeneration = batch.generationId > latestSubtitleGenRef.current
+                    if (isNewGeneration) {
+                        latestSubtitleGenRef.current = batch.generationId
+                        resetSubtitleBuffer()
+                    }
+
+                    if (!batch.events?.length) break
+
+                    if (isNewGeneration && subtitleManagerRef.current) {
+                        subtitleManagerRef.current.onSubtitleEvents(batch.events).then()
+                        break
+                    }
+
+                    subtitleBufferRef.current.push(batch)
                     scheduleSubtitleFlush()
+                }
                     break
                 case "error":
                     log.error("Error event received", payload)
@@ -208,7 +283,7 @@ export function NativePlayer() {
         const playbackId = state.playbackInfo?.id || ""
         const playbackType = state.playbackInfo?.streamType || ""
 
-        resetSubtitleBuffer()
+        resetSubtitleState("")
         setLoadingMediaId(null)
 
         // Clean up player first

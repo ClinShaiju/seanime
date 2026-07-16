@@ -481,7 +481,7 @@ func (h *Handler) HandleGetMissingEpisodes(c echo.Context) error {
 	// Cache is keyed per-user (derived from the user's own collection), so every user gets a
 	// cache hit instead of only the admin.
 	if missingEpisodesCache, ok := anime.GetMissingEpisodesCache(sess.UserID); ok {
-		return h.RespondWithData(c, missingEpisodesCache)
+		return h.RespondWithData(c, h.withMissingEpisodeAvailability(missingEpisodesCache))
 	}
 
 	// Get the user's anilist collection
@@ -516,7 +516,18 @@ func (h *Handler) HandleGetMissingEpisodes(c echo.Context) error {
 
 	anime.SetMissingEpisodesCache(sess.UserID, event.MissingEpisodes)
 
-	return h.RespondWithData(c, event.MissingEpisodes)
+	return h.RespondWithData(c, h.withMissingEpisodeAvailability(event.MissingEpisodes))
+}
+
+func (h *Handler) withMissingEpisodeAvailability(missing *anime.MissingEpisodes) *anime.MissingEpisodes {
+	if missing == nil || !h.App.Settings.GetLibrary().ShowTorrentAvailability {
+		return missing
+	}
+
+	ret := *missing
+	ret.Episodes = h.App.WithEpisodeAvailability(missing.Episodes)
+	ret.SilencedEpisodes = h.App.WithEpisodeAvailability(missing.SilencedEpisodes)
+	return &ret
 }
 
 //----------------------------------------------------------------------------------------------------------------------

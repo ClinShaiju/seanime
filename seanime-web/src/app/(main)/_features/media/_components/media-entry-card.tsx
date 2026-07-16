@@ -61,6 +61,7 @@ type MediaEntryCardBaseProps = {
     showListDataButton?: boolean
 }
 
+
 type MediaEntryCardListData = Anime_EntryListData | Manga_EntryListData
 
 type MediaEntryCardProps<T extends "anime" | "manga"> = {
@@ -483,5 +484,3 @@ export function MediaEntryCard<T extends "anime" | "manga">(props: MediaEntryCar
         </MediaEntryCardContainer>
     )
 }
-
-

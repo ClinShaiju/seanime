@@ -73,6 +73,20 @@ func copyTorrents(in []*hibiketorrent.AnimeTorrent) []*hibiketorrent.AnimeTorren
 	return out
 }
 
+func (s *AutoSelect) SearchFresh(ctx context.Context, media *anilist.BaseAnime, episodeNumber int, profile *anime.AutoSelectProfile) ([]*hibiketorrent.AnimeTorrent, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if media == nil {
+		return nil, fmt.Errorf("media cannot be nil")
+	}
+	ctx = context.WithValue(ctx, freshSearchKey, true)
+	// Bypass searchCached: a fresh search must actually reach the provider, so it
+	// neither reads nor fills the TTL cache. Going through Search() would serve the
+	// cached list and silently defeat the fresh/skipCache contract.
+	return s.search(ctx, media.ToCompleteAnime(), episodeNumber, profile)
+}
+
 func (s *AutoSelect) search(ctx context.Context, media *anilist.CompleteAnime, episodeNumber int, profile *anime.AutoSelectProfile) ([]*hibiketorrent.AnimeTorrent, error) {
 	s.log("Starting auto-select search")
 	s.logger.Debug().Msgf("autoselect: Searching for episode %d of %s", episodeNumber, media.GetTitleSafe())
@@ -98,7 +112,7 @@ func (s *AutoSelect) search(ctx context.Context, media *anilist.CompleteAnime, e
 	if len(allTorrents) == 0 {
 		s.logger.Warn().Msg("autoselect: No torrents found")
 		s.log("No torrents found")
-		return nil, fmt.Errorf("no torrents found")
+		return nil, ErrNoTorrentsFound
 	}
 
 	s.logger.Debug().Int("count", len(allTorrents)).Msg("autoselect: Total unique torrents found")
@@ -214,6 +228,7 @@ func (s *AutoSelect) searchFromProvider(
 	}
 
 	// Try each resolution until we get results
+	var lastSearchErr error
 	for _, resolution := range resolutions {
 		if resolution != "" {
 			s.logger.Debug().Str("provider", provider).Str("resolution", resolution).Msg("autoselect: Trying resolution")
@@ -248,11 +263,11 @@ func (s *AutoSelect) searchFromProvider(
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
-				batchData, batchErr = s.torrentRepository.SearchAnime(ctx, batchOpts)
+				batchData, batchErr = s.searchAnime(ctx, batchOpts)
 			}()
 			go func() {
 				defer wg.Done()
-				singleData, singleErr = s.torrentRepository.SearchAnime(ctx, singleOpts)
+				singleData, singleErr = s.searchAnime(ctx, singleOpts)
 			}()
 			wg.Wait()
 
@@ -269,10 +284,21 @@ func (s *AutoSelect) searchFromProvider(
 				s.logger.Debug().Str("provider", provider).Int("count", len(singleData.Torrents)).Msg("autoselect: Found single episode torrents")
 				allTorrents = append(allTorrents, singleData.Torrents...)
 			}
+
+			// Surface a provider error so the caller can tell "provider failed" from
+			// "provider had nothing" (single is the fallback, so it wins the report).
+			if batchErr != nil {
+				lastSearchErr = batchErr
+			}
+			if singleErr != nil {
+				lastSearchErr = singleErr
+			}
 		} else {
 			// Movies / unfinished series: single search only.
-			data, err := s.torrentRepository.SearchAnime(ctx, searchOptions)
-			if err == nil && data != nil && len(data.Torrents) > 0 {
+			data, err := s.searchAnime(ctx, searchOptions)
+			if err != nil {
+				lastSearchErr = err
+			} else if data != nil && len(data.Torrents) > 0 {
 				allTorrents = append(allTorrents, data.Torrents...)
 			}
 		}
@@ -290,7 +316,17 @@ func (s *AutoSelect) searchFromProvider(
 	}
 
 	// no results found with any resolution
-	return nil, fmt.Errorf("no torrents found with any resolution")
+	if lastSearchErr != nil {
+		return nil, lastSearchErr
+	}
+	return nil, fmt.Errorf("%w with any resolution", ErrNoTorrentsFound)
+}
+
+func (s *AutoSelect) searchAnime(ctx context.Context, opts itorrent.AnimeSearchOptions) (*itorrent.SearchData, error) {
+	if fresh, _ := ctx.Value(freshSearchKey).(bool); fresh {
+		return s.torrentRepository.SearchAnimeFresh(ctx, opts)
+	}
+	return s.torrentRepository.SearchAnime(ctx, opts)
 }
 
 // shouldSearchBatch determines if we should initially attempt to search for batches.
