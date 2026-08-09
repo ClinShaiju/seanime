@@ -80,6 +80,9 @@ type candidate struct {
 	parsed         *habari.Metadata
 	lowerName       string
 	flagLanguages   []string // languages decoded from flag emoji in the raw name (aggregators)
+	audioLangs      []string // languages that actually describe the AUDIO (see deriveAudioLanguages)
+	nameLangMatchOK bool     // safe to look for a language as free text in the name
+	isDualAudio     bool     // declares a dual-audio track set (JP original + English dub)
 	expectedSeason  int      // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
 	expectedEpisode int      // Requested episode number, <=0 = unknown (skip episode scoring)
 	mediaYear       int      // Requested media's start year, 0 = unknown (skip year scoring)
@@ -182,8 +185,59 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 			expectedEpisode: expectedEpisode,
 			mediaYear:       mediaYear,
 		}
+		c := candidates[i]
+		c.isDualAudio = isDualAudioRelease(c.parsed, c.lowerName)
+		c.audioLangs, c.nameLangMatchOK = deriveAudioLanguages(c.parsed, c.flagLanguages, c.isDualAudio)
 	}
 	return candidates
+}
+
+// isDualAudioRelease reports whether a release declares a dual-audio track set. "dual audio" is
+// the fansub convention for the Japanese original PLUS an English dub, so it is credible evidence
+// of English audio on its own — unlike "multi", see the note on dualAudioNameRe.
+func isDualAudioRelease(parsed *habari.Metadata, lowerName string) bool {
+	return containsTerm(parsed.AudioTerm, "dual", "dub") || dualAudioNameRe.MatchString(lowerName)
+}
+
+// subtitleOnlyLangTokens are languages habari reports that describe SUBTITLES by definition —
+// "VOSTFR" is version originale sous-titrée français, i.e. Japanese audio with French subs, and
+// reading it as a French dub demotes a perfectly good Japanese release.
+var subtitleOnlyLangTokens = map[string]bool{
+	"vostfr": true, "vosta": true, "vost": true,
+	"softsub": true, "softsubs": true, "hardsub": true, "hardsubs": true,
+	"subbed": true, "sub": true, "subs": true,
+}
+
+// deriveAudioLanguages returns the languages that describe a release's AUDIO.
+//
+// habari reports subtitle languages in Metadata.Language, so a Japanese-audio release reads as an
+// English dub: "[Erai-raws] Show - 07 [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA]" parses to
+// Language=[ENG POR-BR SPA-LA], and the aggregator's "🔍 Multi Subs|English Subs" to
+// Language=[English]. Resolution order:
+//
+//  1. Flag emoji win when present: the aggregator lists audio flags ahead of the 📝 subtitle
+//     marker, so util.LanguagesFromFlags already returns audio and nothing else.
+//  2. Otherwise habari's languages — unless the release declares subtitles and declares no audio,
+//     in which case those languages belong to the subtitles.
+//
+// Tokens that are themselves subtitle markers are always dropped. nameMatchOK reports whether the
+// caller may additionally look for a language as free text in the name: only when neither better
+// source exists, since the text that produced the rejected languages ("[ENG][POR-BR]",
+// "Multi Subs|English Subs") is still sitting in the name and would re-credit them.
+func deriveAudioLanguages(parsed *habari.Metadata, flagLangs []string, isDualAudio bool) (langs []string, nameMatchOK bool) {
+	if len(flagLangs) > 0 {
+		return flagLangs, false
+	}
+	if len(parsed.Subtitles) > 0 && !isDualAudio {
+		return nil, false
+	}
+	out := make([]string, 0, len(parsed.Language))
+	for _, l := range parsed.Language {
+		if !subtitleOnlyLangTokens[strings.ToLower(strings.TrimSpace(l))] {
+			out = append(out, l)
+		}
+	}
+	return out, true
 }
 
 // episodeCovered reports whether a parsed episode range can contain the requested episode.
@@ -293,15 +347,7 @@ func (s *AutoSelect) Rank(
 
 // filter is a shim for testing or legacy usage.
 func (s *AutoSelect) filter(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile) []*hibiketorrent.AnimeTorrent {
-	candidates := make([]*candidate, len(torrents))
-	for i, t := range torrents {
-		candidates[i] = &candidate{
-			torrent:   t,
-			parsed:    habari.Parse(util.CleanReleaseName(t.Name)),
-			lowerName: strings.ToLower(t.Name),
-		}
-	}
-	candidates = s.filterCandidates(candidates, profile)
+	candidates := s.filterCandidates(buildCandidates(torrents, 0, 0, 0), profile)
 	ret := make([]*hibiketorrent.AnimeTorrent, len(candidates))
 	for i, c := range candidates {
 		ret[i] = c.torrent
@@ -311,14 +357,7 @@ func (s *AutoSelect) filter(torrents []*hibiketorrent.AnimeTorrent, profile *ani
 
 // sort is a shim for testing or legacy usage.
 func (s *AutoSelect) sort(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile) {
-	candidates := make([]*candidate, len(torrents))
-	for i, t := range torrents {
-		candidates[i] = &candidate{
-			torrent:   t,
-			parsed:    habari.Parse(util.CleanReleaseName(t.Name)),
-			lowerName: strings.ToLower(t.Name),
-		}
-	}
+	candidates := buildCandidates(torrents, 0, 0, 0)
 	s.sortCandidates(candidates, profile)
 	for i, c := range candidates {
 		torrents[i] = c.torrent
@@ -338,16 +377,18 @@ func isJapaneseToken(s string) bool {
 // audioLanguageScore classifies a candidate's audio into three tiers and returns a score that
 // dominates format scoring. The goal is "highest-quality English dub on top":
 //   - English dub (top-preferred audio): big positive. Matches the top preferred language via a
-//     tag/flag/name, OR a dual/multi-audio release with no foreign dub flag (dual = JP original
-//     + a dub assumed to be the top preference unless a flag names a different one).
+//     tag/flag/name, OR a dual-audio release with no foreign dub flag (dual = JP original + a dub
+//     assumed to be the top preference unless a flag names a different one).
 //   - Japanese original / neutral / dual-with-foreign-dub (e.g. jp/fr): 0.
 //   - Foreign-only (a single non-preferred language, no JP original, not dual): big negative.
+//
+// Every language test reads c.audioLangs, never parsed.Language directly — see
+// deriveAudioLanguages for why the raw parse can't be trusted to describe audio.
 func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 	groups := profile.PreferredLanguages
 	if len(groups) == 0 {
 		return 0
 	}
-	parsed := c.parsed
 
 	matchesGroup := func(groupIdx int) bool {
 		if groupIdx < 0 || groupIdx >= len(groups) {
@@ -358,9 +399,8 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 			if lang == "" {
 				continue
 			}
-			if slices.ContainsFunc(parsed.Language, func(pl string) bool { return strings.EqualFold(pl, lang) }) ||
-				slices.ContainsFunc(c.flagLanguages, func(fl string) bool { return strings.EqualFold(fl, lang) }) ||
-				containsBoundedTerm(c.lowerName, lang) {
+			if slices.ContainsFunc(c.audioLangs, func(pl string) bool { return strings.EqualFold(pl, lang) }) ||
+				(c.nameLangMatchOK && containsBoundedTerm(c.lowerName, lang)) {
 				return true
 			}
 		}
@@ -378,35 +418,11 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 		return false
 	}
 
-	// At the NAME level require an audio-specific token ("dual audio", "multi-audio", …) —
-	// bare "multi"/"dub" must NOT match, since "[Multiple Subtitle]" / "Multi-Subs" are
-	// ubiquitous subtitle markers on Japanese-audio releases and would otherwise flip them
-	// into the English-dub tier. parsed.AudioTerm matching (which is audio-scoped) stays as-is.
-	//
-	// "dual" and "multi" are kept APART: dual audio means JP + English by convention, while
-	// "MULTi" names no language at all (and is the French scene convention), so it earns no
-	// English credit — see the note on dualAudioNameRe.
-	isDual := containsTerm(parsed.AudioTerm, "dual", "dub") || dualAudioNameRe.MatchString(c.lowerName)
+	isDual := c.isDualAudio
 
-	// A declared language (flag emoji or parsed tag) that isn't in any preferred group is a
-	// foreign dub (e.g. FR, RU).
-	hasForeignLang := false
-	for _, fl := range c.flagLanguages {
-		if !tokenInAnyGroup(fl) {
-			hasForeignLang = true
-			break
-		}
-	}
-	if !hasForeignLang {
-		for _, pl := range parsed.Language {
-			if !tokenInAnyGroup(pl) {
-				hasForeignLang = true
-				break
-			}
-		}
-	}
-	hasJapanese := slices.ContainsFunc(c.flagLanguages, isJapaneseToken) ||
-		slices.ContainsFunc(parsed.Language, isJapaneseToken)
+	// A declared audio language that isn't in any preferred group is a foreign dub (e.g. FR, RU).
+	hasForeignLang := slices.ContainsFunc(c.audioLangs, func(l string) bool { return !tokenInAnyGroup(l) })
+	hasJapanese := slices.ContainsFunc(c.audioLangs, isJapaneseToken)
 
 	// English dub: top preferred audio present, or a dual with no foreign dub language.
 	if matchesGroup(0) || (isDual && !hasForeignLang) {
@@ -487,9 +503,24 @@ func containsBoundedTerm(lowerValue string, term string) bool {
 	}
 }
 
+// filterCandidates applies the profile's constraints. The season gate is the one filter driven by
+// inferred data rather than by the user's profile: expectedSeason comes from the entry title or
+// the metadata provider, either of which can disagree with how releases are labelled (animap
+// defaults an unmapped new cour to season 1). When it is the reason nothing survived, retry
+// without it — scoring still buries wrong-season releases below anything correct, which beats
+// failing the request outright with "no file found".
 func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.AutoSelectProfile) []*candidate {
+	filtered, seasonGated := s.filterCandidatesOnce(candidates, profile, true)
+	if len(filtered) == 0 && seasonGated > 0 {
+		s.logger.Warn().Int("gated", seasonGated).Msg("autoselect: Season gate removed every candidate, retrying without it")
+		filtered, _ = s.filterCandidatesOnce(candidates, profile, false)
+	}
+	return filtered
+}
+
+func (s *AutoSelect) filterCandidatesOnce(candidates []*candidate, profile *anime.AutoSelectProfile, applySeasonGate bool) (filtered []*candidate, seasonGated int) {
 	if profile == nil {
-		return candidates
+		return candidates, 0
 	}
 
 	// Pre-process profile constraints
@@ -516,7 +547,6 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 		}
 	}
 
-	var filtered []*candidate
 	for _, c := range candidates {
 		t := c.torrent
 		parsed := c.parsed
@@ -526,15 +556,19 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 		// batches that include the requested season pass through.
 		if c.expectedSeason >= 2 {
 			if seasons := declaredSeasons(c); len(seasons) > 0 && !seasonCovered(seasons, c.expectedSeason, isUnlabeledSeasonPack(c)) {
-				continue
+				seasonGated++
+				if applySeasonGate {
+					continue
+				}
 			}
 		}
 
-		// Exclude terms
+		// Exclude terms. Matched on token boundaries like every other term test here — a bare
+		// substring makes "raw" exclude the release group "Erai-raws".
 		if len(excludeTerms) > 0 {
 			excluded := false
 			for _, term := range excludeTerms {
-				if strings.Contains(c.lowerName, term) {
+				if containsBoundedTerm(c.lowerName, term) {
 					excluded = true
 					break
 				}
@@ -553,29 +587,16 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 			continue
 		}
 
-		// Language requirement. Check three sources per preferred language, matching what the
-		// ranking path (audioLanguageScore) credits: (1) habari-parsed language, (2) flag-emoji
-		// languages decoded from the raw name — aggregator releases (AIOStreams) often express
-		// language ONLY as flag emoji, which CleanReleaseName strips before habari parses, so
-		// parsed.Language is empty for them, and (3) a bounded name match. The name match runs
-		// unconditionally (not only when parsed.Language is empty), so a release that parsed one
-		// non-matching language still gets the textual check.
+		// Language requirement. Reads exactly what the ranking path credits as audio
+		// (c.audioLangs — flag emoji when present, otherwise habari's languages minus the ones
+		// that describe subtitles), plus a bounded name match. Sharing the source keeps the
+		// filter from being stricter than the scorer.
 		if profile.RequireLanguage && len(preferredLanguages) > 0 {
 			foundLang := false
 			for _, lang := range preferredLanguages {
-				if slices.ContainsFunc(parsed.Language, func(pl string) bool {
+				if slices.ContainsFunc(c.audioLangs, func(pl string) bool {
 					return strings.EqualFold(pl, lang)
-				}) {
-					foundLang = true
-					break
-				}
-				if slices.ContainsFunc(c.flagLanguages, func(fl string) bool {
-					return strings.EqualFold(fl, lang)
-				}) {
-					foundLang = true
-					break
-				}
-				if len(lang) > 3 && containsBoundedTerm(c.lowerName, lang) {
+				}) || (c.nameLangMatchOK && containsBoundedTerm(c.lowerName, lang)) {
 					foundLang = true
 					break
 				}
@@ -585,8 +606,10 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 			}
 		}
 
-		// Seeders filtering
-		if profile.MinSeeders > 0 && t.Seeders < profile.MinSeeders {
+		// Seeders filtering. 0 and -1 mean "unknown", which is what an aggregator reports for a
+		// debrid-backed stream with no swarm — treating that as "fewer than MinSeeders" would
+		// drop every result. Only a real, known-small swarm is filtered.
+		if profile.MinSeeders > 0 && t.Seeders > 0 && t.Seeders < profile.MinSeeders {
 			continue
 		}
 
@@ -651,7 +674,7 @@ func (s *AutoSelect) filterCandidates(candidates []*candidate, profile *anime.Au
 
 		filtered = append(filtered, c)
 	}
-	return filtered
+	return filtered, seasonGated
 }
 
 func (s *AutoSelect) sortCandidates(candidates []*candidate, profile *anime.AutoSelectProfile) {
@@ -911,10 +934,12 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 		}
 	}
 
-	// Release groups
+	// Release groups. The name fallback matters for aggregator results: their "name" starts with
+	// a debrid tag, so habari reports ReleaseGroup="TB" and the real group (from the 🏷️ segment)
+	// only ever appears in the name text — without the fallback this whole weight is dead there.
 	if len(profile.ReleaseGroups) > 0 {
 		for i, group := range profile.ReleaseGroups {
-			if strings.EqualFold(parsed.ReleaseGroup, group) {
+			if strings.EqualFold(parsed.ReleaseGroup, group) || containsBoundedTerm(c.lowerName, group) {
 				priority += scoreReleaseGroupBase - (i * scoreReleaseGroupDecay)
 				break
 			}
@@ -1045,7 +1070,12 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	// already policed by the season gate (labeled: the Honzuki 2020 "S02" case) and the
 	// ambiguous-batch demotion (unlabeled); the year guard is for mislabeled/foreign-convention
 	// SINGLES, where the year is the only cour signal.
-	if c.mediaYear > 0 && parsed.Year != "" && !isUnlabeledSeasonPack(c) {
+	//
+	// A release that names the requested season is exempt too — it has already told us the cour
+	// directly, and singles carry the premiere year just like batches do: aggregator names such
+	// as "Fruits Basket (2019) S03 • E05" parse to Year=2019 with Season=[03], which the guard
+	// would otherwise bury for a 2021 entry.
+	if c.mediaYear > 0 && parsed.Year != "" && !isUnlabeledSeasonPack(c) && !c.seasonExact {
 		if ty, ok := util.StringToInt(parsed.Year); ok && ty > 0 {
 			diff := ty - c.mediaYear
 			if diff < 0 {

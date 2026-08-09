@@ -848,6 +848,118 @@ func TestAutoSelect_SeaDexTopsJapaneseTierOverCache(t *testing.T) {
 	assert.Equal(t, "seadex", sorted[0].InfoHash, "SeaDex must top the Japanese tier even though the rival is cached")
 }
 
+// habari reports SUBTITLE languages in Metadata.Language, so a Japanese-audio release parses as
+// Language=[ENG …] and used to land in the English-dub band. Verified against habari: the Erai-raws
+// name below yields Language=[ENG POR-BR SPA-LA] with Subtitles=[Multiple Subtitle], the aggregator
+// name yields Language=[English] with Subtitles=[Multi Subs], and VOSTFR yields Language=[VOSTFR].
+func TestAutoSelect_SubtitleLanguagesAreNotAudio(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
+	}
+
+	cases := []struct {
+		name string
+		band int
+		why  string
+	}{
+		{
+			name: "[Erai-raws] Show - 07 [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA]",
+			band: 2,
+			why:  "multi-subtitle languages are subtitles, not an English dub",
+		},
+		{
+			name: "[TB⚡] Debridio 1080p\n📁 Show S01 • E07\n🏷️ Erai-raws\n📦 1.4 GB 🔍 Multi Subs|English Subs\n🌐 🇯🇵",
+			band: 2,
+			why:  "the Japanese audio flag wins over an 'English Subs' tag",
+		},
+		{
+			name: "Show.S01E04.VOSTFR.1080p.WEB.x264-Grp",
+			band: 2,
+			why:  "VOSTFR is Japanese audio with French subs, not a French dub",
+		},
+		{
+			name: "[Group] Show - 01 (Dual Audio) [ENG][JPN] [1080p]",
+			band: 3,
+			why:  "an explicit dual-audio release still counts as an English dub",
+		},
+	}
+	for _, c := range cases {
+		cands := buildCandidates([]*hibiketorrent.AnimeTorrent{{Name: c.name}}, 0, 0, 0)
+		assert.Equal(t, c.band, scoreBand(s.calculateScore(cands[0], profile)), c.why)
+	}
+}
+
+// Aggregator names carry the SERIES premiere year even on a correctly season-labelled single
+// ("Fruits Basket (2019) S03 • E05" → Year=2019, Season=[03]), so the wrong-cour year guard
+// buried the very releases the season gate had just confirmed.
+func TestAutoSelect_YearGuardExemptsExplicitSeasonMatch(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}
+
+	labelled := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB☁️⚡] SeaDex 1080p (Best)\n📁 Fruits Basket (2019) S03 • E05\n🎥 BluRay 🏷️ smol\n📦 1.5 GB",
+		InfoHash: "s3",
+	}
+	// A single from the wrong cour with no season label is still buried by the year guard.
+	wrongCour := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Nyaa.si 1080p\n📁 Fruits Basket (2019) E05\n🎥 BluRay 🏷️ Grp\n📦 1.5 GB",
+		InfoHash: "s1",
+	}
+
+	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{labelled, wrongCour}, 3, 5, 2021)
+	assert.NotEqual(t, bandGated, scoreBand(s.calculateScore(cands[0], profile)),
+		"a release naming the requested season must survive the premiere-year guard")
+	assert.Equal(t, bandGated, scoreBand(s.calculateScore(cands[1], profile)),
+		"an unlabelled single from another cour is still gated by the year")
+}
+
+// expectedSeason is inferred (entry title, or the metadata provider, which defaults an unmapped
+// new cour to season 1). When it disagrees with every release label the request used to fail with
+// "no file found"; falling back to the gated set at least offers something.
+func TestAutoSelect_SeasonGateFallsBackWhenItEmptiesEverything(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}
+
+	onlyOtherSeasons := []*hibiketorrent.AnimeTorrent{
+		{Name: "[Grp] Show S01E05 [1080p].mkv", InfoHash: "a", Seeders: 5},
+		{Name: "[Grp] Show S02E05 [1080p].mkv", InfoHash: "b", Seeders: 5},
+	}
+	result := s.filterAndSort(context.Background(), onlyOtherSeasons, profile, 4, 5, 0, nil)
+	assert.Len(t, result, 2, "must not return an empty list when the season gate rejected everything")
+
+	// The gate still drops wrong-season releases whenever anything correct survives.
+	withCorrect := append([]*hibiketorrent.AnimeTorrent{{Name: "[Grp] Show S04E05 [1080p].mkv", InfoHash: "c", Seeders: 1}}, onlyOtherSeasons...)
+	result = s.filterAndSort(context.Background(), withCorrect, profile, 4, 5, 0, nil)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "c", result[0].InfoHash)
+}
+
+func TestAutoSelect_FilterGuardsAgainstUnknownSeeders(t *testing.T) {
+	s := newTestAutoSelect()
+	// Aggregators report seeders 0 for debrid-backed streams with no swarm; MinSeeders must not
+	// read that as "fewer than the minimum" and drop every result.
+	profile := &anime.AutoSelectProfile{MinSeeders: 5}
+	unknown := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p].mkv", InfoHash: "unknown", Seeders: 0}
+	deadSwarm := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 01 [1080p] v2.mkv", InfoHash: "dead", Seeders: 2}
+
+	got := s.filter([]*hibiketorrent.AnimeTorrent{unknown, deadSwarm}, profile)
+	assert.Len(t, got, 1)
+	assert.Equal(t, "unknown", got[0].InfoHash, "unknown seeders must survive MinSeeders; a real 2-seeder swarm must not")
+}
+
+func TestAutoSelect_ExcludeTermsMatchOnTokenBoundaries(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{ExcludeTerms: []string{"raw"}}
+	eraiRaws := &hibiketorrent.AnimeTorrent{Name: "[Erai-raws] Show - 07 [1080p].mkv", InfoHash: "erai"}
+	actualRaw := &hibiketorrent.AnimeTorrent{Name: "[Grp] Show - 07 [1080p] [Raw].mkv", InfoHash: "raw"}
+
+	got := s.filter([]*hibiketorrent.AnimeTorrent{eraiRaws, actualRaw}, profile)
+	assert.Len(t, got, 1)
+	assert.Equal(t, "erai", got[0].InfoHash, "'raw' must exclude a raw release without excluding Erai-raws")
+}
+
 func TestAutoSelect_SizeUnitNotLanguage(t *testing.T) {
 	s := newTestAutoSelect()
 	// "gb" is in the preferred list (Great Britain → English). The "GB" in a gigabyte size must
