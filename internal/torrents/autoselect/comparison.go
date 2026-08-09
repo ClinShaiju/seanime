@@ -891,6 +891,13 @@ func (s *AutoSelect) smartCachedPrioritization(
 	return result
 }
 
+// RankerVersion fingerprints the ranking rules. Bump it whenever the ordering changes, so caches
+// that store "the release auto-select would pick" — the debrid prewarm store — stop serving
+// selections computed by an older ladder. Without this a ranking fix only reaches entries that
+// happen to miss the cache, which is exactly the continue-watching titles a user is mid-way
+// through and would notice first.
+const RankerVersion = "2026-08-09"
+
 // bandGated is the band of a release that can't serve the request at all (wrong episode or a
 // declared season other than the requested one). Named because the sort ladders treat it
 // differently from the audio tiers: it outranks nothing, not even a wrong-season match.

@@ -12,6 +12,7 @@ import (
 	"seanime/internal/debrid/debrid"
 	"seanime/internal/events"
 	"seanime/internal/library/anime"
+	"seanime/internal/torrents/autoselect"
 	"seanime/internal/util"
 	"strconv"
 	"strings"
@@ -43,6 +44,10 @@ func (r *Repository) accountHash() string {
 // profileHashFor fingerprints an auto-select profile so DB reuse is gated to matching profiles: a
 // user on a different profile simply misses the shared row and resolves their own. This is what
 // keeps the quality-over-speed rule mechanical (no serving B a selection computed for A's profile).
+//
+// The ranker version is folded in for the same reason: a stored row is a selection, so a change to
+// the ranking rules makes it stale even though the profile is untouched. Bumping
+// autoselect.RankerVersion retires every row computed by the old ladder.
 func profileHashFor(p *anime.AutoSelectProfile) string {
 	if p == nil {
 		return "default"
@@ -51,7 +56,7 @@ func profileHashFor(p *anime.AutoSelectProfile) string {
 	if err != nil {
 		return "default"
 	}
-	sum := sha256.Sum256(b)
+	sum := sha256.Sum256(append([]byte(autoselect.RankerVersion+"|"), b...))
 	return hex.EncodeToString(sum[:8])
 }
 
