@@ -211,9 +211,24 @@ func (r *Repository) RankTorrentsForDisplay(
 		profile = &anime.AutoSelectProfile{Resolutions: []string{resolution}, MinSeeders: 0}
 	}
 
-	// statuses already cover the full set; return them regardless of the slice passed in.
-	postSearchSort := func(_ []*hibiketorrent.AnimeTorrent) []*autoselect.TorrentWithCacheStatus {
-		return statuses
+	// statuses cover the full set, but they must come back in the order Rank asks for — returning
+	// them in provider order throws away the ranking that decides every tie below cache status.
+	// Keyed by pointer, not InfoHash: aggregator entries for infohash-less debrid streams share
+	// an empty hash.
+	byTorrent := make(map[*hibiketorrent.AnimeTorrent]*autoselect.TorrentWithCacheStatus, len(statuses))
+	for _, st := range statuses {
+		byTorrent[st.Torrent] = st
+	}
+	postSearchSort := func(in []*hibiketorrent.AnimeTorrent) []*autoselect.TorrentWithCacheStatus {
+		out := make([]*autoselect.TorrentWithCacheStatus, 0, len(in))
+		for _, t := range in {
+			if st, ok := byTorrent[t]; ok {
+				out = append(out, st)
+				continue
+			}
+			out = append(out, &autoselect.TorrentWithCacheStatus{Torrent: t})
+		}
+		return out
 	}
 
 	// Same season source as auto-select (metadata-derived, title fallback) so the UI "Auto"

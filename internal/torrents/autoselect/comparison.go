@@ -127,35 +127,23 @@ func (s *AutoSelect) filterAndSort(
 	// Sort by profile scores first
 	s.sortCandidates(candidates, profile)
 
-	var filteredTorrents []*hibiketorrent.AnimeTorrent
-
-	// apply torrent prioritization if provided
-	if postSearchSort != nil {
-		filteredTorrents = make([]*hibiketorrent.AnimeTorrent, len(candidates))
-		for i, c := range candidates {
-			filteredTorrents[i] = c.torrent
-		}
-		filteredTorrents = s.smartCachedPrioritization(filteredTorrents, candidates, profile, postSearchSort)
-	} else {
-		filteredTorrents = make([]*hibiketorrent.AnimeTorrent, len(candidates))
-		for i, c := range candidates {
-			if i < 3 {
-				s.logger.Debug().Str("name", c.torrent.Name).Int("seeders", c.torrent.Seeders).Int("score", c.score).Str("provider", c.torrent.Provider).Msg("autoselect: Top selection")
-			}
-			filteredTorrents[i] = c.torrent
-		}
+	filteredTorrents := make([]*hibiketorrent.AnimeTorrent, len(candidates))
+	for i, c := range candidates {
+		filteredTorrents[i] = c.torrent
 	}
+	// Always run the same final ladder. Without a prioritizer nothing is cached, but the
+	// resolution floor and the curated-best rung still apply — the torrent-stream path used to
+	// skip both and rank on the raw score alone.
+	filteredTorrents = s.smartCachedPrioritization(filteredTorrents, candidates, profile, postSearchSort)
 
 	// Populate the candidates list for the status updates
+	scoreOf := make(map[*hibiketorrent.AnimeTorrent]int, len(candidates))
+	for _, c := range candidates {
+		scoreOf[c.torrent] = c.score
+	}
 	candidatesList := make([]AutoSelectCandidate, len(filteredTorrents))
 	for i, t := range filteredTorrents {
-		score := 0
-		for _, c := range candidates {
-			if c.torrent.InfoHash == t.InfoHash {
-				score = c.score
-				break
-			}
-		}
+		score := scoreOf[t]
 		candidatesList[i] = AutoSelectCandidate{
 			Name:     t.Name,
 			Provider: t.Provider,
@@ -338,11 +326,7 @@ func (s *AutoSelect) Rank(
 	for i, c := range candidates {
 		sorted[i] = c.torrent
 	}
-
-	if postSearchSort != nil {
-		return s.smartCachedPrioritization(sorted, candidates, profile, postSearchSort)
-	}
-	return sorted
+	return s.smartCachedPrioritization(sorted, candidates, profile, postSearchSort)
 }
 
 // filter is a shim for testing or legacy usage.
@@ -748,6 +732,16 @@ func resolutionTier(c *candidate) int {
 	}
 }
 
+// uncachedStatuses is the prioritizer used when the caller has no cache information (the
+// torrent-stream path): order is preserved and nothing counts as cached.
+func uncachedStatuses(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+	out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+	for _, t := range torrents {
+		out = append(out, &TorrentWithCacheStatus{Torrent: t})
+	}
+	return out
+}
+
 // boolFirst orders true before false in a slices.SortStableFunc comparator.
 func boolFirst(v bool) int {
 	if v {
@@ -798,10 +792,15 @@ func (s *AutoSelect) smartCachedPrioritization(
 	if len(torrents) == 0 {
 		return torrents
 	}
+	if postSearchSort == nil {
+		postSearchSort = uncachedStatuses
+	}
 
-	candidateMap := make(map[string]*candidate, len(candidates))
+	// Keyed by pointer: InfoHash is empty for the aggregator's infohash-less debrid streams, so a
+	// string key collapses all of them onto one candidate and hands the rest score 0.
+	candidateMap := make(map[*hibiketorrent.AnimeTorrent]*candidate, len(candidates))
 	for _, c := range candidates {
-		candidateMap[c.torrent.InfoHash] = c
+		candidateMap[c.torrent] = c
 	}
 
 	type rankItem struct {
@@ -815,7 +814,7 @@ func (s *AutoSelect) smartCachedPrioritization(
 	items := make([]rankItem, 0, len(torrents))
 	for _, tws := range postSearchSort(torrents) {
 		it := rankItem{torrent: tws.Torrent, cached: tws.IsCached}
-		if c, ok := candidateMap[tws.Torrent.InfoHash]; ok {
+		if c, ok := candidateMap[tws.Torrent]; ok {
 			it.score = c.score
 			it.resTier = resolutionTier(c)
 			it.seasonExact = c.seasonExact
