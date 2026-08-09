@@ -63,6 +63,11 @@ func (ap *AnilistPlatform) ClearCache() {
 
 func (ap *AnilistPlatform) Close() {
 	ap.helper.Close()
+	// Type assertion, not a concrete *CacheLayer: NewCacheLayer returns the RAW AniList client
+	// (no ticker to stop) when the file cacher fails to open.
+	if c, ok := ap.anilistClient.(interface{ Close() }); ok {
+		c.Close()
+	}
 }
 
 func (ap *AnilistPlatform) GetCustomSourceManager() *customsource.Manager {

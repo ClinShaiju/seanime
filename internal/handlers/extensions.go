@@ -177,9 +177,15 @@ func (h *Handler) HandleReloadExternalExtension(c echo.Context) error {
 		ID string `json:"id"`
 	}
 
+	// Both the bulk "reload all" and the single-extension reload clients POST to this same
+	// path, and echo keeps only the last registration for a method+path — so the bulk handler
+	// was unreachable and "reload all" silently reloaded nothing. Dispatch on the optional id
+	// instead. A bind failure just means "no id" (the bulk client sends no body), not an error.
 	var b body
-	if err := c.Bind(&b); err != nil {
-		return h.RespondWithError(c, err)
+	_ = c.Bind(&b)
+
+	if b.ID == "" {
+		return h.HandleReloadExternalExtensions(c) // guards internally
 	}
 
 	if err := h.guardPrivilegedExtensionManagement(c); err != nil {
@@ -525,6 +531,13 @@ func (h *Handler) HandleSaveExtensionUserConfig(c echo.Context) error {
 	var b body
 	if err := c.Bind(&b); err != nil {
 		return h.RespondWithError(c, err)
+	}
+
+	// Saved values are substituted into the extension's JS payload before it is reloaded,
+	// so writing this config is equivalent to running code in the shared plugin sandbox —
+	// it needs the same privilege as install/uninstall, not just the server password.
+	if err := h.guardPrivilegedExtensionManagement(c); err != nil {
+		return err
 	}
 
 	config := &extension.SavedUserConfig{

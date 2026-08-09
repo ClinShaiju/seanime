@@ -63,8 +63,9 @@ func (h *Handler) webSocketEventHandler(c echo.Context) error {
 	}
 	platform := getClientPlatformFromContext(c)
 
-	// Add connection to manager
-	h.App.WSEventManager.AddConn(id, ws, platform)
+	// Add connection to manager. Keep the returned *WSConn: cleanup below must remove
+	// THIS socket by identity, since concurrent tabs share one client id.
+	wsConn := h.App.WSEventManager.AddConn(id, ws, platform)
 	// Associate the connection with a user for per-user event scoping, if the client
 	// passed its session token. Best-effort: an unassociated conn just won't receive
 	// user-scoped events (global events still reach it).
@@ -88,7 +89,7 @@ func (h *Handler) webSocketEventHandler(c echo.Context) error {
 			} else {
 				h.App.Logger.Debug().Str("id", id).Msg("ws: Client disconnection")
 			}
-			h.App.WSEventManager.RemoveConn(id)
+			h.App.WSEventManager.RemoveConn(wsConn)
 			// Hand off watch-room control if this client was driving a room (the
 			// participant stays — they may be reconnecting).
 			if h.App.NakamaManager != nil {

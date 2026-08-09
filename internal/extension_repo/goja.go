@@ -60,7 +60,13 @@ func BindUserConfig(vm *goja.Runtime, ext *extension.Extension, logger *zerolog.
 
 // ShareBinds binds the shared bindings to the VM
 // This is called once per VM
-func ShareBinds(vm *goja.Runtime, logger *zerolog.Logger, ext *extension.Extension, wsEventManager events.WSEventManagerInterface) {
+//
+// It returns the ChromeDP binding installed on the VM. ChromeDP is bound eagerly to
+// every runtime whether or not the extension ever calls it, and it owns a pump
+// goroutine that only exits when the binding is closed, so the caller must hand the
+// returned value to the registry that closes it on unload — otherwise every runtime
+// the extension is ever given leaks a goroutine that is never reclaimed.
+func ShareBinds(vm *goja.Runtime, logger *zerolog.Logger, ext *extension.Extension, wsEventManager events.WSEventManagerInterface) *goja_bindings.ChromeDP {
 	registry := new(gojarequire.Registry)
 	registry.Enable(vm)
 
@@ -68,13 +74,15 @@ func ShareBinds(vm *goja.Runtime, logger *zerolog.Logger, ext *extension.Extensi
 	vm.SetFieldNameMapper(fm)
 	// goja.TagFieldNameMapper("json", true)
 
+	var chromeDP *goja_bindings.ChromeDP
+
 	bindings := []struct {
 		name string
 		fn   func(*goja.Runtime) error
 	}{
 		{"url", func(vm *goja.Runtime) error { gojaurl.Enable(vm); return nil }},
 		{"buffer", func(vm *goja.Runtime) error { gojabuffer.Enable(vm); return nil }},
-		{"ChromeDP", func(vm *goja.Runtime) error { goja_bindings.BindChromeDP(vm); return nil }},
+		{"ChromeDP", func(vm *goja.Runtime) error { chromeDP = goja_bindings.BindChromeDP(vm); return nil }},
 		{"console", func(vm *goja.Runtime) error {
 			goja_bindings.BindConsoleWithWS(ext, vm, logger, wsEventManager)
 			return nil
@@ -252,6 +260,8 @@ func ShareBinds(vm *goja.Runtime, logger *zerolog.Logger, ext *extension.Extensi
 			fn()
 		}()
 	})
+
+	return chromeDP
 }
 
 // JSVMTypescriptToJS converts typescript to javascript

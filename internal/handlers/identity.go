@@ -67,7 +67,12 @@ var errStreamingRequiresUser = errors.New("streaming requires logging in")
 // which this blocks.)
 func (h *Handler) guardStreamingUser(c echo.Context) error {
 	if h.dataUserID(c) == 0 {
-		return h.RespondWithStatusError(c, http.StatusForbidden, errStreamingRequiresUser)
+		// Must be respondWithAbort, NOT RespondWithStatusError: the latter is c.JSON(), which
+		// returns nil on a successful write, so every `if err != nil` caller — including the
+		// UserOnly middleware — saw nil and ran the handler anyway. The 403 was written, then
+		// the action executed regardless. respondWithAbort returns the errGuardResponseWritten
+		// sentinel so callers actually stop.
+		return respondWithAbort(c, http.StatusForbidden, errStreamingRequiresUser)
 	}
 	return nil
 }

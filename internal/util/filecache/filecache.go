@@ -477,10 +477,10 @@ func (c *Cacher) TrimMediastreamVideoFiles() error {
 		for _, file := range files {
 			_ = os.RemoveAll(filepath.Join(c.dir, "videofiles", file.Name()))
 		}
+		c.stores = make(map[string]*CacheStore)
 	}
 
-	c.stores = make(map[string]*CacheStore)
-	return err
+	return nil
 }
 
 func (c *Cacher) GetMediastreamVideoFilesTotalSize() (int64, error) {

@@ -2,7 +2,7 @@ import { Anime_AutoDownloaderRule, Anime_Entry } from "@/api/generated/types"
 import { useGetAutoDownloaderProfiles, useGetAutoDownloaderRulesByAnime } from "@/api/hooks/auto_downloader.hooks"
 import { useAnimeListTorrentProviderExtensions } from "@/api/hooks/extensions.hooks"
 import { __anilist_userAnimeMediaAtom } from "@/app/(main)/_atoms/anilist.atoms"
-import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
+import { useIsAdmin, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { AutoDownloaderRuleItem } from "@/app/(main)/auto-downloader/_components/autodownloader-rule-item"
 import { AutoDownloaderRuleForm } from "@/app/(main)/auto-downloader/_containers/autodownloader-rule-form"
 import { LuffyError } from "@/components/shared/luffy-error"
@@ -78,11 +78,12 @@ export function Content(props: ContentProps) {
     const { data: extensions } = useAnimeListTorrentProviderExtensions()
     const userMedia = useAtomValue(__anilist_userAnimeMediaAtom)
     const createRuleModal = useBoolean(false)
+    const isAdmin = useIsAdmin()
 
     return (
         <div className="space-y-4">
 
-            <div className="flex w-full">
+            {isAdmin && <div className="flex w-full">
                 <div className="flex-1"></div>
                 <Modal
                     open={createRuleModal.active}
@@ -106,7 +107,7 @@ export function Content(props: ContentProps) {
                         onRuleCreatedOrDeleted={() => createRuleModal.off()}
                     />
                 </Modal>
-            </div>
+            </div>}
 
             {!rules?.length && (
                 <LuffyError title={null}>

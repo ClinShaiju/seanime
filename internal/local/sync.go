@@ -100,16 +100,18 @@ func (q *Syncer) processAnimeJobs() {
 			Title:   job.Diff.AnimeEntry.Media.GetPreferredTitle(),
 			Type:    "anime",
 		}
-		q.SendQueueStateToClient()
 		q.queueStateMu.Unlock()
+		q.SendQueueStateToClient()
 
+		q.mu.Lock()
 		q.shouldUpdateLocalCollections = true
+		q.mu.Unlock()
 		q.synchronizeAnime(job.Diff)
 
 		q.queueStateMu.Lock()
 		delete(q.queueState.AnimeTasks, job.Diff.AnimeEntry.Media.ID)
-		q.SendQueueStateToClient()
 		q.queueStateMu.Unlock()
+		q.SendQueueStateToClient()
 
 		q.checkAndUpdateLocalCollections()
 	}
@@ -125,16 +127,18 @@ func (q *Syncer) processMangaJobs() {
 			Title:   job.Diff.MangaEntry.Media.GetPreferredTitle(),
 			Type:    "manga",
 		}
-		q.SendQueueStateToClient()
 		q.queueStateMu.Unlock()
+		q.SendQueueStateToClient()
 
+		q.mu.Lock()
 		q.shouldUpdateLocalCollections = true
+		q.mu.Unlock()
 		q.synchronizeManga(job.Diff)
 
 		q.queueStateMu.Lock()
 		delete(q.queueState.MangaTasks, job.Diff.MangaEntry.Media.ID)
-		q.SendQueueStateToClient()
 		q.queueStateMu.Unlock()
+		q.SendQueueStateToClient()
 
 		q.checkAndUpdateLocalCollections()
 	}
@@ -168,7 +172,22 @@ func (q *Syncer) checkAndUpdateLocalCollections() {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func (q *Syncer) GetQueueState() QueueState {
-	return q.queueState
+	q.queueStateMu.RLock()
+	defer q.queueStateMu.RUnlock()
+
+	animeTasks := make(map[int]*QueueMediaTask, len(q.queueState.AnimeTasks))
+	for k, v := range q.queueState.AnimeTasks {
+		animeTasks[k] = v
+	}
+	mangaTasks := make(map[int]*QueueMediaTask, len(q.queueState.MangaTasks))
+	for k, v := range q.queueState.MangaTasks {
+		mangaTasks[k] = v
+	}
+
+	return QueueState{
+		AnimeTasks: animeTasks,
+		MangaTasks: mangaTasks,
+	}
 }
 
 func (q *Syncer) SendQueueStateToClient() {
@@ -439,7 +458,9 @@ func (q *Syncer) refreshCollections() {
 		return
 	}
 
+	q.mu.Lock()
 	q.shouldUpdateLocalCollections = true
+	q.mu.Unlock()
 	q.checkAndUpdateLocalCollections()
 }
 

@@ -464,81 +464,95 @@ func (c *Coordinator) SetupSharedEffects() {
 	c.effectsOnce.Do(func() {
 		sub := c.Subscribe("coordinator:effects")
 		go func() {
-			for event := range sub.Events() {
-				switch value := event.(type) {
-				case *player.PausedEvent:
-					c.updateContinuity(value.CurrentTime, value.Duration)
-					if c.discordPresence != nil && !c.isOfflineRef.Get() {
-						go c.discordPresence.UpdateAnimeActivity(int(value.CurrentTime), int(value.Duration), true)
+			// Select on stopCh alongside the subscriber channel: nothing ever unsubscribes
+			// "coordinator:effects" (the Coordinator owns it), so a bare range would block
+			// forever once Close() stops the dispatch loop, leaking this goroutine on every
+			// per-user session eviction. Closing the channel from Close() instead would race
+			// with dispatch()'s send. The `ok` check keeps this correct if a future caller
+			// does Unsubscribe("coordinator:effects").
+			for {
+				select {
+				case <-c.stopCh:
+					return
+				case event, ok := <-sub.Events():
+					if !ok {
+						return
 					}
-				case *player.ResumedEvent:
-					if c.discordPresence != nil && !c.isOfflineRef.Get() {
-						go c.discordPresence.UpdateAnimeActivity(int(value.CurrentTime), int(value.Duration), false)
-					}
-				case *player.LoadedMetadataEvent:
-					state, ok := c.GetActivePlaybackState()
-					if !ok || state.PlaybackInfo.Media == nil || state.PlaybackInfo.Episode == nil {
-						continue
-					}
-					if c.discordPresence != nil && !c.isOfflineRef.Get() {
-						c.logger.Debug().Msgf("mediacore: Setting Discord presence for %s", state.PlaybackInfo.Media.GetPreferredTitle())
-						episodeNumber := state.PlaybackInfo.Episode.GetProgressNumber()
-						if episodeNumber <= 0 {
-							episodeNumber = state.PlaybackInfo.Episode.GetEpisodeNumber()
+					switch value := event.(type) {
+					case *player.PausedEvent:
+						c.updateContinuity(value.CurrentTime, value.Duration)
+						if c.discordPresence != nil && !c.isOfflineRef.Get() {
+							go c.discordPresence.UpdateAnimeActivity(int(value.CurrentTime), int(value.Duration), true)
 						}
-						go c.discordPresence.SetAnimeActivity(discordrpc_presence.NewAnimeActivity(
-							state.PlaybackInfo.Media,
-							episodeNumber,
-							state.PlaybackInfo.Episode.EpisodeTitle,
-							int(value.CurrentTime),
-							int(value.Duration),
-						))
-					}
-				case *player.StatusEvent:
-					state, ok := c.GetActivePlaybackState()
-					if !ok || state.PlaybackInfo.Media == nil || state.PlaybackInfo.Episode == nil {
-						continue
-					}
-					c.updateContinuityState(state, value.CurrentTime, value.Duration)
-					if c.discordPresence != nil && !c.isOfflineRef.Get() {
-						go c.discordPresence.UpdateAnimeActivity(int(value.CurrentTime), int(value.Duration), value.Paused)
-					}
-				case *player.SeekedEvent:
-					c.updateContinuity(value.CurrentTime, value.Duration)
-				case *player.CompletedEvent:
-					state, ok := c.GetActivePlaybackState()
-					if !ok || state.PlaybackInfo.Media == nil || state.PlaybackInfo.Episode == nil || c.platformRef == nil {
-						continue
-					}
-					c.settingsMu.RLock()
-					shouldUpdate := c.settings != nil && c.settings.GetLibrary().AutoUpdateProgress
-					c.settingsMu.RUnlock()
-					if !shouldUpdate {
-						continue
-					}
+					case *player.ResumedEvent:
+						if c.discordPresence != nil && !c.isOfflineRef.Get() {
+							go c.discordPresence.UpdateAnimeActivity(int(value.CurrentTime), int(value.Duration), false)
+						}
+					case *player.LoadedMetadataEvent:
+						state, ok := c.GetActivePlaybackState()
+						if !ok || state.PlaybackInfo.Media == nil || state.PlaybackInfo.Episode == nil {
+							continue
+						}
+						if c.discordPresence != nil && !c.isOfflineRef.Get() {
+							c.logger.Debug().Msgf("mediacore: Setting Discord presence for %s", state.PlaybackInfo.Media.GetPreferredTitle())
+							episodeNumber := state.PlaybackInfo.Episode.GetProgressNumber()
+							if episodeNumber <= 0 {
+								episodeNumber = state.PlaybackInfo.Episode.GetEpisodeNumber()
+							}
+							go c.discordPresence.SetAnimeActivity(discordrpc_presence.NewAnimeActivity(
+								state.PlaybackInfo.Media,
+								episodeNumber,
+								state.PlaybackInfo.Episode.EpisodeTitle,
+								int(value.CurrentTime),
+								int(value.Duration),
+							))
+						}
+					case *player.StatusEvent:
+						state, ok := c.GetActivePlaybackState()
+						if !ok || state.PlaybackInfo.Media == nil || state.PlaybackInfo.Episode == nil {
+							continue
+						}
+						c.updateContinuityState(state, value.CurrentTime, value.Duration)
+						if c.discordPresence != nil && !c.isOfflineRef.Get() {
+							go c.discordPresence.UpdateAnimeActivity(int(value.CurrentTime), int(value.Duration), value.Paused)
+						}
+					case *player.SeekedEvent:
+						c.updateContinuity(value.CurrentTime, value.Duration)
+					case *player.CompletedEvent:
+						state, ok := c.GetActivePlaybackState()
+						if !ok || state.PlaybackInfo.Media == nil || state.PlaybackInfo.Episode == nil || c.platformRef == nil {
+							continue
+						}
+						c.settingsMu.RLock()
+						shouldUpdate := c.settings != nil && c.settings.GetLibrary().AutoUpdateProgress
+						c.settingsMu.RUnlock()
+						if !shouldUpdate {
+							continue
+						}
 
-					mediaID := state.PlaybackInfo.Media.GetID()
-					progress := state.PlaybackInfo.Episode.GetProgressNumber()
-					total := state.PlaybackInfo.Media.Episodes
+						mediaID := state.PlaybackInfo.Media.GetID()
+						progress := state.PlaybackInfo.Episode.GetProgressNumber()
+						total := state.PlaybackInfo.Media.Episodes
 
-					collection, err := c.platformRef.Get().GetAnimeCollection(context.Background(), false)
-					if err == nil {
-						if listEntry, hasEntry := collection.GetListEntryFromAnimeId(mediaID); hasEntry {
-							if listEntry.Progress != nil && progress <= *listEntry.Progress {
-								continue
+						collection, err := c.platformRef.Get().GetAnimeCollection(context.Background(), false)
+						if err == nil {
+							if listEntry, hasEntry := collection.GetListEntryFromAnimeId(mediaID); hasEntry {
+								if listEntry.Progress != nil && progress <= *listEntry.Progress {
+									continue
+								}
 							}
 						}
-					}
 
-					err = c.platformRef.Get().UpdateEntryProgress(context.Background(), mediaID, progress, total)
-					if err == nil && c.refreshAnimeCollectionFunc != nil {
-						c.refreshAnimeCollectionFunc()
-					} else if err != nil {
-						c.logger.Error().Err(err).Msgf("mediacore: Failed to update progress for media %d", mediaID)
-					}
-				case *player.EndedEvent, *player.ErrorEvent, *player.TerminatedEvent:
-					if c.discordPresence != nil && !c.isOfflineRef.Get() {
-						go c.discordPresence.Close()
+						err = c.platformRef.Get().UpdateEntryProgress(context.Background(), mediaID, progress, total)
+						if err == nil && c.refreshAnimeCollectionFunc != nil {
+							c.refreshAnimeCollectionFunc()
+						} else if err != nil {
+							c.logger.Error().Err(err).Msgf("mediacore: Failed to update progress for media %d", mediaID)
+						}
+					case *player.EndedEvent, *player.ErrorEvent, *player.TerminatedEvent:
+						if c.discordPresence != nil && !c.isOfflineRef.Get() {
+							go c.discordPresence.Close()
+						}
 					}
 				}
 			}

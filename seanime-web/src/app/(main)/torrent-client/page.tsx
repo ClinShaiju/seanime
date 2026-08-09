@@ -4,7 +4,7 @@ import { useOpenInExplorer } from "@/api/hooks/explorer.hooks"
 import { useGetActiveTorrentList, useGetBuiltInTorrentDetails, useTorrentClientAction } from "@/api/hooks/torrent_client.hooks"
 import { SeaContextMenu } from "@/app/(main)/_features/context-menu/sea-context-menu"
 import { useLibraryPathSelection } from "@/app/(main)/_hooks/use-library-path-selection"
-import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
+import { useIsAdmin, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
 import { DirectorySelector } from "@/components/shared/directory-selector"
 import { LuffyError } from "@/components/shared/luffy-error"
@@ -191,6 +191,10 @@ export default function Page() {
 
 function Dashboard() {
     const serverStatus = useServerStatus()
+    // pause-all/resume-all/set-limits/move-storage/add-magnet are server-wide and admin-only
+    // server-side (HandleTorrentClientAction), so hide them rather than let them 403 on click.
+    // Per-torrent pause/resume/remove stay available to any logged-in user.
+    const isAdmin = useIsAdmin()
     const [filter, setFilter] = React.useState<StatusFilter>("all")
     const [search, setSearch] = React.useState("")
     const [selected, setSelected] = React.useState<Set<string>>(new Set())
@@ -311,7 +315,7 @@ function Dashboard() {
                 <h2>Torrent client</h2>
                 <p className="text-[--muted]">Manage downloads running directly in Seanime.</p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            {isAdmin && <div className="flex flex-wrap gap-2">
                 <Button leftIcon={<LuMagnet />} intent="white" onClick={() => setAddOpen(true)}>Add torrent</Button>
                 <Button
                     intent="gray-outline"
@@ -325,7 +329,7 @@ function Dashboard() {
                     disabled={torrents.length === 0 || !torrents.some(t => t.status === "paused" || t.status === "stopped") || action.isPending}
                     onClick={() => perform({ action: "resume-all" })}
                 >Resume all</Button>
-            </div>
+            </div>}
         </header>
         <div className="grid xl:min-h-[68vh] grid-cols-1 gap-4 xl:grid-cols-[12rem_minmax(0,1fr)]">
             <div className="flex flex-col gap-1 min-w-0">
@@ -423,7 +427,7 @@ function Dashboard() {
                                     >
                                         Force start
                                     </Tooltip>
-                                    <Tooltip
+                                    {isAdmin && <Tooltip
                                         trigger={<IconButton
                                             icon={<BiFolder />}
                                             intent="gray-subtle"
@@ -436,7 +440,7 @@ function Dashboard() {
                                         />}
                                     >
                                         Change save path
-                                    </Tooltip>
+                                    </Tooltip>}
                                     <Tooltip
                                         trigger={<IconButton
                                             icon={<BiRefresh />}
@@ -457,7 +461,7 @@ function Dashboard() {
                                     >
                                         Reannounce
                                     </Tooltip>
-                                    <Popover
+                                    {isAdmin && <Popover
                                         open={limitsOpen}
                                         onOpenChange={setLimitsOpen}
                                         trigger={
@@ -484,7 +488,7 @@ function Dashboard() {
                                             uploadLimit: Number(uploadLimit) || 0,
                                         })}
                                         >Apply limits</Button>
-                                    </Popover>
+                                    </Popover>}
                                 </div>
 
                                 <span className="mx-1 h-5 w-px bg-[--border]" />
@@ -602,7 +606,7 @@ function Dashboard() {
                                             >
                                                 <BiRename /> Rename
                                             </ContextMenuItem>
-                                            <ContextMenuItem
+                                            {isAdmin && <ContextMenuItem
                                                 disabled={torrent.size === "0 B" || action.isPending}
                                                 onClick={() => {
                                                     setFocusedHash(torrent.hash)
@@ -611,7 +615,7 @@ function Dashboard() {
                                                 }}
                                             >
                                                 <BiFolder /> Change save path
-                                            </ContextMenuItem>
+                                            </ContextMenuItem>}
                                             <ContextMenuItem
                                                 disabled={torrent.size === "0 B"}
                                                 onClick={() => openInExplorer({ path: torrent.contentPath })}

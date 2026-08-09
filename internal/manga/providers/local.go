@@ -429,6 +429,7 @@ func (p *Local) FindChapterPages(id string) (ret []*hibikemanga.ChapterPage, err
 				return nil, fmt.Errorf("failed to open page: %w", err)
 			}
 			buf, err := io.ReadAll(page)
+			_ = page.Close()
 			if err != nil {
 				return nil, fmt.Errorf("failed to read page: %w", err)
 			}
@@ -496,6 +497,7 @@ func (p *Local) FindChapterPages(id string) (ret []*hibikemanga.ChapterPage, err
 				return nil, fmt.Errorf("failed to open page: %w", err)
 			}
 			buf, err := io.ReadAll(page)
+			_ = page.Close()
 			if err != nil {
 				return nil, fmt.Errorf("failed to read page: %w", err)
 			}

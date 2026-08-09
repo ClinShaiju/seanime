@@ -530,9 +530,6 @@ func (d *Dummy) copyThrottled(ctx context.Context, w http.ResponseWriter, r io.R
 	}
 
 	chunkSize := settings.ChunkSize
-	if chunkSize <= 0 {
-		chunkSize = chunkSize
-	}
 	buf := make([]byte, chunkSize)
 	left := length
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))

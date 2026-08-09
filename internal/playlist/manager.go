@@ -126,6 +126,10 @@ type (
 
 		ctx    context.Context
 		cancel context.CancelFunc
+		// sessionGen identifies the current playlist session. It is incremented by startPlaylist
+		// under m.mu; the session goroutine captures its own value and uses it to detect that it
+		// has been superseded by a newer startPlaylist. Guarded by m.mu.
+		sessionGen uint64
 	}
 
 	NewManagerOptions struct {
@@ -177,6 +181,10 @@ type (
 	}
 )
 
+// sendCurrentPlaylistToClient sends the current playlist state to the client.
+//
+// The caller MUST hold m.mu: this reads currentEpisode/currentPlaylistData, and every call site
+// already runs under the lock.
 func (m *Manager) sendCurrentPlaylistToClient() {
 	playlistEpisode, _ := m.currentEpisode.Get()
 
@@ -223,7 +231,9 @@ func (m *Manager) listenToEvents() {
 			switch event.Type {
 			case ClientEventCurrentPlaylist:
 				// UI requested current playlist
+				m.mu.Lock()
 				m.sendCurrentPlaylistToClient()
+				m.mu.Unlock()
 			case ClientEventStart:
 				// User is starting a new playlist
 				m.logger.Debug().Msg("playlist: New playlist requested")
@@ -234,9 +244,11 @@ func (m *Manager) listenToEvents() {
 				m.isStartingPlaylist.Store(true)
 
 				// cancel any existing playback
+				m.mu.Lock()
 				if m.cancel != nil {
 					m.cancel()
 				}
+				m.mu.Unlock()
 				payload := startPlaylistPayload{}
 				if err := event.UnmarshalAs(&payload); err == nil {
 					// Get the playlist
@@ -289,6 +301,12 @@ func (m *Manager) startPlaylist(playlist *anime.Playlist, options *startPlaylist
 
 	// create a new context
 	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.sessionGen++
+	// Snapshot the context and generation for the session goroutine below. It must never re-read
+	// m.ctx: doing so makes a superseded goroutine start observing the NEXT session's context and
+	// tear that session down (see the generation check in the ctx.Done branch).
+	sessionCtx := m.ctx
+	sessionGen := m.sessionGen
 
 	playbackManagerSubscriber := m.playbackManager.SubscribeToPlaybackStatus("playlist-manager")
 	var mediacoreSubscriber *mediacore.Subscriber
@@ -302,9 +320,22 @@ func (m *Manager) startPlaylist(playlist *anime.Playlist, options *startPlaylist
 	go func() {
 		for {
 			select {
-			case <-m.ctx.Done():
+			case <-sessionCtx.Done():
 				m.logger.Trace().Uint("dbId", playlist.DbId).Msg("playlist: Current playlist context done")
-				m.resetPlaylist()
+				// If a newer startPlaylist has already taken over, this goroutine is superseded:
+				// exit without touching shared state. The subscriber keys below are shared
+				// ("playlist-manager"), so unsubscribing here would close the NEW session's
+				// event channel and kill its playback signalling.
+				m.mu.Lock()
+				superseded := m.sessionGen != sessionGen
+				if !superseded {
+					m.resetPlaylistLocked()
+				}
+				m.mu.Unlock()
+				if superseded {
+					m.logger.Trace().Msg("playlist: Superseded playlist session goroutine exiting")
+					return
+				}
 				m.playbackManager.UnsubscribeFromPlaybackStatus("playlist-manager")
 				if m.mediacoreCoordinator != nil {
 					m.mediacoreCoordinator.Unsubscribe("playlist-manager")
@@ -326,7 +357,10 @@ func (m *Manager) startPlaylist(playlist *anime.Playlist, options *startPlaylist
 						m.StopPlaylist("Playlist stopped")
 
 					} else if m.state.Load() == StateCompleted {
-						m.markCurrentAsCompleted()
+						m.mu.Lock()
+						m.markCurrentAsCompletedLocked()
+						m.mu.Unlock()
+						// playNextEpisode takes m.mu itself; call it unlocked.
 						m.playNextEpisode()
 					}
 					m.state.Store(StateIdle)
@@ -336,7 +370,9 @@ func (m *Manager) startPlaylist(playlist *anime.Playlist, options *startPlaylist
 					m.state.Store(StateStarted)
 					m.playerType.Store(SystemPlayer)
 
+					m.mu.Lock()
 					data, ok := m.currentPlaylistData.Get()
+					m.mu.Unlock()
 					if !ok {
 						continue
 					}
@@ -350,26 +386,33 @@ func (m *Manager) startPlaylist(playlist *anime.Playlist, options *startPlaylist
 						state, ok = m.playbackManager.PullStreamState()
 					}
 					if ok {
-						// Check if correct episode
-						currentEpisode, ok := m.currentEpisode.Get()
-						if ok {
-							if currentEpisode.Episode.EpisodeNumber != state.EpisodeNumber || currentEpisode.Episode.BaseAnime.ID != state.MediaId {
-								// Find the episode
-								var actualEpisode *anime.PlaylistEpisode
-								for _, e := range data.playlist.Episodes {
-									if e.Episode.BaseAnime.ID == state.MediaId && e.Episode.AniDBEpisode == state.AniDbEpisode {
-										actualEpisode = e
-										break
-									}
+						// Reconcile the playlist's episode pointer with what actually started
+						// playing. The lock covers only the read/write of currentEpisode; the
+						// StopPlaylist call below is deliberately made after unlocking, since
+						// StopPlaylist acquires m.mu itself.
+						m.mu.Lock()
+						currentEpisode, found := m.currentEpisode.Get()
+						mismatch := found && (currentEpisode.Episode.EpisodeNumber != state.EpisodeNumber || currentEpisode.Episode.BaseAnime.ID != state.MediaId)
+						var actualEpisode *anime.PlaylistEpisode
+						if mismatch {
+							// Find the episode
+							for _, e := range data.playlist.Episodes {
+								if e.Episode.BaseAnime.ID == state.MediaId && e.Episode.AniDBEpisode == state.AniDbEpisode {
+									actualEpisode = e
+									break
 								}
-								if actualEpisode == nil {
-									m.logger.Error().Int("episodeNumber", state.EpisodeNumber).Int("mediaId", state.MediaId).Msg("playlist: Cannot find episode in playlist")
-									m.StopPlaylist("Playlist stopped, cannot find episode in playlist", true)
-									continue
-								}
+							}
+							if actualEpisode != nil {
 								m.currentEpisode = mo.Some(actualEpisode)
 								m.sendCurrentPlaylistToClient()
 							}
+						}
+						m.mu.Unlock()
+
+						if mismatch && actualEpisode == nil {
+							m.logger.Error().Int("episodeNumber", state.EpisodeNumber).Int("mediaId", state.MediaId).Msg("playlist: Cannot find episode in playlist")
+							m.StopPlaylist("Playlist stopped, cannot find episode in playlist", true)
+							continue
 						}
 					}
 				}
@@ -389,7 +432,9 @@ func (m *Manager) startPlaylist(playlist *anime.Playlist, options *startPlaylist
 					if m.playerType.Load() != playerType {
 						continue
 					}
-					m.markCurrentAsCompleted()
+					m.mu.Lock()
+					m.markCurrentAsCompletedLocked()
+					m.mu.Unlock()
 					m.state.Store(StateCompleted)
 
 				case *player.EndedEvent:
@@ -397,7 +442,10 @@ func (m *Manager) startPlaylist(playlist *anime.Playlist, options *startPlaylist
 						continue
 					}
 					if m.state.Load() == StateCompleted {
-						m.markCurrentAsCompleted()
+						m.mu.Lock()
+						m.markCurrentAsCompletedLocked()
+						m.mu.Unlock()
+						// playNextEpisode takes m.mu itself; call it unlocked.
 						m.playNextEpisode()
 					}
 					m.state.Store(StateIdle)
@@ -493,12 +541,17 @@ func (m *Manager) hasNextEpisode() bool {
 	return found
 }
 
-func (m *Manager) markCurrentAsCompleted() {
+// markCurrentAsCompletedLocked marks the current episode as completed.
+//
+// The caller MUST hold m.mu.
+func (m *Manager) markCurrentAsCompletedLocked() {
 	m.logger.Trace().Msg("playlist: Marking current episode as completed")
 
 	data, ok := m.currentPlaylistData.Get()
 	if !ok {
-		m.mu.Unlock()
+		// DEVNOTE: this branch used to unlock m.mu, which was never held by this function --
+		// an unconditional "unlock of unlocked mutex" fatal (or a double-unlock via
+		// PlayEpisode's deferred unlock). The caller owns the lock; just return.
 		return
 	}
 
@@ -532,7 +585,10 @@ func (m *Manager) markCurrentAsCompleted() {
 	return
 }
 
-func (m *Manager) resetPlaylist() {
+// resetPlaylistLocked clears the current playlist state.
+//
+// The caller MUST hold m.mu.
+func (m *Manager) resetPlaylistLocked() {
 	m.playbackManager.SetPlaylistActive(false)
 	m.currentPlaylistData = mo.None[*playlistData]()
 	m.currentEpisode = mo.None[*anime.PlaylistEpisode]()
@@ -607,7 +663,7 @@ func (m *Manager) playEpisode(episode *anime.PlaylistEpisode) {
 		})
 		if err != nil {
 			m.logger.Error().Err(err).Msg("playlist: Failed to start playing local file")
-			m.StopPlaylist("Failed to start playing local file")
+			m.stopPlaylistLocked("Failed to start playing local file")
 		}
 
 		m.currentPlaybackMethod = ClientPlaybackMethodDefault
@@ -624,7 +680,7 @@ func (m *Manager) playEpisode(episode *anime.PlaylistEpisode) {
 		})
 		if err != nil {
 			m.logger.Error().Err(err).Msg("playlist: Failed to start playing local file")
-			m.StopPlaylist("Failed to start playing local file")
+			m.stopPlaylistLocked("Failed to start playing local file")
 		}
 
 		m.currentPlaybackMethod = ClientPlaybackMethodNativePlayer
@@ -637,7 +693,7 @@ func (m *Manager) playEpisode(episode *anime.PlaylistEpisode) {
 		err := m.nakamaManager.PlayHostAnimeLibraryFile(episode.Episode.LocalFile.Path, "", m.clientId, episode.Episode.BaseAnime, episode.Episode.AniDBEpisode, "")
 		if err != nil {
 			m.logger.Error().Err(err).Msg("playlist: Failed to start playing nakama stream")
-			m.StopPlaylist("Failed to start playing nakama stream")
+			m.stopPlaylistLocked("Failed to start playing nakama stream")
 		}
 
 		m.currentPlaybackMethod = ClientPlaybackMethodDefault
@@ -693,34 +749,55 @@ func (m *Manager) prepareNextEpisode() {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// StopPlaylist stops the current playlist.
+//
+// The caller MUST NOT hold m.mu -- this is the entry point for the event goroutines. Code that
+// already holds the lock (e.g. playEpisode's error paths) must call stopPlaylistLocked instead,
+// since m.mu is not reentrant.
 func (m *Manager) StopPlaylist(reason string, isError ...bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopPlaylistLocked(reason, isError...)
+}
+
+// stopPlaylistLocked stops the current playlist.
+//
+// The caller MUST hold m.mu.
+func (m *Manager) stopPlaylistLocked(reason string, isError ...bool) {
 	m.logger.Trace().Str("reason", reason).Msg("playlist: Stopping current playlist")
 	if m.cancel != nil {
 		m.cancel()
 	}
 	data, ok := m.currentPlaylistData.Get()
-	// Delete playlist if all episodes are completed
-	go func(data *playlistData, ok bool) {
-		if !ok || data == nil {
-			return
-		}
-		d := *data
-		if len(d.playlist.Episodes) == 0 {
-			return
-		}
-		var completedEpisodes int
-		for _, episode := range d.playlist.Episodes {
+	// Delete playlist if all episodes are completed.
+	//
+	// DEVNOTE: the all-completed predicate is evaluated HERE, under the m.mu the caller already
+	// holds, and only the decision (a bool + the db id) crosses into the goroutine.
+	// markCurrentAsCompletedLocked writes episode.IsCompleted under m.mu, and playlist.Episodes
+	// holds the very same *anime.PlaylistEpisode pointers that m.currentEpisode aliases -- so
+	// reading IsCompleted from an unsynchronized goroutine raced that write. Locking inside the
+	// goroutine is not an option: every caller of stopPlaylistLocked already holds m.mu and it is
+	// not reentrant. The DB delete and the ws send stay in the goroutine, off the lock.
+	deletePlaylist := false
+	var playlistDbId uint
+	if ok && data != nil && len(data.playlist.Episodes) > 0 {
+		completedEpisodes := 0
+		for _, episode := range data.playlist.Episodes {
 			if episode.IsCompleted {
 				completedEpisodes++
 			}
 		}
-		if completedEpisodes == len(d.playlist.Episodes) {
-			_ = db_bridge.DeletePlaylist(m.db, d.playlist.DbId)
+		deletePlaylist = completedEpisodes == len(data.playlist.Episodes)
+		playlistDbId = data.playlist.DbId
+	}
+	if deletePlaylist {
+		go func(dbId uint) {
+			_ = db_bridge.DeletePlaylist(m.db, dbId)
 			m.wsEventManager.SendEventTo(m.clientId, events.InvalidateQueries, []string{events.GetPlaylistsEndpoint})
-		}
-	}(data, ok)
+		}(playlistDbId)
+	}
 	m.isStartingPlaylist.Store(false)
-	m.resetPlaylist()
+	m.resetPlaylistLocked()
 	if len(isError) > 0 && isError[0] {
 		m.wsEventManager.SendEventTo(m.clientId, events.ErrorToast, reason)
 		return
@@ -737,7 +814,7 @@ func (m *Manager) PlayEpisode(which string, isCurrentCompleted bool) {
 	m.logger.Debug().Str("which", which).Bool("isCurrentCompleted", isCurrentCompleted).Msg("playlist: Episode requested")
 
 	if isCurrentCompleted {
-		m.markCurrentAsCompleted()
+		m.markCurrentAsCompletedLocked()
 	}
 
 	data, ok := m.currentPlaylistData.Get()

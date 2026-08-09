@@ -128,6 +128,12 @@ func (r *Repository) GetExtensionUserConfig(id string) (ret *ExtensionUserConfig
 func (r *Repository) SaveExtensionUserConfig(id string, savedConfig *extension.SavedUserConfig) (err error) {
 	defer util.HandlePanicInModuleWithError("extension_repo/SaveExtensionUserConfig", &err)
 
+	// The id becomes part of the on-disk bucket key, so an unvalidated id is an
+	// arbitrary-file-write primitive. Reject anything that isn't a well-formed extension id.
+	if !isValidExtensionIDString(id) {
+		return fmt.Errorf("invalid extension id")
+	}
+
 	// Save the config
 	bucket := filecache.NewPermanentBucket(getExtensionUserConfigBucketKey(id))
 	err = r.fileCacher.SetPerm(bucket, id, savedConfig)

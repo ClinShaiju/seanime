@@ -204,18 +204,31 @@ func (r *Repository) getPageDimensions(enabled bool, provider string, mediaId in
 	pageDimensions := make(map[int]*PageDimension)
 	mu := sync.Mutex{}
 	wg := sync.WaitGroup{}
+	// Cap concurrent HTTP fetches, mirroring the downloader's semaphore (manga/downloader/chapter_downloader.go).
+	// Local-provider pages already have page.Buf populated (no HTTP fetch), so they skip the semaphore.
+	sem := make(chan struct{}, 5)
 	for _, page := range pages {
+		needsFetch := page.Buf == nil
+		if needsFetch {
+			sem <- struct{}{} // Acquire semaphore
+		}
 		wg.Add(1)
-		go func(page *hibikemanga.ChapterPage) {
-			defer wg.Done()
+		go func(page *hibikemanga.ChapterPage, needsFetch bool) {
+			defer func() {
+				if needsFetch {
+					<-sem // Release semaphore
+				}
+				wg.Done()
+			}()
 			var buf []byte
 			if page.Buf != nil {
 				buf = page.Buf
 			} else {
-				buf, err = manga_providers.GetImageByProxy(page.URL, page.Headers)
-				if err != nil {
+				b, ferr := manga_providers.GetImageByProxy(page.URL, page.Headers)
+				if ferr != nil {
 					return
 				}
+				buf = b
 			}
 			width, height, err := getImageNaturalSizeB(buf)
 			if err != nil {
@@ -230,7 +243,7 @@ func (r *Repository) getPageDimensions(enabled bool, provider string, mediaId in
 				Height: height,
 			}
 			mu.Unlock()
-		}(page)
+		}(page, needsFetch)
 	}
 	wg.Wait()
 

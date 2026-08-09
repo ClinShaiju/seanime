@@ -42,8 +42,13 @@ func (c *CacheLayer) startQueuedUpdateSync() {
 		ticker := time.NewTicker(queueSyncInterval)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			c.syncQueuedUpdates(context.Background())
+		for {
+			select {
+			case <-c.stop:
+				return
+			case <-ticker.C:
+				c.syncQueuedUpdates(context.Background())
+			}
 		}
 	}()
 }

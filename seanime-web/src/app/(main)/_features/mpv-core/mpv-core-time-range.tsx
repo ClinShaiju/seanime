@@ -122,7 +122,13 @@ export function MpvCoreTimeRange({
                 }
             })
     }, [chapterCues, duration])
-    const skipChapters = React.useMemo(() => getSkipChapters(chapters, skipPatterns, { guardIntro: false }), [chapters, skipPatterns])
+    // Fork (19bed7eb): opt into the Intro/Outro + unlabeled-chapter heuristics so the seek-bar
+    // highlight agrees with the actual skip logic in mpv-core-player-inner.tsx, which uses the
+    // same options. Keep this in sync with video-core-time-range.tsx's skipChapters memo.
+    const skipChapters = React.useMemo(
+        () => getSkipChapters(chapters, skipPatterns, { guardIntro: false, heuristics: true, duration }),
+        [chapters, skipPatterns, duration],
+    )
 
     const [progressPercentage, setProgressPercentage] = React.useState(duration > 0 ? (currentTime / duration) * 100 : 0)
 

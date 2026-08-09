@@ -182,23 +182,27 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1.PATCH("/settings/media-player", h.HandleSaveMediaPlayerSettings, h.AdminOnly)
 
 	// Auto Downloader
-	v1.POST("/auto-downloader/run", h.HandleRunAutoDownloader)
-	v1.POST("/auto-downloader/run/simulation", h.HandleRunAutoDownloaderSimulation)
+	// Rules, profiles and the queue are server-wide infrastructure (the models carry no
+	// user id), so every mutation is admin-only — knowing the shared server password is
+	// not enough to rewrite what the server downloads. Reads stay open so non-admins can
+	// still see what the auto-downloader is doing, matching the GET/PATCH /settings split.
+	v1.POST("/auto-downloader/run", h.HandleRunAutoDownloader, h.AdminOnly)
+	v1.POST("/auto-downloader/run/simulation", h.HandleRunAutoDownloaderSimulation, h.AdminOnly)
 	v1.GET("/auto-downloader/rule/:id", h.HandleGetAutoDownloaderRule)
 	v1.GET("/auto-downloader/rule/anime/:id", h.HandleGetAutoDownloaderRulesByAnime)
 	v1.GET("/auto-downloader/rules", h.HandleGetAutoDownloaderRules)
-	v1.POST("/auto-downloader/rule", h.HandleCreateAutoDownloaderRule)
-	v1.PATCH("/auto-downloader/rule", h.HandleUpdateAutoDownloaderRule)
-	v1.DELETE("/auto-downloader/rule/:id", h.HandleDeleteAutoDownloaderRule)
+	v1.POST("/auto-downloader/rule", h.HandleCreateAutoDownloaderRule, h.AdminOnly)
+	v1.PATCH("/auto-downloader/rule", h.HandleUpdateAutoDownloaderRule, h.AdminOnly)
+	v1.DELETE("/auto-downloader/rule/:id", h.HandleDeleteAutoDownloaderRule, h.AdminOnly)
 
 	v1.GET("/auto-downloader/items", h.HandleGetAutoDownloaderItems)
-	v1.DELETE("/auto-downloader/item", h.HandleDeleteAutoDownloaderItem)
+	v1.DELETE("/auto-downloader/item", h.HandleDeleteAutoDownloaderItem, h.AdminOnly)
 
 	v1.GET("/auto-downloader/profiles", h.HandleGetAutoDownloaderProfiles)
 	v1.GET("/auto-downloader/profile/:id", h.HandleGetAutoDownloaderProfile)
-	v1.POST("/auto-downloader/profile", h.HandleCreateAutoDownloaderProfile)
-	v1.PATCH("/auto-downloader/profile", h.HandleUpdateAutoDownloaderProfile)
-	v1.DELETE("/auto-downloader/profile/:id", h.HandleDeleteAutoDownloaderProfile)
+	v1.POST("/auto-downloader/profile", h.HandleCreateAutoDownloaderProfile, h.AdminOnly)
+	v1.PATCH("/auto-downloader/profile", h.HandleUpdateAutoDownloaderProfile, h.AdminOnly)
+	v1.DELETE("/auto-downloader/profile/:id", h.HandleDeleteAutoDownloaderProfile, h.AdminOnly)
 
 	// Other
 	v1.POST("/test-dump", h.HandleTestDump)
@@ -311,12 +315,15 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	//
 
 	v1.POST("/torrent/search", h.HandleSearchTorrent)
-	v1.POST("/torrent-client/download", h.HandleTorrentClientDownload)
 	v1.GET("/torrent-client/list", h.HandleGetActiveTorrentList)
 	v1.GET("/torrent-client/details", h.HandleGetBuiltInTorrentDetails)
-	v1.POST("/torrent-client/action", h.HandleTorrentClientAction)
-	v1.POST("/torrent-client/get-files", h.HandleTorrentClientGetFiles)
-	v1.POST("/torrent-client/rule-magnet", h.HandleTorrentClientAddMagnetFromRule)
+	// Operation endpoints: anon (server-password only, no user session) may browse the
+	// torrent list but not drive torrent work (add, remove, rename, move storage…).
+	// Mirrors the debrid operation endpoints below. The list/details reads stay ungated.
+	v1.POST("/torrent-client/download", h.HandleTorrentClientDownload, h.UserOnly)
+	v1.POST("/torrent-client/action", h.HandleTorrentClientAction, h.UserOnly)
+	v1.POST("/torrent-client/get-files", h.HandleTorrentClientGetFiles, h.UserOnly)
+	v1.POST("/torrent-client/rule-magnet", h.HandleTorrentClientAddMagnetFromRule, h.UserOnly)
 
 	//
 	// Auto Select
@@ -526,7 +533,9 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1Extensions.POST("/external/install-repository", h.HandleInstallExternalExtensionRepository)
 	v1Extensions.POST("/external/uninstall", h.HandleUninstallExternalExtension)
 	v1Extensions.POST("/external/edit-payload", h.HandleUpdateExtensionCode)
-	v1Extensions.POST("/external/reload", h.HandleReloadExternalExtensions)
+	// One registration only: echo keeps just the last handler for a method+path, so registering
+	// both here made the bulk handler dead code. HandleReloadExternalExtension dispatches to the
+	// bulk path itself when the request carries no extension id.
 	v1Extensions.POST("/external/reload", h.HandleReloadExternalExtension)
 	v1Extensions.POST("/external/disabled", h.HandleSetExternalExtensionDisabled)
 	v1Extensions.POST("/all", h.HandleGetAllExtensions)
@@ -539,7 +548,12 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1Extensions.GET("/list/anime-torrent-provider", h.HandleListAnimeTorrentProviderExtensions)
 	v1Extensions.GET("/list/anime-entry-episode-tabs", h.HandleListAnimeEntryEpisodeTabExtensions)
 	v1Extensions.GET("/list/custom-source", h.HandleListCustomSourceExtensions)
-	v1Extensions.GET("/user-config/:id", h.HandleGetExtensionUserConfig)
+	// Extension "user config" is server-wide state (the filecache bucket is keyed on the
+	// extension id alone, with no user component) and its saved values are substituted
+	// into the extension's JS payload — so writing it is equivalent to installing code.
+	// Read is admin-only (values can hold provider API keys); the write additionally goes
+	// through the privileged-extension-management guard, like install/uninstall.
+	v1Extensions.GET("/user-config/:id", h.HandleGetExtensionUserConfig, h.AdminOnly)
 	v1Extensions.POST("/user-config", h.HandleSaveExtensionUserConfig)
 	v1Extensions.GET("/marketplace", h.HandleGetMarketplaceExtensions)
 	v1Extensions.GET("/plugin-settings", h.HandleGetPluginSettings)

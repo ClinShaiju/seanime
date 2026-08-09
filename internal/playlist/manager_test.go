@@ -135,7 +135,9 @@ func TestPlaylistManagerMarkCurrentAsCompletedPersistsAndUpdatesProgress(t *test
 	})
 	h.manager.currentEpisode = mo.Some(episodeOne)
 
-	h.manager.markCurrentAsCompleted()
+	h.manager.mu.Lock()
+	h.manager.markCurrentAsCompletedLocked()
+	h.manager.mu.Unlock()
 
 	require.True(t, episodeOne.IsCompleted)
 	require.Eventually(t, func() bool {

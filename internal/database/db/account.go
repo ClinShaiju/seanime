@@ -3,11 +3,29 @@ package db
 import (
 	"errors"
 	"seanime/internal/database/models"
+	"sync"
 
 	"gorm.io/gorm/clause"
 )
 
-var accountCache *models.Account
+var (
+	accountCache   *models.Account
+	accountCacheMu sync.RWMutex
+)
+
+// cachedAccount returns the current package-level admin account cache.
+func cachedAccount() *models.Account {
+	accountCacheMu.RLock()
+	defer accountCacheMu.RUnlock()
+	return accountCache
+}
+
+// setCachedAccount replaces the package-level admin account cache.
+func setCachedAccount(a *models.Account) {
+	accountCacheMu.Lock()
+	defer accountCacheMu.Unlock()
+	accountCache = a
+}
 
 func (db *Database) UpsertAccount(acc *models.Account) (*models.Account, error) {
 	err := db.gormdb.Clauses(clause.OnConflict{
@@ -21,9 +39,9 @@ func (db *Database) UpsertAccount(acc *models.Account) (*models.Account, error) 
 	}
 
 	if acc.Username != "" {
-		accountCache = acc
+		setCachedAccount(acc)
 	} else {
-		accountCache = nil
+		setCachedAccount(nil)
 	}
 
 	return acc, nil
@@ -38,14 +56,14 @@ func (db *Database) UpsertAccount(acc *models.Account) (*models.Account, error) 
 // legacy single-user DB where the admin link hasn't been backfilled yet.
 func (db *Database) GetAccount() (*models.Account, error) {
 
-	if accountCache != nil {
-		return accountCache, nil
+	if acc := cachedAccount(); acc != nil {
+		return acc, nil
 	}
 
 	// Prefer the admin's explicitly-linked account (multi-user correctness).
 	if admin, err := db.GetAdminUser(); err == nil && admin != nil && admin.AnilistAccountID != nil {
 		if acc, err := db.GetAccountByID(*admin.AnilistAccountID); err == nil {
-			accountCache = acc
+			setCachedAccount(acc)
 			return acc, nil
 		}
 	}
@@ -59,7 +77,7 @@ func (db *Database) GetAccount() (*models.Account, error) {
 		return nil, errors.New("account not found")
 	}
 
-	accountCache = &acc
+	setCachedAccount(&acc)
 
 	return &acc, err
 }
@@ -117,7 +135,7 @@ func (db *Database) UpsertAccountForUser(userID uint, username, token string, vi
 
 	// If this user is the admin, the app-global cache must reflect the change.
 	if u.Role == models.UserRoleAdmin {
-		accountCache = acc
+		setCachedAccount(acc)
 	}
 
 	return acc, nil

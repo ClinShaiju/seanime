@@ -1,10 +1,14 @@
 import { CustomLibraryBanner } from "@/app/(main)/_features/anime-library/_containers/custom-library-banner"
+import { useIsAdmin } from "@/app/(main)/_hooks/use-server-status"
 import { AutoDownloaderPage } from "@/app/(main)/auto-downloader/_containers/autodownloader-page"
+import { LuffyError } from "@/components/shared/luffy-error"
 import { PageWrapper } from "@/components/shared/page-wrapper"
 import React from "react"
 
 
 export default function Page() {
+
+    const isAdmin = useIsAdmin()
 
     return (
         <>
@@ -18,7 +22,11 @@ export default function Page() {
                         </p>
                     </div>
                 </div>
-                <AutoDownloaderPage />
+                {isAdmin ? <AutoDownloaderPage /> : (
+                    <LuffyError title="Admin only">
+                        Only the server admin can manage the Auto Downloader.
+                    </LuffyError>
+                )}
             </PageWrapper>
         </>
     )

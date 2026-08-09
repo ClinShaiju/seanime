@@ -98,14 +98,21 @@ type (
 	// - All queries to a specific media that IS in the anime collection or manga collection will be always cached/updated without limit
 	// - Media that are NOT in the anime or manga collection will be bounded to a maximum of 10 entries
 	CacheLayer struct {
-		anilistClientRef       *util.Ref[anilist.AnilistClient]
-		fileCacher             *filecache.Cacher
-		buckets                map[string]filecache.PermanentBucket
-		logger                 *zerolog.Logger
-		collectionMediaIDs     *result.Map[int, struct{}] // Track which media IDs are in collections
-		lastCollectionUpdate   time.Time                  // When collections were last fetched
-		logoutFunc             func()                     // called when an invalid token is detected
+		anilistClientRef   *util.Ref[anilist.AnilistClient]
+		fileCacher         *filecache.Cacher
+		buckets            map[string]filecache.PermanentBucket
+		logger             *zerolog.Logger
+		collectionMediaIDs *result.Map[int, struct{}] // Track which media IDs are in collections
+		// lastCollectionUpdate is when collections were last fetched, as unix nanos; 0 means
+		// "never" (forces the next update). Atomic, not a plain time.Time: it is written from
+		// the tracking goroutines (spawned by updateCollectionTracking and by the
+		// AnimeCollection/MangaCollection fetch paths) while updateCollectionTracking reads it
+		// on the caller's goroutine, and a multi-word time.Time tears under that.
+		lastCollectionUpdate   atomic.Int64
+		logoutFunc             func() // called when an invalid token is detected
 		pendingUpdateSyncMutex sync.Mutex
+		stop                   chan struct{} // closed by Close() to stop the queued-update sync ticker
+		stopOnce               sync.Once
 	}
 )
 
@@ -247,12 +254,23 @@ func NewCacheLayer(anilistClientRef *util.Ref[anilist.AnilistClient], logoutFunc
 		logger:             logger,
 		collectionMediaIDs: result.NewMap[int, struct{}](),
 		logoutFunc:         logout,
+		stop:               make(chan struct{}),
 	}
 
 	AnilistClient.Store(anilistClientRef.Get())
 	cl.startQueuedUpdateSync()
 
 	return cl
+}
+
+// Close stops the queued-update sync ticker. A new CacheLayer is built for every user session,
+// so without this the ticker goroutine outlives each evicted session forever. Safe to call more
+// than once (eviction can race a second eviction of the same user).
+//
+// Stopping the ticker does not lose queued updates: the queue is persisted to disk under a
+// userID-keyed dir, so the rebuilt session's CacheLayer picks the same bucket up and retries.
+func (c *CacheLayer) Close() {
+	c.stopOnce.Do(func() { close(c.stop) })
 }
 
 var _ anilist.AnilistClient = (*CacheLayer)(nil)
@@ -455,13 +473,13 @@ func (c *CacheLayer) isInCollection(mediaID int) bool {
 
 // updateCollectionTracking updates the collection media IDs tracking
 func (c *CacheLayer) updateCollectionTracking() {
-	if time.Since(c.lastCollectionUpdate) < collectionUpdateInterval {
+	if last := c.lastCollectionUpdate.Load(); last != 0 && time.Since(time.Unix(0, last)) < collectionUpdateInterval {
 		return
 	}
 
 	go func() {
 		defer func() {
-			c.lastCollectionUpdate = time.Now()
+			c.lastCollectionUpdate.Store(time.Now().UnixNano())
 		}()
 
 		// Try to fetch anime collection
@@ -591,7 +609,7 @@ func (c *CacheLayer) updateCollectionTrackingFromAnimeCollection(collection *ani
 			}
 		}
 	}
-	c.lastCollectionUpdate = time.Now()
+	c.lastCollectionUpdate.Store(time.Now().UnixNano())
 }
 
 func (c *CacheLayer) updateCollectionTrackingFromAnimeCollectionWithRelations(collection *anilist.AnimeCollectionWithRelations) {
@@ -612,7 +630,7 @@ func (c *CacheLayer) updateCollectionTrackingFromAnimeCollectionWithRelations(co
 			}
 		}
 	}
-	c.lastCollectionUpdate = time.Now()
+	c.lastCollectionUpdate.Store(time.Now().UnixNano())
 }
 
 func (c *CacheLayer) updateCollectionTrackingFromMangaCollection(collection *anilist.MangaCollection) {
@@ -633,7 +651,7 @@ func (c *CacheLayer) updateCollectionTrackingFromMangaCollection(collection *ani
 			}
 		}
 	}
-	c.lastCollectionUpdate = time.Now()
+	c.lastCollectionUpdate.Store(time.Now().UnixNano())
 }
 
 // invalidateMediaCaches invalidates caches for a specific media ID
@@ -685,7 +703,7 @@ func (c *CacheLayer) invalidateCollectionCaches() {
 
 	// Reset collection tracking
 	c.collectionMediaIDs.Clear()
-	c.lastCollectionUpdate = time.Time{}
+	c.lastCollectionUpdate.Store(0)
 }
 
 // extractBaseAnimeFromCollection attempts to extract BaseAnime data from cached anime collection

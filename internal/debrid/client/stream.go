@@ -1707,9 +1707,16 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 			Media:           media,
 			Torrent:         cached.torrent,
 			FileId:          cached.fileId,
-			UserAgent:       opts.UserAgent,
-			ClientId:        opts.ClientId,
-			AutoSelect:      false,
+			// Same truncated-CDN guard the cold path arms in startStream. Without this the
+			// preload/prewarm path (continue-watching, next-episode — the common play trigger)
+			// opened with expectedSize 0, making truncatedStreamErr permanently inert there.
+			// Uses the torrentItemId snapshotted under preloadMu above so it matches the URL
+			// actually being played. Fails open (0) when the provider isn't a FileSizeKnower or
+			// the size isn't already cached — same semantics as the cold path.
+			ExpectedSize: s.knownFileSizeFor(torrentItemId, cached.fileId),
+			UserAgent:    opts.UserAgent,
+			ClientId:     opts.ClientId,
+			AutoSelect:   false,
 		})
 		if err != nil {
 			s.repository.logger.Error().Err(err).Msg("debridstream: Failed to play preloaded stream")

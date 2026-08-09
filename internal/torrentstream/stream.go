@@ -289,8 +289,14 @@ func (r *Repository) StartStream(ctx context.Context, opts *StartStreamOptions) 
 	//
 	// Set current file & torrent
 	//
+	// DEVNOTE: The status goroutine in client.go reads currentTorrent/currentFile under c.mu every
+	// tick, so both writes must happen under the same lock and as one atomic pair. The critical
+	// section deliberately stops here: ResetBaselines takes c.mu itself (non-reentrant), and
+	// cleanupActiveTorrentFiles is called by the status loop while it already holds c.mu.
+	r.client.mu.Lock()
 	r.client.currentFile = mo.Some(torrentToStream.File)
 	r.client.currentTorrent = mo.Some(torrentToStream.Torrent)
+	r.client.mu.Unlock()
 	r.client.ResetBaselines()
 	r.resetPreloadFlag()
 	r.client.cleanupActiveTorrentFiles()

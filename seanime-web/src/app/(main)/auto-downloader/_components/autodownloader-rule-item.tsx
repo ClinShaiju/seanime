@@ -5,6 +5,7 @@ import {
     ExtensionRepo_AnimeTorrentProviderExtensionItem,
 } from "@/api/generated/types"
 import { useMediaPreviewModal } from "@/app/(main)/_features/media/_containers/media-preview-modal"
+import { useIsAdmin } from "@/app/(main)/_hooks/use-server-status"
 import { AutoDownloaderRuleForm } from "@/app/(main)/auto-downloader/_containers/autodownloader-rule-form"
 import { SeaImage as Image } from "@/components/shared/sea-image"
 import { IconButton } from "@/components/ui/button"
@@ -35,6 +36,11 @@ export function AutoDownloaderRuleItem(props: AutoDownloaderRuleItemProps) {
 
     const modal = useBoolean(false)
 
+    // Editing a rule is admin-only server-side (PATCH/DELETE /auto-downloader/rule), while reading
+    // rules stays open. Guard here rather than at each call site: this item is rendered both on the
+    // admin-gated auto-downloader page and in the per-anime rule list, which non-admins can still see.
+    const isAdmin = useIsAdmin()
+
     const media = React.useMemo(() => {
         return userMedia?.find(media => media.id === rule.mediaId)
     }, [(userMedia?.length || 0), rule])
@@ -44,7 +50,10 @@ export function AutoDownloaderRuleItem(props: AutoDownloaderRuleItemProps) {
     return (
         <>
             <div className="rounded-[--radius] bg-gray-900 hover:bg-gray-800/50 transition-colors">
-                <div className="flex justify-between p-3 gap-2 items-center cursor-pointer" onClick={() => modal.on()}>
+                <div
+                    className={cn("flex justify-between p-3 gap-2 items-center", isAdmin && "cursor-pointer")}
+                    onClick={() => isAdmin && modal.on()}
+                >
 
                     {media && <div
                         onClick={e => {
@@ -105,9 +114,9 @@ export function AutoDownloaderRuleItem(props: AutoDownloaderRuleItemProps) {
                         </div>
                     </div>
 
-                    <div>
+                    {isAdmin && <div>
                         <IconButton intent="white-basic" icon={<BiChevronRight />} size="sm" />
-                    </div>
+                    </div>}
                 </div>
             </div>
             <Modal

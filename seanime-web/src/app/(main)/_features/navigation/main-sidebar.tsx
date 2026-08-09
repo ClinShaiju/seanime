@@ -11,7 +11,7 @@ import { UpdateModal } from "@/app/(main)/_features/update/update-modal"
 import { useAutoDownloaderQueueCount } from "@/app/(main)/_hooks/autodownloader-queue-count"
 import { useWebsocketMessageListener } from "@/app/(main)/_hooks/handle-websockets"
 import { useUserLogout } from "@/api/hooks/user-auth.hooks"
-import { useCurrentUser, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
+import { useCurrentUser, useIsAdmin, useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
 import { SeaLink } from "@/components/shared/sea-link"
 import { AppSidebar, useAppSidebarContext } from "@/components/ui/app-layout"
@@ -216,6 +216,7 @@ function SidebarFooter({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogo
     const pathname = usePathname()
     const serverStatus = useServerStatus()
     const user = useCurrentUser()
+    const isAdmin = useIsAdmin()
     const { mutate: userLogout } = useUserLogout()
 
     // Extensions
@@ -274,7 +275,7 @@ function SidebarFooter({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogo
             href: "/scan-summaries",
             isCurrent: pathname === "/scan-summaries",
         }] : [],
-        ...(serverStatus?.settings?.library?.torrentProvider !== TORRENT_PROVIDER.NONE && !!serverStatus?.settings?.library?.libraryPath) ? [{
+        ...(isAdmin && serverStatus?.settings?.library?.torrentProvider !== TORRENT_PROVIDER.NONE && !!serverStatus?.settings?.library?.libraryPath) ? [{
             iconType: LuRss,
             name: "Auto Downloader",
             href: "/auto-downloader",
@@ -286,6 +287,7 @@ function SidebarFooter({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogo
         }] : [],
     ], [
         pathname,
+        isAdmin,
         serverStatus?.settings?.library?.torrentProvider,
         serverStatus?.settings?.torrent?.defaultTorrentClient,
         serverStatus?.settings?.torrent?.showActiveTorrentCount,

@@ -1,5 +1,6 @@
 import { Extension_Extension, Extension_InvalidExtension } from "@/api/generated/types"
 import { useGetExtensionUserConfig, useSaveExtensionUserConfig } from "@/api/hooks/extensions.hooks"
+import { useIsAdmin } from "@/app/(main)/_hooks/use-server-status"
 import { LuffyError } from "@/components/shared/luffy-error"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -27,6 +28,11 @@ export function ExtensionUserConfigModal(props: ExtensionUserConfigModalProps) {
         userConfigError,
         ...rest
     } = props
+
+    const isAdmin = useIsAdmin()
+
+    // Only the admin can view/edit extension user config (server-gated).
+    if (!isAdmin) return null
 
     return (
         <>

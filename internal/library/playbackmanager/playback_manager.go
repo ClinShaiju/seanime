@@ -627,7 +627,17 @@ func (pm *PlaybackManager) PullStreamState() (PlaybackState, bool) {
 // Cancel stops the current media player playback and publishes a "normal" event.
 func (pm *PlaybackManager) Cancel() error {
 	pm.Logger.Debug().Msg("playback manager: Cancel called, stopping media player")
-	pm.MediaPlayerRepository.Stop()
+	// SetMediaPlayerRepository writes pm.MediaPlayerRepository under pm.mu from its own
+	// goroutine, so read it under the same lock. Snapshot the pointer and release before
+	// Stop(): it is a blocking player call and pm.mu is held by the playback paths it can
+	// wake. The nil guard covers Cancel arriving before the repository is ever mounted.
+	pm.mu.Lock()
+	mediaPlayerRepository := pm.MediaPlayerRepository
+	pm.mu.Unlock()
+	if mediaPlayerRepository == nil {
+		return nil
+	}
+	mediaPlayerRepository.Stop()
 	return nil
 }
 

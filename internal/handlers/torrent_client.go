@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"seanime/internal/api/anilist"
@@ -95,6 +96,23 @@ func (h *Handler) HandleTorrentClientAction(c echo.Context) error {
 		return h.RespondWithError(c, errors.New("missing torrent hash"))
 	}
 
+	// The route's UserOnly gate only proves *a* user session. These actions are server-wide
+	// rather than per-user — pause-all/resume-all/set-limits retarget every user's downloads
+	// and the global rate limits, while move-storage/add-magnet write to an arbitrary path as
+	// the server process — so they additionally require the admin identity.
+	switch b.Action {
+	case "pause-all", "resume-all", "set-limits", "move-storage", "add-magnet":
+		if err := h.RequireAdmin(c); err != nil {
+			return h.RespondWithStatusError(c, http.StatusForbidden, err)
+		}
+	}
+
+	// Same strict-local boundary the list/download routes apply, so actions against an
+	// admin-configured external client can't be driven remotely in strict mode.
+	if err := h.guardPrivilegedTorrentClient(c, h.App.Settings); err != nil {
+		return err
+	}
+
 	switch b.Action {
 	case "pause":
 		err := h.App.TorrentClientRepository.PauseTorrents([]string{b.Hash})
@@ -169,6 +187,19 @@ func (h *Handler) HandleTorrentClientAction(c echo.Context) error {
 		case "set-limits":
 			client.SetLimits(b.DownloadLimit, b.UploadLimit)
 		case "add-magnet":
+			// Mirror the destination validation HandleTorrentClientDownload applies — without it
+			// this writes torrent content to any absolute path as the server process user.
+			// Scoped to add-magnet: move-storage legitimately targets user-chosen directories
+			// outside the strict roots, so validating it there would break existing relocations.
+			if b.Dir == "" {
+				return h.RespondWithError(c, errors.New("directory is required"))
+			}
+			if !filepath.IsAbs(b.Dir) {
+				return h.RespondWithError(c, errors.New("directory path must be absolute"))
+			}
+			if guardErr := h.guardStrictFilesystemPath(c, b.Dir); guardErr != nil {
+				return guardErr
+			}
 			_, err = client.AddMagnet(b.Magnet, b.Dir)
 		}
 		if err != nil {

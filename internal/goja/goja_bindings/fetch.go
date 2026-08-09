@@ -10,6 +10,7 @@ import (
 	"seanime/internal/security"
 	"seanime/internal/util"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,10 +41,15 @@ var (
 )
 
 type Fetch struct {
-	vm             *goja.Runtime
-	fetchSem       chan struct{}
-	vmResponseCh   chan func()
-	closed         atomic.Bool
+	vm           *goja.Runtime
+	fetchSem     chan struct{}
+	vmResponseCh chan func()
+	closed       atomic.Bool
+	// inflightMu serializes the closed transition against inflight.Add so that
+	// Close never starts waiting while a new request is being registered.
+	inflightMu sync.Mutex
+	// inflight tracks requests that may still send on vmResponseCh.
+	inflight       sync.WaitGroup
 	allowedDomains []string // empty = allow all domains
 	rules          []accessRule
 	anilistToken   string
@@ -150,13 +156,40 @@ func (f *Fetch) ResponseChannel() <-chan func() {
 	return f.vmResponseCh
 }
 
+// beginRequest registers an in-flight request that is allowed to send on
+// vmResponseCh. It returns false if Close has already been called, in which
+// case the request must not be started.
+func (f *Fetch) beginRequest() bool {
+	f.inflightMu.Lock()
+	defer f.inflightMu.Unlock()
+	if f.closed.Load() {
+		return false
+	}
+	f.inflight.Add(1)
+	return true
+}
+
+// Close stops accepting new requests and terminates the response pump goroutine
+// spawned by BindFetch. Requests already in flight are left alone: they still
+// deliver their result to the VM, so JS awaiting them settles as before, and the
+// channel is only closed once they are all done — there is no send-on-closed
+// window. Close does not block and is safe to call more than once.
 func (f *Fetch) Close() {
-	defer func() {
-		if r := recover(); r != nil {
-		}
+	f.inflightMu.Lock()
+	alreadyClosed := f.closed.Swap(true)
+	f.inflightMu.Unlock()
+	if alreadyClosed {
+		return
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+			}
+		}()
+		f.inflight.Wait()
+		close(f.vmResponseCh)
 	}()
-	f.closed.Store(true)
-	close(f.vmResponseCh)
 }
 
 type fetchOptions struct {
@@ -191,12 +224,17 @@ func BindFetch(extensionId string, vm *goja.Runtime, allowedDomains ...[]string)
 
 	go func() {
 		for fn := range f.ResponseChannel() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Warn().Msgf("extension: response channel panic: %v", r)
-				}
+			// The recover must be scoped to a single fn() call: a bare defer inside
+			// the loop only runs when the goroutine exits, so one panicking response
+			// would kill the pump and hang every later fetch on this VM.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Warn().Msgf("extension: response channel panic: %v", r)
+					}
+				}()
+				fn()
 			}()
-			fn()
 		}
 	}()
 
@@ -399,11 +437,15 @@ func (f *Fetch) Fetch(call goja.FunctionCall) goja.Value {
 		}
 	}
 
+	// Register the request before spawning its goroutine so that Close waits for it
+	// to deliver its result instead of closing vmResponseCh underneath it.
+	if !f.beginRequest() {
+		return f.vm.ToValue(promise)
+	}
+
 	go func() {
+		defer f.inflight.Done()
 		defer util.HandlePanicInModuleThen("goja/goja_bindings/Fetch", func() {})
-		if f.closed.Load() {
-			return
-		}
 		// Acquire semaphore
 		f.fetchSem <- struct{}{}
 		defer func() { <-f.fetchSem }()

@@ -577,6 +577,19 @@ func (s *UserSession) shutdown() {
 	if s.videoCore != nil {
 		s.videoCore.Shutdown()
 	}
+	// Tear down this session's OWN platform: its CacheLayer runs a queued-update sync ticker and
+	// its PlatformHelper's custom-source manager holds an extension-bank subscription, both of
+	// which outlive the session otherwise. Deliberately the raw platformRef field and NOT the
+	// PlatformRef() accessor: the accessor returns the App-GLOBAL platform for an admin session,
+	// and evictSession runs on every admin relink — closing that would kill AniList server-wide.
+	// The field is session-owned (buildUserSession/anonymousSession always construct a fresh
+	// platform) and nil-by-design on the adminSession() delegate, which buildUserSession can
+	// cache into a.sessions on a GetUserByID failure — hence the nil guard.
+	if s.platformRef != nil {
+		if p := s.platformRef.Get(); p != nil {
+			p.Close()
+		}
+	}
 }
 
 // -------------------------------------------------------------------------------- //

@@ -144,7 +144,7 @@ func (m *WSEventManager) ExitIfNoConnsAsDesktopSidecar() {
 
 		for range ticker.C {
 			// Check WebSocket connection status
-			if len(m.Conns) == 0 && m.hasHadConnection {
+			if n, had := m.connState(); n == 0 && had {
 				// If not connected and first detection of connection loss
 				if connectionLostTime.IsZero() {
 					m.Logger.Warn().Msg("ws: No connection detected. Starting countdown...")
@@ -164,10 +164,40 @@ func (m *WSEventManager) ExitIfNoConnsAsDesktopSidecar() {
 	}()
 }
 
-func (m *WSEventManager) AddConn(id string, conn *websocket.Conn, platform ...string) {
+// connState snapshots the two fields the sidecar monitor reads, under m.mu.
+//
+// It exists as a helper so the lock is held for exactly two field reads and released
+// before the caller does anything else. m.mu guards ALL ws fan-out (SendEvent,
+// GetClientIds, AddConn, RemoveConn, ...), so taking it at the top of the monitor
+// goroutine — or with a defer inside the `for range ticker.C` body — would hold it for
+// the loop's entire lifetime and deadlock every websocket connect/disconnect/send
+// process-wide. Keep the lock scoped to this function.
+func (m *WSEventManager) connState() (n int, hadConn bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.Conns), m.hasHadConnection
+}
+
+// AddConn registers a new connection and returns the *WSConn it created, so the caller
+// can later hand that exact instance back to RemoveConn (see RemoveConn on why removal
+// must be by identity, not by client ID).
+//
+// It deliberately does NOT evict an existing entry with the same id: clientId is
+// persisted in localStorage and is therefore shared by every tab of the same browser
+// (multi-tab is a supported scenario — see the main-tab-claim broadcast in the ws
+// handler), so evicting on id collision would tear down a legitimately live tab's
+// socket whenever a second tab opens, and both would auto-reconnect and kill each
+// other forever.
+func (m *WSEventManager) AddConn(id string, conn *websocket.Conn, platform ...string) *WSConn {
 	clientPlatform := ""
 	if len(platform) > 0 {
 		clientPlatform = platform[0]
+	}
+
+	wsConn := &WSConn{
+		ID:       id,
+		Platform: clientPlatform,
+		Conn:     conn,
 	}
 
 	// Guard m.Conns/m.hasHadConnection like every other accessor — GetClientIds (reaper liveness)
@@ -176,11 +206,8 @@ func (m *WSEventManager) AddConn(id string, conn *websocket.Conn, platform ...st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.hasHadConnection = true
-	m.Conns = append(m.Conns, &WSConn{
-		ID:       id,
-		Platform: clientPlatform,
-		Conn:     conn,
-	})
+	m.Conns = append(m.Conns, wsConn)
+	return wsConn
 }
 
 // SetRequireUserScoping marks the server as password-protected (networked), so
@@ -291,11 +318,28 @@ func (m *WSEventManager) SendEventToIfOwner(clientId string, ownerUserID uint, t
 	_ = target.writeJSON(WSEvent{Type: t, Payload: payload})
 }
 
-func (m *WSEventManager) RemoveConn(id string) {
+// RemoveConn removes the exact connection that closed, matched by pointer identity
+// (take the *WSConn from AddConn and hand it back here).
+//
+// Removing by client ID would be wrong, and not just in an edge case: clientId lives in
+// localStorage, so every tab of the same browser shares one id. Removing the first
+// slice entry matching that id means closing tab 2 evicts tab 1's LIVE conn — tab 1's
+// socket stays open and its read loop keeps running, but it is gone from m.Conns, so
+// events (playback signaling, room state) silently stop reaching a still-open tab with
+// no error logged until the user reloads. Identity matching also guarantees a stale
+// entry is cleaned up by the read loop that actually owns it, rather than by whichever
+// same-id sibling happened to error first.
+//
+// A reconnecting client with the SAME id is unaffected: its new socket is a distinct
+// *WSConn added by AddConn, and only the old instance is removed here.
+func (m *WSEventManager) RemoveConn(c *WSConn) {
+	if c == nil {
+		return
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i, conn := range m.Conns {
-		if conn.ID == id {
+		if conn == c {
 			m.Conns = append(m.Conns[:i], m.Conns[i+1:]...)
 			break
 		}

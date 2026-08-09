@@ -76,15 +76,21 @@ func (wpm *WatchPartyManager) CreateWatchParty(options *CreateWatchOptions) (*Wa
 	wpm.lastRxSequence = 0
 	wpm.sequenceMu.Unlock()
 
+	// Snapshot before either send: currentSession was published above, so peer handlers can
+	// already be mutating session.Participants, and both sends below marshal the payload.
+	// Handing the live session to a marshaller is the fatal map race NAK-5 fixed in
+	// sendSessionStateToClient. Freshly-created session => the window is narrow, not absent.
+	sessionSnapshot := session.snapshot()
+
 	// Notify all peers about the new watch party
 	_ = wpm.manager.SendMessage(MessageTypeWatchPartyCreated, WatchPartyCreatedPayload{
-		Session: session,
+		Session: sessionSnapshot,
 	})
 
 	wpm.logger.Debug().Str("sessionId", sessionID).Msg("nakama: Watch party created")
 
 	// Send websocket event to update the UI
-	wpm.manager.wsEventManager.SendEvent(events.NakamaWatchPartyState, session)
+	wpm.manager.wsEventManager.SendEvent(events.NakamaWatchPartyState, sessionSnapshot)
 
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
@@ -492,8 +498,13 @@ func (wpm *WatchPartyManager) broadcastSessionStateToPeers() {
 		return
 	}
 
+	// Snapshot before the send: SendMessage marshals the payload, and this function is spawned
+	// with `go` from the peer-joined/peer-left/disconnect handlers (":582", ":645", ...) -- so it
+	// runs WITHOUT wpm.mu, concurrently with their `delete(session.Participants, ...)`. Handing
+	// the live session to the marshaller here is the fatal "concurrent map iteration and map
+	// write" throw that kills the process, i.e. the same bug NAK-5 fixed one function below.
 	_ = wpm.manager.SendMessage(MessageTypeWatchPartyStateChanged, WatchPartyStateChangedPayload{
-		Session: session,
+		Session: session.snapshot(),
 	})
 }
 
@@ -504,7 +515,37 @@ func (wpm *WatchPartyManager) sendSessionStateToClient() {
 		return
 	}
 
-	wpm.manager.wsEventManager.SendEvent(events.NakamaWatchPartyState, session)
+	wpm.manager.wsEventManager.SendEvent(events.NakamaWatchPartyState, session.snapshot())
+}
+
+// snapshot returns a marshal-safe deep copy of the session, taken under session.mu.
+//
+// Never hand the live session to SendEvent/SendMessage: they marshal the payload, and an
+// unlocked read of session.Participants racing a delete is a fatal "concurrent map iteration
+// and map write" throw -- not a recoverable panic, it kills the whole process.
+//
+// The lock is released before this returns, so the result can be handed to a network send with
+// no lock held. Every exported field of WatchPartySession MUST be copied here or the client
+// silently loses wire data; mu is json:"-" and is deliberately left zero rather than copied.
+// The caller must not already hold session.mu (sync.RWMutex is not reentrant).
+func (s *WatchPartySession) snapshot() *WatchPartySession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	snapshot := &WatchPartySession{
+		ID:               s.ID,
+		Participants:     make(map[string]*WatchPartySessionParticipant, len(s.Participants)),
+		Settings:         s.Settings,
+		CreatedAt:        s.CreatedAt,
+		CurrentMediaInfo: s.CurrentMediaInfo,
+		IsRelayMode:      s.IsRelayMode,
+		IsRoom:           s.IsRoom,
+	}
+	for id, participant := range s.Participants {
+		p := *participant
+		snapshot.Participants[id] = &p
+	}
+	return snapshot
 }
 
 // handleWatchPartyPeerJoinedEvent is called when a peer joins a watch party
@@ -627,7 +668,10 @@ func (wpm *WatchPartyManager) handleWatchPartyPeerStatusEvent(payload *WatchPart
 		return
 	}
 
-	// Update peer status
+	// Update peer status.
+	// session.mu owns participant field access: checkAndManageBuffering and waitForPeersReady
+	// read these fields under session.mu.RLock only. Lock order stays wpm.mu -> session.mu.
+	session.mu.Lock()
 	if participant, exists := session.Participants[payload.PeerId]; exists {
 		participant.PlaybackStatus = payload.PlaybackStatus
 		participant.IsBuffering = payload.IsBuffering
@@ -644,6 +688,7 @@ func (wpm *WatchPartyManager) handleWatchPartyPeerStatusEvent(payload *WatchPart
 		//	Bool("isReady", participant.IsReady).
 		//	Msg("nakama: Updated peer status")
 	}
+	session.mu.Unlock()
 	wpm.mu.Unlock()
 
 	// Check if we should start/resume playback based on peer states (call after releasing mutex)
@@ -667,7 +712,10 @@ func (wpm *WatchPartyManager) handleWatchPartyBufferUpdateEvent(payload *WatchPa
 		return
 	}
 
-	// Update peer buffer status
+	// Update peer buffer status.
+	// session.mu owns participant field access: checkAndManageBuffering and waitForPeersReady
+	// read these fields under session.mu.RLock only. Lock order stays wpm.mu -> session.mu.
+	session.mu.Lock()
 	if participant, exists := session.Participants[payload.PeerId]; exists {
 		participant.IsBuffering = payload.IsBuffering
 		participant.BufferHealth = payload.BufferHealth
@@ -681,6 +729,7 @@ func (wpm *WatchPartyManager) handleWatchPartyBufferUpdateEvent(payload *WatchPa
 			Bool("isReady", participant.IsReady).
 			Msg("nakama: Updated peer buffer status")
 	}
+	session.mu.Unlock()
 	wpm.mu.Unlock()
 
 	// Immediately check if we need to pause/resume based on buffer state (call after releasing mutex)

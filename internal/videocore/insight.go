@@ -120,38 +120,51 @@ func (is *InSight) sendToPlayer() {
 func (is *InSight) Start() {
 	sub := is.vc.Subscribe("insight")
 	go func() {
-		for event := range sub.Events() {
-			switch e := event.(type) {
-			case *VideoLoadedEvent:
-				go func(ev *VideoLoadedEvent) {
-					if ev.State.PlaybackInfo != nil && ev.State.PlaybackInfo.Media != nil && ev.State.PlaybackInfo.Media.IDMal != nil {
-						is.fetchCharacters(*ev.State.PlaybackInfo.Media.IDMal)
-						// send to player
-						is.sendToPlayer()
-						//is.startPolling() todo
-					}
-				}(e)
-			case *VideoSubtitleTrackEvent:
-				// todo
-				//go func(ev *VideoSubtitleTrackEvent) {
-				//	if ev.Kind == "file" {
-				//		is.vc.SendGetSubtitleTrackContent()
-				//	}
-				//}(e)
-			case *VideoSubtitleTrackContentEvent:
-				// todo
-				//go func(ev *VideoSubtitleTrackContentEvent) {
-				//	// Parse content
-				//	events, err := is.ParseSubtitleContent(ev.Content, ev.Type)
-				//	if err != nil {
-				//		is.logger.Error().Err(err).Msg("insight: Failed to parse subtitle content")
-				//		return
-				//	}
-				//	is.Analyze(events)
-				//}(e)
-			case *VideoTerminatedEvent:
-				is.stopPolling()
-				is.Clear()
+		// Select on dispatcherStop alongside the subscriber channel: nothing ever
+		// unsubscribes "insight" (the VideoCore owns it), so a bare range would block
+		// forever once Shutdown() stops the dispatcher, leaking this goroutine on every
+		// per-session VideoCore eviction. Closing the channel from Shutdown() instead
+		// would race with dispatchEvent()'s send.
+		for {
+			select {
+			case <-is.vc.dispatcherStop:
+				return
+			case event, ok := <-sub.Events():
+				if !ok {
+					return
+				}
+				switch e := event.(type) {
+				case *VideoLoadedEvent:
+					go func(ev *VideoLoadedEvent) {
+						if ev.State.PlaybackInfo != nil && ev.State.PlaybackInfo.Media != nil && ev.State.PlaybackInfo.Media.IDMal != nil {
+							is.fetchCharacters(*ev.State.PlaybackInfo.Media.IDMal)
+							// send to player
+							is.sendToPlayer()
+							//is.startPolling() todo
+						}
+					}(e)
+				case *VideoSubtitleTrackEvent:
+					// todo
+					//go func(ev *VideoSubtitleTrackEvent) {
+					//	if ev.Kind == "file" {
+					//		is.vc.SendGetSubtitleTrackContent()
+					//	}
+					//}(e)
+				case *VideoSubtitleTrackContentEvent:
+					// todo
+					//go func(ev *VideoSubtitleTrackContentEvent) {
+					//	// Parse content
+					//	events, err := is.ParseSubtitleContent(ev.Content, ev.Type)
+					//	if err != nil {
+					//		is.logger.Error().Err(err).Msg("insight: Failed to parse subtitle content")
+					//		return
+					//	}
+					//	is.Analyze(events)
+					//}(e)
+				case *VideoTerminatedEvent:
+					is.stopPolling()
+					is.Clear()
+				}
 			}
 		}
 	}()

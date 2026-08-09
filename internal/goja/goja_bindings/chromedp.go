@@ -8,6 +8,7 @@ import (
 	gojautil "seanime/internal/util/goja"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -31,6 +32,18 @@ type ChromeDP struct {
 	browsers   map[string]*Browser
 	browserMu  sync.RWMutex
 	closeOnce  sync.Once
+	// done is closed by Close once every tracked operation has delivered its result.
+	// The pump goroutine started by BindChromeDPWithScheduler exits on it. responseCh
+	// itself is never closed: ListenBrowser/ListenTarget hand chromedp's own event loop
+	// a callback that sends on it, and those sends are neither tracked nor bounded by
+	// this binding's lifetime, so a close would race them into a send-on-closed panic.
+	done chan struct{}
+	// inflightMu serializes the closed transition against inflight.Add so that Close
+	// never starts draining while an operation is being registered.
+	inflightMu sync.Mutex
+	closed     atomic.Bool
+	// inflight tracks operations that may still send on responseCh.
+	inflight sync.WaitGroup
 }
 
 // Browser represents a browser instance
@@ -50,6 +63,7 @@ func NewChromeDP(vm *goja.Runtime) *ChromeDP {
 		chromeSem:  make(chan struct{}, 5), // limit concurrent browser instances
 		responseCh: make(chan func(), 10),
 		browsers:   make(map[string]*Browser),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -57,22 +71,70 @@ func (c *ChromeDP) ResponseChannel() <-chan func() {
 	return c.responseCh
 }
 
-func (c *ChromeDP) Close() {
-	defer func() {
-		if r := recover(); r != nil {
-		}
-	}()
+// begin registers an operation that is allowed to send on responseCh. It returns
+// false once Close has been called, in which case the operation must not start.
+func (c *ChromeDP) begin() bool {
+	c.inflightMu.Lock()
+	defer c.inflightMu.Unlock()
+	if c.closed.Load() {
+		return false
+	}
+	c.inflight.Add(1)
+	return true
+}
 
-	// Close all browsers
+// finish marks an operation registered by begin as done. Every operation sends its
+// result to the VM before returning, so once the count reaches zero no tracked sender
+// remains and the pump can be stopped without dropping a pending promise.
+func (c *ChromeDP) finish() {
+	c.inflight.Done()
+}
+
+// send hands fn to the pump goroutine, abandoning the delivery if the binding has
+// already been torn down. Only untracked senders — the ListenBrowser/ListenTarget
+// callbacks, which chromedp keeps invoking for as long as its event loop is winding
+// down — need this: they can outlive the drain, and a plain send would block on a
+// full buffer forever once the pump is gone.
+func (c *ChromeDP) send(fn func()) {
+	select {
+	case c.responseCh <- fn:
+	case <-c.done:
+	}
+}
+
+// Close tears down every browser owned by this binding and stops the response pump
+// goroutine started by BindChromeDPWithScheduler. Operations already in flight are
+// left alone: cancelling their browser context makes them fail fast, and they still
+// deliver their result to the VM, so JS awaiting them settles instead of hanging.
+// Close does not block and is safe to call more than once.
+func (c *ChromeDP) Close() {
+	c.inflightMu.Lock()
+	alreadyClosed := c.closed.Swap(true)
+	c.inflightMu.Unlock()
+	if alreadyClosed {
+		return
+	}
+
+	// Cancel the browsers before draining: in-flight chromedp.Run calls then return
+	// promptly instead of holding the drain open for their full timeout.
 	c.browserMu.Lock()
-	for _, browser := range c.browsers {
+	browsers := c.browsers
+	c.browsers = make(map[string]*Browser)
+	c.browserMu.Unlock()
+	for _, browser := range browsers {
 		browser.close()
 	}
-	c.browserMu.Unlock()
 
-	c.closeOnce.Do(func() {
-		close(c.responseCh)
-	})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+			}
+		}()
+		c.inflight.Wait()
+		c.closeOnce.Do(func() {
+			close(c.done)
+		})
+	}()
 }
 
 type chromeOptions struct {
@@ -105,26 +167,49 @@ func BindChromeDPWithScheduler(vm *goja.Runtime, scheduler *gojautil.Scheduler) 
 
 	vm.Set("ChromeDP", chromeDPObj)
 
-	// Start response handler
-	go func() {
-		for fn := range c.ResponseChannel() {
-			if scheduler != nil {
-				scheduler.ScheduleAsync(func() error {
-					defer func() {
-						if r := recover(); r != nil {
-							log.Warn().Msgf("extension: chromedp response channel panic: %v", r)
-						}
-					}()
-					fn()
-					return nil
-				})
-			} else {
+	// handle delivers one queued response. The recover must be scoped to a single fn()
+	// call: a bare defer inside the pump loop only runs when the goroutine exits, so one
+	// panicking response would kill the pump and hang every later call on this VM.
+	handle := func(fn func()) {
+		if scheduler != nil {
+			scheduler.ScheduleAsync(func() error {
 				defer func() {
 					if r := recover(); r != nil {
 						log.Warn().Msgf("extension: chromedp response channel panic: %v", r)
 					}
 				}()
 				fn()
+				return nil
+			})
+			return
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				log.Warn().Msgf("extension: chromedp response channel panic: %v", r)
+			}
+		}()
+		fn()
+	}
+
+	// Start response handler. It exits once the binding is closed — without that, this
+	// goroutine outlives every VM the extension is ever given and is never reclaimed.
+	go func() {
+		for {
+			select {
+			case fn := <-c.responseCh:
+				handle(fn)
+			case <-c.done:
+				// Close only signals done once every tracked operation has handed over its
+				// result, but a result may still be sitting in the buffer; flush it so those
+				// promises settle rather than hanging forever.
+				for {
+					select {
+					case fn := <-c.responseCh:
+						handle(fn)
+					default:
+						return
+					}
+				}
 			}
 		}
 	}()
@@ -160,6 +245,10 @@ func (c *ChromeDP) NewBrowser(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := c.vm.NewPromise()
 
 	go func() {
+		if !c.begin() {
+			return
+		}
+		defer c.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				c.responseCh <- func() {
@@ -260,6 +349,10 @@ func (b *Browser) Navigate(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -297,6 +390,10 @@ func (b *Browser) WaitVisible(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -334,6 +431,10 @@ func (b *Browser) WaitReady(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -371,6 +472,10 @@ func (b *Browser) Click(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -409,6 +514,10 @@ func (b *Browser) SendKeys(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -446,6 +555,10 @@ func (b *Browser) EvaluateJS(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -489,6 +602,10 @@ func (b *Browser) InnerHTML(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -527,6 +644,10 @@ func (b *Browser) OuterHTML(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -565,6 +686,10 @@ func (b *Browser) Text(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -604,6 +729,10 @@ func (b *Browser) Attribute(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -647,6 +776,10 @@ func (b *Browser) Screenshot(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -680,6 +813,10 @@ func (b *Browser) FullScreenshot(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -718,6 +855,10 @@ func (b *Browser) Sleep(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -750,6 +891,11 @@ func (b *Browser) Close(call goja.FunctionCall) goja.Value {
 	promise, resolve, _ := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
+
 		b.chromedp.browserMu.Lock()
 		delete(b.chromedp.browsers, b.id)
 		b.chromedp.browserMu.Unlock()
@@ -783,7 +929,7 @@ func (b *Browser) ListenBrowser(call goja.FunctionCall) goja.Value {
 			_ = json.Unmarshal(evBytes, &params)
 		}
 
-		b.chromedp.responseCh <- func() {
+		b.chromedp.send(func() {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Warn().Msgf("extension: chromedp listenBrowser callback panic: %v", r)
@@ -793,7 +939,7 @@ func (b *Browser) ListenBrowser(call goja.FunctionCall) goja.Value {
 			_ = eventObj.Set("method", method)
 			_ = eventObj.Set("params", params)
 			_, _ = callback(goja.Undefined(), eventObj)
-		}
+		})
 	})
 
 	return goja.Undefined()
@@ -817,7 +963,7 @@ func (b *Browser) ListenTarget(call goja.FunctionCall) goja.Value {
 			_ = json.Unmarshal(evBytes, &params)
 		}
 
-		b.chromedp.responseCh <- func() {
+		b.chromedp.send(func() {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Warn().Msgf("extension: chromedp listenTarget callback panic: %v", r)
@@ -827,7 +973,7 @@ func (b *Browser) ListenTarget(call goja.FunctionCall) goja.Value {
 			_ = eventObj.Set("method", method)
 			_ = eventObj.Set("params", params)
 			_, _ = callback(goja.Undefined(), eventObj)
-		}
+		})
 	})
 
 	return goja.Undefined()
@@ -848,6 +994,10 @@ func (b *Browser) ExecuteCDP(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := b.chromedp.vm.NewPromise()
 
 	go func() {
+		if !b.chromedp.begin() {
+			return
+		}
+		defer b.chromedp.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				b.chromedp.responseCh <- func() {
@@ -959,6 +1109,10 @@ func (c *ChromeDP) Scrape(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := c.vm.NewPromise()
 
 	go func() {
+		if !c.begin() {
+			return
+		}
+		defer c.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				c.responseCh <- func() {
@@ -1022,6 +1176,10 @@ func (c *ChromeDP) Screenshot(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := c.vm.NewPromise()
 
 	go func() {
+		if !c.begin() {
+			return
+		}
+		defer c.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				c.responseCh <- func() {
@@ -1086,6 +1244,10 @@ func (c *ChromeDP) Evaluate(call goja.FunctionCall) goja.Value {
 	promise, resolve, reject := c.vm.NewPromise()
 
 	go func() {
+		if !c.begin() {
+			return
+		}
+		defer c.finish()
 		defer func() {
 			if r := recover(); r != nil {
 				c.responseCh <- func() {

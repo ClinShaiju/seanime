@@ -162,7 +162,15 @@ func (c *Client) initializeClient() error {
 
 			case status := <-c.mediaPlayerPlaybackStatusCh:
 				// DEVNOTE: When this is received, "default" case is executed right after
-				if status != nil && c.currentFile.IsPresent() && c.repository.playback.currentVideoDuration == 0 {
+				// currentFile is written under c.mu (stream.go's set-current-file pair, and
+				// Shutdown), so this read must take the same lock. Snapshot and release rather
+				// than guarding the branch body: sendStateEvent below fans out to the websocket
+				// manager, and holding c.mu across it would put a network send inside the same
+				// critical section the status loop uses for file I/O.
+				c.mu.Lock()
+				hasCurrentFile := c.currentFile.IsPresent()
+				c.mu.Unlock()
+				if status != nil && hasCurrentFile && c.repository.playback.currentVideoDuration == 0 {
 					// If the stored video duration is 0 but the media player status shows a duration that is not 0
 					// we know that the video has been loaded and is playing
 					if c.repository.playback.currentVideoDuration == 0 && status.Duration > 0 {
@@ -492,8 +500,12 @@ func (c *Client) Shutdown() (errs []error) {
 		return
 	}
 	c.dropTorrents()
+	// Same shared state as the status goroutine's locked read; dropTorrents stays outside the
+	// critical section because initializeClient calls it while already holding c.mu.
+	c.mu.Lock()
 	c.currentTorrent = mo.None[*torrent.Torrent]()
 	c.currentTorrentStatus = TorrentStatus{}
+	c.mu.Unlock()
 	c.repository.logger.Debug().Msg("torrentstream: Closing torrent client")
 	return c.torrentClient.MustGet().Close()
 }

@@ -59,6 +59,7 @@ type GojaPlugin struct {
 	storage         *plugin.Storage
 	ui              *plugin_ui.UI
 	scheduler       *gojautil.Scheduler
+	bindings        bindingRegistry
 	loader          *goja.Runtime
 	unbindHookFuncs []func()
 	interrupted     bool
@@ -110,6 +111,11 @@ func (p *GojaPlugin) ClearInterrupt() {
 	if p.runtimeManager != nil {
 		p.runtimeManager.DeletePluginPool(p.ext.ID)
 	}
+	// Terminate the fetch and chromedp pump goroutines bound to the loader, the pooled
+	// runtimes and the UI VM.
+	// Done after DeletePluginPool so the factory can no longer mint untracked runtimes;
+	// any that still slips through is closed on arrival by the registry.
+	p.bindings.closeAll()
 	p.logger.Debug().Msgf("plugin: Unbinding hooks (%d)", len(p.unbindHookFuncs))
 	// Unbind all hooks
 	for _, unbindHookFunc := range p.unbindHookFuncs {
@@ -153,7 +159,7 @@ func NewGojaPlugin(
 
 	// 2. Create a new loader for the plugin
 	// Bind shared APIs to the loader
-	ShareBinds(p.loader, logger, ext, wsEventManager)
+	p.bindings.addChromeDP(ShareBinds(p.loader, logger, ext, wsEventManager))
 	BindUserConfig(p.loader, ext, logger)
 	p.sharedModules.Bind(p.loader, true)
 	// Bind hooks to the loader
@@ -174,8 +180,8 @@ func NewGojaPlugin(
 	var err error
 	p.pool, err = runtimeManager.GetOrCreatePrivatePool(ext.ID, func() *goja.Runtime {
 		runtime := goja.New()
-		ShareBinds(runtime, logger, ext, wsEventManager)
-		goja_bindings.BindFetch(ext.ID, runtime, ext.Plugin.Permissions.GetNetworkAccessAllowedDomains())
+		p.bindings.addChromeDP(ShareBinds(runtime, logger, ext, wsEventManager))
+		p.bindings.add(goja_bindings.BindFetch(ext.ID, runtime, ext.Plugin.Permissions.GetNetworkAccessAllowedDomains()))
 		BindUserConfig(runtime, ext, logger)
 		p.sharedModules.Bind(runtime, false)
 		p.BindPluginAPIs(runtime, logger)
@@ -192,8 +198,8 @@ func NewGojaPlugin(
 	uiVM := goja.New()
 	uiVM.SetParserOptions(parser.WithDisableSourceMaps)
 	// Bind shared APIs
-	ShareBinds(uiVM, logger, ext, wsEventManager)
-	goja_bindings.BindFetch(ext.ID, uiVM, ext.Plugin.Permissions.GetNetworkAccessAllowedDomains())
+	p.bindings.addChromeDP(ShareBinds(uiVM, logger, ext, wsEventManager))
+	p.bindings.add(goja_bindings.BindFetch(ext.ID, uiVM, ext.Plugin.Permissions.GetNetworkAccessAllowedDomains()))
 	BindUserConfig(uiVM, ext, logger)
 	p.sharedModules.Bind(uiVM, false)
 	// Bind the store to the UI VM
