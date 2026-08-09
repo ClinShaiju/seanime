@@ -269,6 +269,10 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player
 	if _, ok := playbackInfo.MkvMetadataParser.Get(); !ok {
 		return
 	}
+	playbackCtx := m.PlaybackCtx()
+	if playbackCtx == nil {
+		return
+	}
 
 	offset := subtitleOffsetForTime(playbackInfo, currentTime, duration)
 
@@ -282,17 +286,17 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
+		s.startSubtitleStream(s, playbackCtx, reader, offset, request)
 	case *TorrentStream:
 		reader := s.newSubtitleReader()
-		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
+		s.startSubtitleStream(s, playbackCtx, reader, offset, request)
 	case *UrlStream:
 		reader, err := s.newMetadataReader()
 		if err != nil {
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
+		s.startSubtitleStream(s, playbackCtx, reader, offset, request)
 	case *DebridStream:
 		// Direct CDN mode reads the server link via a gated chunked reader (the proxy never
 		// fills the FileStream cache); proxy mode keeps the FileStream reader.
@@ -301,14 +305,14 @@ func (m *Manager) startSubtitleStreamForTime(stream Stream, playbackInfo *player
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
+		s.startSubtitleStream(s, playbackCtx, reader, offset, request)
 	case *Nakama:
 		reader, err := s.newMetadataReader()
 		if err != nil {
 			m.Logger.Warn().Err(err).Int64("offset", offset).Msg("directstream: Failed to create subtitle reader after seek")
 			return
 		}
-		s.startSubtitleStream(s, m.PlaybackCtx(), reader, offset, request)
+		s.startSubtitleStream(s, playbackCtx, reader, offset, request)
 	}
 }
 

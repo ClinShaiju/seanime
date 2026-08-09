@@ -9,6 +9,7 @@ import (
 	itorrent "seanime/internal/torrents/torrent"
 	"seanime/internal/util"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,8 +84,30 @@ func (s *AutoSelect) SearchFresh(ctx context.Context, media *anilist.BaseAnime, 
 	ctx = context.WithValue(ctx, freshSearchKey, true)
 	// Bypass searchCached: a fresh search must actually reach the provider, so it
 	// neither reads nor fills the TTL cache. Going through Search() would serve the
-	// cached list and silently defeat the fresh/skipCache contract.
-	return s.search(ctx, media.ToCompleteAnime(), episodeNumber, profile)
+	// cached list and silently defeat the fresh contract.
+	//
+	// The entries for this episode are dropped (all profiles — the key embeds the
+	// profile, but the provider data underneath is the same), so a later cached
+	// Search() sees what the fresh search just found rather than the stale list.
+	s.invalidateSearchCache(media.GetID(), episodeNumber)
+	torrents, err := s.search(ctx, media.ToCompleteAnime(), episodeNumber, profile)
+	s.invalidateSearchCache(media.GetID(), episodeNumber)
+	return torrents, err
+}
+
+// invalidateSearchCache drops every cached search for a media+episode, whatever the profile.
+func (s *AutoSelect) invalidateSearchCache(mediaId int, episodeNumber int) {
+	prefix := fmt.Sprintf("%d|%d|", mediaId, episodeNumber)
+	var stale []string
+	s.searchCache.Range(func(key string, _ []*hibiketorrent.AnimeTorrent) bool {
+		if strings.HasPrefix(key, prefix) {
+			stale = append(stale, key)
+		}
+		return true
+	})
+	for _, key := range stale {
+		s.searchCache.Delete(key)
+	}
 }
 
 func (s *AutoSelect) search(ctx context.Context, media *anilist.CompleteAnime, episodeNumber int, profile *anime.AutoSelectProfile) ([]*hibiketorrent.AnimeTorrent, error) {

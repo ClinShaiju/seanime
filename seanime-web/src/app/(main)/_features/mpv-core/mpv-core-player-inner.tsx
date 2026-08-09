@@ -288,7 +288,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     const sessionTokenRef = React.useRef(0)
     const suppressEndRef = React.useRef(false)
     const completedRef = React.useRef(false)
-    const eofHandledRef = React.useRef(false)
+    const endedRef = React.useRef(false)
     const metadataReadyRef = React.useRef(false)
     const canPlayRef = React.useRef(false)
     // Startup phase marks (ms via performance.now), reported once per session as
@@ -781,6 +781,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         const info = infoRef.current
         sessionTokenRef.current += 1
         suppressEndRef.current = true
+        endedRef.current = true
         setTerminateConfirmOpen(false)
         setBuffering(false)
         closePipWindow()
@@ -951,7 +952,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
 
         const token = ++sessionTokenRef.current
         completedRef.current = false
-        eofHandledRef.current = false
+        endedRef.current = true
         if (startupRetryPlaybackIdRef.current !== info.id) {
             startupRetryPlaybackIdRef.current = info.id
             startupRetryCountRef.current = 0
@@ -979,6 +980,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 await player.stop().catch(() => undefined)
                 if (token !== sessionTokenRef.current) return
                 suppressEndRef.current = false
+                endedRef.current = false
                 // Local files carry both a server-local path (playbackUri, e.g. /home/clin/...) and
                 // an HTTP streamUrl. When the player runs on a different machine than the server
                 // (Denshi pointed at a remote Pi), that path doesn't exist here and mpv fails to load
@@ -1001,14 +1003,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                     applyShaderSettingsRef.current(player).catch(() => undefined),
                 ])
                 log.info("Player properties initialized.")
-                if (!autoPlay || info.initialState?.paused) {
-                    log.info("Pausing player on startup")
-                    await player.pause()
-                } else {
-                    // Warm player: mpv's pause property is sticky across loadfile on the same
-                    // instance (keep-open EOF pause, stop-while-paused), so reset it explicitly.
-                    await player.play()
-                }
+                const startPaused = !autoPlay || info.initialState?.paused === true
+                log.info("Setting initial pause state:", startPaused)
+                await player.setPaused(startPaused)
             }
             catch (error) {
                 if (token !== sessionTokenRef.current) return
@@ -1033,6 +1030,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 })
                 sendEvent("player-error", { error: message })
                 suppressEndRef.current = true
+                endedRef.current = true
                 await player.stop().catch(() => undefined)
             }
         })()
@@ -1148,7 +1146,20 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     useMpvPrismEvent(player, "frameDrops", event => {
         setFrameDrops(current => ({ ...current, [event.name]: event.value ?? 0 }))
     })
+    const finishPlayback = (source: string) => {
+        if (endedRef.current || suppressEndRef.current) return
+        endedRef.current = true
+        log.info("Playback reached EOF. Source =", source, "autoNext =", autoNext)
+        sendEvent("ended", { autoNext })
+        if (autoNext && !isGlobalPlaylistActive && !infoRef.current?.isNakamaWatchParty) {
+            playEpisode("next")
+        }
+    }
     useMpvPrismEvent(player, "property", event => {
+        if (event.name === "eof-reached" && event.value) {
+            finishPlayback("property")
+            return
+        }
         if (event.name === "chapter-list") {
             setNativeChapters(normalizeMpvChapterList(event.value))
             return
@@ -1257,26 +1268,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
             return
         }
         if ((event.reason ?? "").toLowerCase() !== "eof") return
-        log.info("Playback reached EOF (end-file). autoNext =", autoNext)
-        sendEvent("ended", { autoNext })
-        if (autoNext && !isGlobalPlaylistActive) {
-            playEpisode("next")
-        }
-    })
-    // keep-open=yes prevents end-file from firing; detect EOF via eof-reached property instead
-    useMpvPrismEvent(player, "property", event => {
-        if (event.name !== "eof-reached" || !event.value) return
-        if (eofHandledRef.current) return
-        eofHandledRef.current = true
-        if (suppressEndRef.current) {
-            suppressEndRef.current = false
-            return
-        }
-        log.info("Playback reached EOF (eof-reached). autoNext =", autoNext)
-        sendEvent("ended", { autoNext })
-        if (autoNext && !isGlobalPlaylistActive) {
-            playEpisode("next")
-        }
+        finishPlayback("end-file")
     })
     useMpvPrismEvent(player, "error", event => {
         log.error("Player error event received:", event.message)
@@ -2131,9 +2123,19 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                                                             onValueChange={value => {
                                                                 const source = state.playbackInfo?.videoSources?.find(item => item.index === Number(
                                                                     value))
-                                                                if (source?.url) {
+                                                                if (source?.url && player) {
                                                                     suppressEndRef.current = true
-                                                                    player?.load(mc_resolveSource(source.url))
+                                                                    endedRef.current = true
+                                                                    const token = sessionTokenRef.current
+                                                                    const resetEnd = () => {
+                                                                        if (token !== sessionTokenRef.current || terminatingRef.current) return
+                                                                        suppressEndRef.current = false
+                                                                        endedRef.current = false
+                                                                    }
+                                                                    player.load(mc_resolveSource(source.url)).then(resetEnd, error => {
+                                                                        resetEnd()
+                                                                        log.error("Failed to switch video source:", error)
+                                                                    })
                                                                 }
                                                             }}
                                                             isFullscreen={isFullscreen}

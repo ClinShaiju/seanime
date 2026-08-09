@@ -2,13 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
-## v3.10.1
+## v3.10.2
 
+- 🦺 Applied the 2026-07-16 battle-test fix pass — admin/user gating on the torrent-client, auto-downloader and extension-management routes; a `concurrent map iteration` crash in the Nakama watch-party host; websocket, playlist, mediacore, videocore and cache-layer data races and goroutine leaks; transcoder timing logs that always printed `0.00s`.
 - 🦺 Debrid: Detect a CDN serving a truncated file instead of playing it — TorBox handed back 12 MB of a 1.43 GB episode (HTTP 200, torrent still reporting `cached: true`), which played ~12s and then refused to seek. The Content-Length is now checked against the size the provider reports and the open fails naming the truncation; the prewarm/preload probes treat a wrong-size or HTML-error link as dead and re-resolve. Costs no extra request.
 - 🦺 Desktop (MpvCore): Pinned mpv-prism back to 0.1.0/0.1.1 — despite upstream 0.1.8's "better support for dual-gpu setups", it gates the WGL backend on `hardwareAdapterCount === 1` and ignores `MPV_PRISM_WIN32_BACKEND=wgl` on multi-GPU hosts, falling back to the ANGLE unsynchronized shared-texture race (black-frame flashing, lost hwdec).
-- ⬆️ Merged upstream v3.10.0 (changes below)
+- ⬆️ Merged upstream v3.10.0 → v3.10.2 (changes below)
 
-### Merged from upstream v3.10.0
+### Merged from upstream
+
+#### v3.10.2
+
+- ⚡️ Perf (Directstream): Improved torrent streaming handling
+  - Prevents delayed HTTP responses on large torrents
+  - Faster seeks and piece prioritization
+- ⚡️ Torrent Search: Reduced cache TTL and automatic retries
+- 🦺 TorBox: Fixed download link filename encoding
+- 🦺 Issue Recorder: Upgraded rrweb to fix session replay
+- 🦺 Autoselect: Fixed language parsing
+- 🦺 MpvCore: Fixed autonext on video end
+- 🦺 AniList: Restrict retries to 429 errors only
+
+#### v3.10.1
+
+- ⚡️ Manga: Made the refresh button more prominent
+- 🦺 Cache layer: Fixed logging out on invalid token
+- 🦺 UI: Fixed manga list disappearing due to unread only option (regression)
+- 🦺 Plugins: Fixed DOM observe method incorrectly firing twice
+
+#### v3.10.0
 
 - ⚡️ Manga: Improved source refresh
   - Refresh saved sources, find missing sources, or compare all installed providers
