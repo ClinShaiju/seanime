@@ -14,10 +14,18 @@ import (
 	"github.com/5rahim/habari"
 )
 
-// dualAudioNameRe matches an audio-specific dual/multi token in a release name:
-// "dual audio", "dual-audio", "dualaudio", "multi audio", "multi-audio", etc.
-// (separator optional). Deliberately does NOT match bare "multi" (subtitle markers).
-var dualAudioNameRe = regexp.MustCompile(`(?i)(dual|multi)[\s._-]?audio`)
+// dualAudioNameRe matches "dual audio" / "dual-audio" / "dualaudio" (separator optional). In
+// fansub convention that specifically means the Japanese original PLUS an English dub, so it is
+// credible evidence of English audio on its own.
+var dualAudioNameRe = regexp.MustCompile(`(?i)dual[\s._-]?audio`)
+
+// multiAudioNameRe matches "multi audio" / "multi-audio" / "multiaudio". Unlike "dual audio"
+// this names NO language: in scene naming "MULTi" is the FRENCH convention (VF + original) —
+// e.g. "Nisekoi.S01E04.MULTi.1080p.BluRay.x264-SHiNiGAMi" is a French dub, and AIOStreams
+// renders it as "🔍 Multi Audio 🌐 🌎" with no decodable flag. It must never be read as English.
+// Deliberately does NOT match bare "multi" ("Multi Subs" / "[Multiple Subtitle]" are subtitle
+// markers on Japanese-audio releases).
+var multiAudioNameRe = regexp.MustCompile(`(?i)multi[\s._-]?audio`)
 
 const (
 	scoreResolutionBase    = 100
@@ -369,7 +377,11 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 	// bare "multi"/"dub" must NOT match, since "[Multiple Subtitle]" / "Multi-Subs" are
 	// ubiquitous subtitle markers on Japanese-audio releases and would otherwise flip them
 	// into the English-dub tier. parsed.AudioTerm matching (which is audio-scoped) stays as-is.
-	isDual := containsMultiOrDual(parsed.AudioTerm) || dualAudioNameRe.MatchString(c.lowerName)
+	//
+	// "dual" and "multi" are then kept APART: dual audio means JP + English by convention, while
+	// "MULTi" names no language at all (and is the French scene convention).
+	isDual := containsTerm(parsed.AudioTerm, "dual", "dub") || dualAudioNameRe.MatchString(c.lowerName)
+	isMulti := containsTerm(parsed.AudioTerm, "multi") || multiAudioNameRe.MatchString(c.lowerName)
 
 	// A declared language (flag emoji or parsed tag) that isn't in any preferred group is a
 	// foreign dub (e.g. FR, RU).
@@ -395,6 +407,13 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 	if matchesGroup(0) || (isDual && !hasForeignLang) {
 		return scoreEnglishDub
 	}
+	// "Multi audio" with nothing identifying a preferred-language track and no Japanese original:
+	// unverified, and statistically a European (French VF) dub — bury it rather than guess English.
+	// A genuine multi-audio release that includes English matches group 0 above (aggregators list
+	// 🇬🇧 among its flags), and one that includes the Japanese original falls through to neutral.
+	if isMulti && !hasJapanese {
+		return -scoreForeignAudio
+	}
 	// Foreign-only: a declared non-preferred language with no JP original and not dual.
 	if hasForeignLang && !isDual && !hasJapanese {
 		return -scoreForeignAudio
@@ -403,14 +422,21 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 	return 0
 }
 
-func containsMultiOrDual(terms []string) bool {
+// containsTerm reports whether any parsed term contains any of the given lowercase needles.
+func containsTerm(terms []string, needles ...string) bool {
 	for _, s := range terms {
 		lower := strings.ToLower(s)
-		if strings.Contains(lower, "multi") || strings.Contains(lower, "dual") || strings.Contains(lower, "dub") {
-			return true
+		for _, n := range needles {
+			if strings.Contains(lower, n) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func containsMultiOrDual(terms []string) bool {
+	return containsTerm(terms, "multi", "dual", "dub")
 }
 
 func splitAndClean(items []string) []string {

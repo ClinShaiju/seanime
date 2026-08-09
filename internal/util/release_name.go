@@ -55,12 +55,32 @@ var flagCountryToLangTokens = map[string][]string{
 	"KR": {"ko", "kor", "korean"},
 }
 
+// subtitleFlagMarker (📝) separates AUDIO languages from SUBTITLE languages inside an
+// aggregator (AIOStreams) language line:
+//
+//	🌐 🇬🇧 / 🇯🇵📝 🇬🇧 / 🇸🇦 / 🇪🇸 / 🇫🇷 …
+//
+// i.e. "audio: English, Japanese — subtitles: English, Arabic, Spanish, French". Everything
+// after the marker is subtitles, so scanning the whole name reads a Japanese-audio release with
+// English subs as an English dub (and the UI badges it "Dubbed").
+const subtitleFlagMarker = "\U0001F4DD"
+
+// audioFlagSegment returns the part of a release name that can declare AUDIO languages: the
+// text before the first subtitle marker. Names without the marker are returned unchanged.
+func audioFlagSegment(name string) string {
+	if i := strings.Index(name, subtitleFlagMarker); i != -1 {
+		return name[:i]
+	}
+	return name
+}
+
 // LanguagesFromFlags decodes flag emoji (regional-indicator pairs) in a release name into
 // language tokens, so language scoring can see languages that are only expressed as flags.
-// Unknown countries fall back to their lowercase code so they still count as a declared
-// (non-preferred) language. Returns deduplicated lowercase tokens.
+// Only the AUDIO segment is scanned (see subtitleFlagMarker) — subtitle flags must never be
+// credited as audio. Unknown countries fall back to their lowercase code so they still count
+// as a declared (non-preferred) language. Returns deduplicated lowercase tokens.
 func LanguagesFromFlags(name string) []string {
-	runes := []rune(name)
+	runes := []rune(audioFlagSegment(name))
 	seen := make(map[string]bool)
 	var out []string
 	add := func(toks []string) {
@@ -99,8 +119,10 @@ var flagDisplayName = map[string]string{
 // names (e.g. "English", "Japanese"), one per flag, deduplicated and order-preserving. Aggregators
 // (AIOStreams) often express a release's languages ONLY as flag emoji, which name parsers and
 // CleanReleaseName (which strips emoji) drop — so without this the UI shows no language at all.
+// Audio-scoped like LanguagesFromFlags: the UI infers the "Original + Dub" / "Dubbed" badges from
+// this list, so subtitle flags must not leak in.
 func DisplayLanguagesFromFlags(name string) []string {
-	runes := []rune(name)
+	runes := []rune(audioFlagSegment(name))
 	seen := make(map[string]bool)
 	var out []string
 	for i := 0; i+1 < len(runes); i++ {

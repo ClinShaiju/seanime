@@ -14,9 +14,11 @@ import (
 func TestLangFlag_SeaDexFormatterName(t *testing.T) {
 	gb := "\U0001F1EC\U0001F1E7" // 🇬🇧
 	jp := "\U0001F1EF\U0001F1F5" // 🇯🇵
+	// Real AIOStreams layout: audio flags, then 📝, then subtitle flags. This release is dual
+	// audio (EN + JP) with English subs.
 	seadexName := "[TB☁️⚡] SeaDex 1080p (Best)\n" +
 		"Mahouka Koukou No Rettousei E04\nBluRay HEVC sam\nFLAC AAC 2.0\n" +
-		"1.99 GB / 55.3 GB Nyaa\n" + gb + " / " + jp + " " + gb
+		"1.99 GB / 55.3 GB Nyaa\n" + gb + " / " + jp + "\U0001F4DD " + gb
 	emberName := "Nyaa.si 1080p The Irregular At Magic High School (2014-2020) S01-02 BluRay HEVC EMBER 465 MB Dual Audio"
 
 	profile := &anime.AutoSelectProfile{

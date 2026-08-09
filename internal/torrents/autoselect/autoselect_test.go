@@ -695,6 +695,65 @@ func TestAutoSelect_FlagLanguages(t *testing.T) {
 	assert.Less(t, pos["frdual"], pos["fr"], "dual/fr (jp/fr) ranks above single french")
 }
 
+// Real AIOStreams language lines: "🌐 <audio flags>📝 <subtitle flags>". A Japanese-audio release
+// with English subtitles must stay in the Japanese tier — crediting the subtitle flag as audio put
+// SeaDex releases in the English-dub band (and badged them "Dubbed") in production.
+func TestAutoSelect_SubtitleFlagsAreNotAudio(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
+	}
+
+	// Logged verbatim from the Pi (Nisekoi S01E17 / Iruma-kun S01E11).
+	jpAudioEnSubs := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB☁️⚡] SeaDex 1080p (Best)\n📁 Nisekoi False Love S01 • E17\n🎥 BluRay 🎞️ HEVC 🏷️ smol\n🎧 OPUS 🔊 2.0\n📦 1.59 GB / 33.6 GB 🔍 Nyaa\n🌐 🇯🇵📝 🇬🇧",
+		InfoHash: "jpsub", Seeders: 10,
+	}
+	dualAudio := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB☁️⚡] SeaDex 1080p (Best)\n📁 Welcome To Demon School! Iruma-kun S01 • E11\n🎥 BluRay REMUX 🎞️ AVC 🏷️ NAN0\n🎧 FLAC 🔊 2.0\n📦 7.53 GB / 175 GB 🔍 Nyaa\n🌐 🇬🇧 / 🇯🇵📝 🇬🇧 / 🇸🇦 / 🇪🇸 / 🇫🇷",
+		InfoHash: "dual", Seeders: 1,
+	}
+
+	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{jpAudioEnSubs, dualAudio}, 0, 0, 0)
+	assert.Equal(t, 2, scoreBand(s.calculateScore(cands[0], profile)), "JP audio + EN subs belongs in the Japanese tier, not the dub tier")
+	assert.Equal(t, 3, scoreBand(s.calculateScore(cands[1], profile)), "EN+JP audio (flags before 📝) is a genuine dual-audio release")
+}
+
+// "MULTi" is the French scene convention (VF + original), not English. The SHiNiGAMi Nisekoi
+// release below was auto-selected for episodes 4-7 in production purely because it was cached and
+// "Multi Audio" was read as an English dub.
+func TestAutoSelect_MultiAudioIsNotEnglishDub(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
+		PreferredCodecs:    []string{"HEVC, x265, H.265"},
+		PreferredSources:   []string{"BluRay, Blu-Ray, BD"},
+	}
+
+	frenchMulti := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Debridio Scraper 1080p\n📁 Nisekoi S01 • E17\n🎥 BluRay 🎞️ AVC 🏷️ SHiNiGAMi\n📦 1.57 GB 🔍 Multi Audio\n🌐 🌎",
+		InfoHash: "multi", Seeders: 50,
+	}
+	japanese := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB☁️⚡] SeaDex 1080p (Best)\n📁 Nisekoi False Love S01 • E17\n🎥 BluRay 🎞️ HEVC 🏷️ smol\n🎧 OPUS 🔊 2.0\n📦 1.59 GB / 33.6 GB 🔍 Nyaa\n🌐 🇯🇵📝 🇬🇧",
+		InfoHash: "jp", Seeders: 5,
+	}
+
+	// Only the French release is cached — the exact production situation.
+	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+		for _, tr := range torrents {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: tr.InfoHash == "multi"})
+		}
+		return out
+	}
+
+	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{frenchMulti, japanese}, profile, -1, 17, 0, postSearchSort)
+	assert.Equal(t, "jp", sorted[0].InfoHash, "a cached 'Multi Audio' (French) release must not outrank the Japanese original")
+}
+
 func TestAutoSelect_SizeUnitNotLanguage(t *testing.T) {
 	s := newTestAutoSelect()
 	// "gb" is in the preferred list (Great Britain → English). The "GB" in a gigabyte size must
