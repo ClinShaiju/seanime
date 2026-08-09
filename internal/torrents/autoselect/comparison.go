@@ -19,13 +19,13 @@ import (
 // credible evidence of English audio on its own.
 var dualAudioNameRe = regexp.MustCompile(`(?i)dual[\s._-]?audio`)
 
-// multiAudioNameRe matches "multi audio" / "multi-audio" / "multiaudio". Unlike "dual audio"
-// this names NO language: in scene naming "MULTi" is the FRENCH convention (VF + original) —
-// e.g. "Nisekoi.S01E04.MULTi.1080p.BluRay.x264-SHiNiGAMi" is a French dub, and AIOStreams
-// renders it as "🔍 Multi Audio 🌐 🌎" with no decodable flag. It must never be read as English.
-// Deliberately does NOT match bare "multi" ("Multi Subs" / "[Multiple Subtitle]" are subtitle
-// markers on Japanese-audio releases).
-var multiAudioNameRe = regexp.MustCompile(`(?i)multi[\s._-]?audio`)
+// NOTE: there is deliberately no "multi audio" equivalent. Unlike "dual audio" it names NO
+// language — in scene naming "MULTi" is the FRENCH convention (VF + original), e.g.
+// "Nisekoi.S01E04.MULTi.1080p.BluRay.x264-SHiNiGAMi", which AIOStreams renders as
+// "🔍 Multi Audio 🌐 🌎" with no decodable flag — while a Crunchyroll WEB-DL labelled the exact
+// same way really does carry English. The two are indistinguishable from the name, so "multi"
+// simply earns no English credit and lands in the neutral tier; it is not evidence of a foreign
+// dub either, so it is not demoted below the Japanese original.
 
 const (
 	scoreResolutionBase    = 100
@@ -83,9 +83,14 @@ type candidate struct {
 	expectedSeason  int      // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
 	expectedEpisode int      // Requested episode number, <=0 = unknown (skip episode scoring)
 	mediaYear       int      // Requested media's start year, 0 = unknown (skip year scoring)
-	priority        int
-	bonus          int
-	score          int
+	// seasonExact is true when the release explicitly declares the requested (sequel) season.
+	// It is a SORT KEY rather than a score, because a score can always be out-weighed by format
+	// bonuses: an S1 BluRay REMUX beat the correctly-labelled S03 WEB-DL of Mushoku Tensei
+	// (+100 remux +30 BluRay source vs +60 season match) and played a season-1 file.
+	seasonExact bool
+	priority    int
+	bonus       int
+	score       int
 }
 
 type TorrentWithCacheStatus struct {
@@ -378,10 +383,10 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 	// ubiquitous subtitle markers on Japanese-audio releases and would otherwise flip them
 	// into the English-dub tier. parsed.AudioTerm matching (which is audio-scoped) stays as-is.
 	//
-	// "dual" and "multi" are then kept APART: dual audio means JP + English by convention, while
-	// "MULTi" names no language at all (and is the French scene convention).
+	// "dual" and "multi" are kept APART: dual audio means JP + English by convention, while
+	// "MULTi" names no language at all (and is the French scene convention), so it earns no
+	// English credit — see the note on dualAudioNameRe.
 	isDual := containsTerm(parsed.AudioTerm, "dual", "dub") || dualAudioNameRe.MatchString(c.lowerName)
-	isMulti := containsTerm(parsed.AudioTerm, "multi") || multiAudioNameRe.MatchString(c.lowerName)
 
 	// A declared language (flag emoji or parsed tag) that isn't in any preferred group is a
 	// foreign dub (e.g. FR, RU).
@@ -406,13 +411,6 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 	// English dub: top preferred audio present, or a dual with no foreign dub language.
 	if matchesGroup(0) || (isDual && !hasForeignLang) {
 		return scoreEnglishDub
-	}
-	// "Multi audio" with nothing identifying a preferred-language track and no Japanese original:
-	// unverified, and statistically a European (French VF) dub — bury it rather than guess English.
-	// A genuine multi-audio release that includes English matches group 0 above (aggregators list
-	// 🇬🇧 among its flags), and one that includes the Japanese original falls through to neutral.
-	if isMulti && !hasJapanese {
-		return -scoreForeignAudio
 	}
 	// Foreign-only: a declared non-preferred language with no JP original and not dual.
 	if hasForeignLang && !isDual && !hasJapanese {
@@ -663,6 +661,26 @@ func (s *AutoSelect) sortCandidates(candidates []*candidate, profile *anime.Auto
 	}
 
 	slices.SortStableFunc(candidates, func(a, b *candidate) int {
+		ba, bb := scoreBand(a.score), scoreBand(b.score)
+		// Gate first: a release that can't contain the requested episode, or declares the wrong
+		// season, is unusable and sorts last whatever else it has going for it.
+		if (ba == bandGated) != (bb == bandGated) {
+			return cmp.Compare(bb, ba)
+		}
+		// Then season-exactness — ABOVE the audio tier and the format score. Playing the wrong
+		// cour is a total failure; getting Japanese audio instead of a dub is a preference. This
+		// has to be a sort key rather than a score: the format weights (BluRay source + REMUX +
+		// codec) out-weigh any season bonus, which is how a season-1 BD REMUX won a season-3
+		// request and played "[Lulu] Mushoku Tensei - 05".
+		if a.seasonExact != b.seasonExact {
+			return boolFirst(a.seasonExact)
+		}
+		// Audio tier. Band ordering matches priority ordering (the ±2000 / ±100000 terms that
+		// define a band all live in priority), so this only inserts the two keys above format.
+		if ba != bb {
+			return cmp.Compare(bb, ba)
+		}
+
 		if a.priority != b.priority {
 			return cmp.Compare(b.priority, a.priority)
 		}
@@ -707,6 +725,23 @@ func resolutionTier(c *candidate) int {
 	}
 }
 
+// boolFirst orders true before false in a slices.SortStableFunc comparator.
+func boolFirst(v bool) int {
+	if v {
+		return -1
+	}
+	return 1
+}
+
+// isCuratedBestRelease reports whether a release is SeaDex-curated AND not a dead swarm. The
+// seeder guard only rejects a genuinely near-dead swarm (1-2 seeders): 0 and -1 mean "unknown",
+// which is what aggregators report for debrid-backed streams that have no swarm at all. The old
+// `Seeders == -1 || Seeders > 2` form silently disqualified every SeaDex result coming from
+// AIOStreams (it reports `seeders ?? 0`), so the curated-best bonus never applied in production.
+func isCuratedBestRelease(t *hibiketorrent.AnimeTorrent) bool {
+	return t.IsBestRelease && (t.Seeders <= 0 || t.Seeders > 2)
+}
+
 // sizeTieBreak orders two releases when every stronger signal is equal. A multi-episode batch's
 // total size is NOT a per-episode bitrate signal, so when exactly one side is a batch the single
 // episode wins (its size reflects real bitrate); otherwise larger size ≈ higher bitrate. Returns
@@ -733,7 +768,7 @@ func sizeTieBreak(a, b *hibiketorrent.AnimeTorrent) int {
 func (s *AutoSelect) smartCachedPrioritization(
 	torrents []*hibiketorrent.AnimeTorrent,
 	candidates []*candidate,
-	_ *anime.AutoSelectProfile,
+	profile *anime.AutoSelectProfile,
 	postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus,
 ) []*hibiketorrent.AnimeTorrent {
 
@@ -747,20 +782,24 @@ func (s *AutoSelect) smartCachedPrioritization(
 	}
 
 	type rankItem struct {
-		torrent *hibiketorrent.AnimeTorrent
-		score   int
-		cached  bool
-		resTier int
+		torrent     *hibiketorrent.AnimeTorrent
+		score       int
+		cached      bool
+		resTier     int
+		seasonExact bool
+		best        bool
 	}
 	items := make([]rankItem, 0, len(torrents))
 	for _, tws := range postSearchSort(torrents) {
-		score := 0
-		resTier := 0
+		it := rankItem{torrent: tws.Torrent, cached: tws.IsCached}
 		if c, ok := candidateMap[tws.Torrent.InfoHash]; ok {
-			score = c.score
-			resTier = resolutionTier(c)
+			it.score = c.score
+			it.resTier = resolutionTier(c)
+			it.seasonExact = c.seasonExact
+			it.best = isCuratedBestRelease(c.torrent) &&
+				(profile == nil || profile.BestReleasePreference != anime.AutoSelectPreferenceAvoid)
 		}
-		items = append(items, rankItem{torrent: tws.Torrent, score: score, cached: tws.IsCached, resTier: resTier})
+		items = append(items, it)
 	}
 
 	// Sort lexicographically: audio/episode band → resolution tier (quality floor) → cached
@@ -768,7 +807,17 @@ func (s *AutoSelect) smartCachedPrioritization(
 	// English dub → … → foreign → wrong-episode; within a band a higher resolution always wins,
 	// and only within one resolution tier does a cached release come first.
 	slices.SortStableFunc(items, func(a, b rankItem) int {
-		if ba, bb := scoreBand(a.score), scoreBand(b.score); ba != bb {
+		ba, bb := scoreBand(a.score), scoreBand(b.score)
+		// Same ladder as sortCandidates: unusable (wrong episode/season) last, then the right
+		// season, then the audio tier. Playing the wrong cour is a worse outcome than the wrong
+		// audio language, a lower resolution, or a slower (uncached) start.
+		if (ba == bandGated) != (bb == bandGated) {
+			return cmp.Compare(bb, ba)
+		}
+		if a.seasonExact != b.seasonExact {
+			return boolFirst(a.seasonExact)
+		}
+		if ba != bb {
 			return cmp.Compare(bb, ba)
 		}
 		// Quality floor: never let a cached lower-resolution release outrank an uncached
@@ -776,11 +825,14 @@ func (s *AutoSelect) smartCachedPrioritization(
 		if a.resTier != b.resTier {
 			return cmp.Compare(b.resTier, a.resTier)
 		}
+		// A SeaDex-curated release is the best-known encode of the episode, so it also outranks
+		// cache — the same quality-over-cache rule, one rung down from resolution. This is what
+		// puts SeaDex on top of the Japanese tier for shows with no English dub.
+		if a.best != b.best {
+			return boolFirst(a.best)
+		}
 		if a.cached != b.cached {
-			if a.cached {
-				return -1
-			}
-			return 1
+			return boolFirst(a.cached)
 		}
 		if a.score != b.score {
 			return cmp.Compare(b.score, a.score)
@@ -801,13 +853,18 @@ func (s *AutoSelect) smartCachedPrioritization(
 	return result
 }
 
+// bandGated is the band of a release that can't serve the request at all (wrong episode or a
+// declared season other than the requested one). Named because the sort ladders treat it
+// differently from the audio tiers: it outranks nothing, not even a wrong-season match.
+const bandGated = 0
+
 // scoreBand maps a candidate score to its ranking band, given the magnitude layering: episode
 // mismatch (-100000) << foreign (-2000) < jp/neutral (~0) < English dub (+2000), with format
 // adding at most a few hundred. Higher band = ranked higher.
 func scoreBand(score int) int {
 	switch {
 	case score < -50000:
-		return 0 // wrong episode (or otherwise excluded) — always last
+		return bandGated // wrong episode / wrong season — always last
 	case score <= -1000:
 		return 1 // foreign-only audio
 	case score >= 1000:
@@ -953,6 +1010,7 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	//   - declares no season at all       -> a full-season pack here is almost always the S1 batch
 	//     leaking in via a base-title synonym; demote it below correctly-matched singles. Season-less
 	//     single episodes are left alone (they match the requested relative episode).
+	c.seasonExact = false
 	if c.expectedSeason >= 2 {
 		seasons := declaredSeasons(c)
 		switch {
@@ -961,6 +1019,7 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 				priority -= scoreSeasonAmbiguousBatch
 			}
 		case seasonCovered(seasons, c.expectedSeason, isUnlabeledSeasonPack(c)):
+			c.seasonExact = true
 			bonus += scoreSeasonMatch
 		default:
 			priority -= scoreSeasonMismatch
@@ -999,7 +1058,7 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	}
 
 	// Best release preference (prefer/avoid)
-	isBestRelease := t.IsBestRelease && (t.Seeders == -1 || t.Seeders > 2)
+	isBestRelease := isCuratedBestRelease(t)
 	if profile.BestReleasePreference == anime.AutoSelectPreferencePrefer && isBestRelease {
 		bonus += scoreBestRelease
 	}

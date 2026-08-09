@@ -720,9 +720,10 @@ func TestAutoSelect_SubtitleFlagsAreNotAudio(t *testing.T) {
 	assert.Equal(t, 3, scoreBand(s.calculateScore(cands[1], profile)), "EN+JP audio (flags before 📝) is a genuine dual-audio release")
 }
 
-// "MULTi" is the French scene convention (VF + original), not English. The SHiNiGAMi Nisekoi
-// release below was auto-selected for episodes 4-7 in production purely because it was cached and
-// "Multi Audio" was read as an English dub.
+// "MULTi" is the French scene convention (VF + original), not English, so it earns no dub credit.
+// The SHiNiGAMi Nisekoi release below was auto-selected for episodes 4-7 in production purely
+// because it was cached and "Multi Audio" was read as an English dub. It must not outrank the
+// SeaDex-curated Japanese release even though only the French one is cached.
 func TestAutoSelect_MultiAudioIsNotEnglishDub(t *testing.T) {
 	s := newTestAutoSelect()
 	profile := &anime.AutoSelectProfile{
@@ -736,10 +737,15 @@ func TestAutoSelect_MultiAudioIsNotEnglishDub(t *testing.T) {
 		Name:     "[TB⚡] Debridio Scraper 1080p\n📁 Nisekoi S01 • E17\n🎥 BluRay 🎞️ AVC 🏷️ SHiNiGAMi\n📦 1.57 GB 🔍 Multi Audio\n🌐 🌎",
 		InfoHash: "multi", Seeders: 50,
 	}
+	// Seeders 0 is what the aggregator reports for a debrid-backed stream — it must not
+	// disqualify the SeaDex flag.
 	japanese := &hibiketorrent.AnimeTorrent{
 		Name:     "[TB☁️⚡] SeaDex 1080p (Best)\n📁 Nisekoi False Love S01 • E17\n🎥 BluRay 🎞️ HEVC 🏷️ smol\n🎧 OPUS 🔊 2.0\n📦 1.59 GB / 33.6 GB 🔍 Nyaa\n🌐 🇯🇵📝 🇬🇧",
-		InfoHash: "jp", Seeders: 5,
+		InfoHash: "jp", Seeders: 0, IsBestRelease: true,
 	}
+
+	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{frenchMulti}, 0, 0, 0)
+	assert.Equal(t, 2, scoreBand(s.calculateScore(cands[0], profile)), "'Multi Audio' with no language flag earns no English-dub credit")
 
 	// Only the French release is cached — the exact production situation.
 	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
@@ -751,7 +757,95 @@ func TestAutoSelect_MultiAudioIsNotEnglishDub(t *testing.T) {
 	}
 
 	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{frenchMulti, japanese}, profile, -1, 17, 0, postSearchSort)
-	assert.Equal(t, "jp", sorted[0].InfoHash, "a cached 'Multi Audio' (French) release must not outrank the Japanese original")
+	assert.Equal(t, "jp", sorted[0].InfoHash, "a cached 'Multi Audio' (French) release must not outrank the SeaDex Japanese release")
+}
+
+// Requesting season 3, a season-less season-1 BD REMUX outscored the correctly-labelled S03
+// WEB-DL (+100 remux +30 BluRay source beats the +60 season bonus) and played
+// "[Lulu] Mushoku Tensei - 05" — a season-1 file. Both are cached and 1080p, and the S1 release
+// is the one with a real English dub, so nothing below the season key can save this.
+func TestAutoSelect_SeasonExactBeatsFormatAndAudio(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
+		PreferredCodecs:    []string{"HEVC, x265, H.265, 10-bit, 10 bit, 10bit"},
+		PreferredSources:   []string{"BDRip, BD RIP, BluRay, Blu-Ray, Blu Ray, BD"},
+	}
+
+	season1Remux := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Comet 1080p\n📁 Mushoku Tensei E05\n🎥 BluRay REMUX 🏷️ Lulu\n🎧 AAC • FLAC \n📦 7.03 GB 🔍 DebridAccount|torbox\n🌐 Dual Audio",
+		InfoHash: "s1", Seeders: 0,
+	}
+	season3 := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Debridio Scraper 1080p\n📁 Mushoku Tensei Jobless Reincarnation S03 • E05\n🎥 WEB-DL 🎞️ AVC 🏷️ VARYG📡 Crunchyroll \n🎧 AAC \n📦 1.65 GB 🔍 Multi Subs|Multi Audio\n🌐 🌎",
+		InfoHash: "s3", Seeders: 0,
+	}
+
+	allCached := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+		for _, tr := range torrents {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: true})
+		}
+		return out
+	}
+
+	for _, postSearchSort := range []func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus{nil, allCached} {
+		sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{season1Remux, season3}, profile, 3, 5, 0, postSearchSort)
+		assert.Equal(t, "s3", sorted[0].InfoHash, "the release declaring the requested season must win, whatever its format/audio score")
+	}
+}
+
+// The seeder guard on IsBestRelease existed to skip dead swarms, but aggregators report
+// `seeders ?? 0` for debrid-backed streams, so `Seeders == -1 || Seeders > 2` disqualified every
+// SeaDex result in production and the curated-best bonus never applied.
+func TestAutoSelect_CuratedBestReleaseSeederGuard(t *testing.T) {
+	cases := []struct {
+		seeders int
+		want    bool
+	}{
+		{seeders: 0, want: true},   // aggregator / debrid stream: unknown, not dead
+		{seeders: -1, want: true},  // explicitly unknown
+		{seeders: 1, want: false},  // genuinely near-dead swarm
+		{seeders: 2, want: false},  //
+		{seeders: 3, want: true},   //
+		{seeders: 500, want: true}, //
+	}
+	for _, c := range cases {
+		got := isCuratedBestRelease(&hibiketorrent.AnimeTorrent{IsBestRelease: true, Seeders: c.seeders})
+		assert.Equal(t, c.want, got, "seeders=%d", c.seeders)
+	}
+	assert.False(t, isCuratedBestRelease(&hibiketorrent.AnimeTorrent{IsBestRelease: false, Seeders: 500}))
+}
+
+// With no English dub available, the SeaDex-curated release must top the Japanese tier even when
+// a rival is the cached one — same quality-over-cache rule as the resolution floor.
+func TestAutoSelect_SeaDexTopsJapaneseTierOverCache(t *testing.T) {
+	s := newTestAutoSelect()
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredLanguages: []string{"en, eng, english", "jp, jpn, japanese"},
+	}
+
+	seadex := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB☁️] SeaDex 1080p (Best)\n📁 Show S01 • E05\n🎥 BluRay 🏷️ smol\n🌐 🇯🇵📝 🇬🇧",
+		InfoHash: "seadex", Seeders: 0, IsBestRelease: true,
+	}
+	cachedRival := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Nyaa.si 1080p\n📁 Show S01 • E05\n🎥 BluRay 🏷️ Other\n🌐 🇯🇵",
+		InfoHash: "rival", Seeders: 900,
+	}
+
+	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+		for _, tr := range torrents {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: tr.InfoHash == "rival"})
+		}
+		return out
+	}
+
+	sorted := s.filterAndSort(context.Background(), []*hibiketorrent.AnimeTorrent{cachedRival, seadex}, profile, -1, 5, 0, postSearchSort)
+	assert.Equal(t, "seadex", sorted[0].InfoHash, "SeaDex must top the Japanese tier even though the rival is cached")
 }
 
 func TestAutoSelect_SizeUnitNotLanguage(t *testing.T) {
