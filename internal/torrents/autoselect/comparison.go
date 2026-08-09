@@ -19,13 +19,23 @@ import (
 // credible evidence of English audio on its own.
 var dualAudioNameRe = regexp.MustCompile(`(?i)dual[\s._-]?audio`)
 
-// NOTE: there is deliberately no "multi audio" equivalent. Unlike "dual audio" it names NO
-// language — in scene naming "MULTi" is the FRENCH convention (VF + original), e.g.
+// multiAudioNameRe matches "multi audio" / "multi-audio" / "multiaudio". Unlike "dual audio" it
+// names NO language: in scene naming "MULTi" is the FRENCH convention (VF + original), e.g.
 // "Nisekoi.S01E04.MULTi.1080p.BluRay.x264-SHiNiGAMi", which AIOStreams renders as
-// "🔍 Multi Audio 🌐 🌎" with no decodable flag — while a Crunchyroll WEB-DL labelled the exact
-// same way really does carry English. The two are indistinguishable from the name, so "multi"
-// simply earns no English credit and lands in the neutral tier; it is not evidence of a foreign
-// dub either, so it is not demoted below the Japanese original.
+// "🔍 Multi Audio 🌐 🌎" with no decodable flag. So "multi" alone earns no English credit and
+// lands in the neutral tier — but it is not evidence of a foreign dub either, so it is never
+// demoted below the Japanese original.
+//
+// Deliberately does NOT match bare "multi": "Multi Subs" / "[Multiple Subtitle]" are subtitle
+// markers on Japanese-audio releases.
+var multiAudioNameRe = regexp.MustCompile(`(?i)multi[\s._-]?audio`)
+
+// englishDubServiceRe matches the Western streaming services whose multi-audio releases always
+// ship the English dub alongside the Japanese original — which is what separates a genuine
+// "🏷️ VARYG📡 Crunchyroll … 🔍 Multi Subs|Multi Audio" dub from the identically-labelled French
+// scene MULTi. Asian-region services are excluded: a Bilibili "multi audio" is Japanese plus
+// Chinese, not English.
+var englishDubServiceRe = regexp.MustCompile(`(?i)\b(crunchyroll|funimation|netflix|nflx|hidive|hulu|disney|dsnp|amazon|amzn)\b`)
 
 const (
 	scoreResolutionBase    = 100
@@ -83,6 +93,9 @@ type candidate struct {
 	audioLangs      []string // languages that actually describe the AUDIO (see deriveAudioLanguages)
 	nameLangMatchOK bool     // safe to look for a language as free text in the name
 	isDualAudio     bool     // declares a dual-audio track set (JP original + English dub)
+	// isServiceMultiAudio marks a multi-audio release from a service that always ships the
+	// English dub — the one way to tell a real dub from the French scene "MULTi".
+	isServiceMultiAudio bool
 	expectedSeason  int      // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
 	expectedEpisode int      // Requested episode number, <=0 = unknown (skip episode scoring)
 	mediaYear       int      // Requested media's start year, 0 = unknown (skip year scoring)
@@ -175,6 +188,8 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 		}
 		c := candidates[i]
 		c.isDualAudio = isDualAudioRelease(c.parsed, c.lowerName)
+		c.isServiceMultiAudio = (containsTerm(c.parsed.AudioTerm, "multi") || multiAudioNameRe.MatchString(c.lowerName)) &&
+			englishDubServiceRe.MatchString(c.lowerName)
 		c.audioLangs, c.nameLangMatchOK = deriveAudioLanguages(c.parsed, c.flagLanguages, c.isDualAudio)
 	}
 	return candidates
@@ -408,8 +423,9 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 	hasForeignLang := slices.ContainsFunc(c.audioLangs, func(l string) bool { return !tokenInAnyGroup(l) })
 	hasJapanese := slices.ContainsFunc(c.audioLangs, isJapaneseToken)
 
-	// English dub: top preferred audio present, or a dual with no foreign dub language.
-	if matchesGroup(0) || (isDual && !hasForeignLang) {
+	// English dub: top preferred audio present, a dual with no foreign dub language, or a
+	// multi-audio release from a service that always includes the English dub.
+	if matchesGroup(0) || (isDual && !hasForeignLang) || (c.isServiceMultiAudio && !hasForeignLang) {
 		return scoreEnglishDub
 	}
 	// Foreign-only: a declared non-preferred language with no JP original and not dual.

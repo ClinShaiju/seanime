@@ -744,8 +744,22 @@ func TestAutoSelect_MultiAudioIsNotEnglishDub(t *testing.T) {
 		InfoHash: "jp", Seeders: 0, IsBestRelease: true,
 	}
 
-	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{frenchMulti}, 0, 0, 0)
+	// Same "Multi Audio" label, but from a service whose dubs always include English — verbatim
+	// from production, and the one signal that separates it from the French scene MULTi.
+	crunchyrollMulti := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Debridio Scraper 1080p\n📁 Mushoku Tensei Jobless Reincarnation S03 • E01\n🎥 WEB-DL 🎞️ AVC 🏷️ VARYG📡 Crunchyroll \n🎧 AAC \n📦 1.64 GB 🔍 Multi Subs|Multi Audio\n🌐 🌎",
+		InfoHash: "cr", Seeders: 0,
+	}
+	// Asian-region services are excluded: a Bilibili multi-audio is Japanese plus Chinese.
+	biliMulti := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Nyaa.si 1080p\n📁 Show S01 • E01\n🎥 WEB-DL 🎞️ HEVC 🏷️ Grp📡 Bilibili \n📦 295 MB 🔍 Multi Audio\n🌐 🌎",
+		InfoHash: "bili", Seeders: 0,
+	}
+
+	cands := buildCandidates([]*hibiketorrent.AnimeTorrent{frenchMulti, crunchyrollMulti, biliMulti}, 0, 0, 0)
 	assert.Equal(t, 2, scoreBand(s.calculateScore(cands[0], profile)), "'Multi Audio' with no language flag earns no English-dub credit")
+	assert.Equal(t, 3, scoreBand(s.calculateScore(cands[1], profile)), "a Crunchyroll multi-audio release does carry the English dub")
+	assert.Equal(t, 2, scoreBand(s.calculateScore(cands[2], profile)), "a Bilibili multi-audio release is Japanese + Chinese, not a dub")
 
 	// Only the French release is cached — the exact production situation.
 	postSearchSort := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
