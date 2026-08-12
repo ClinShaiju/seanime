@@ -8,6 +8,7 @@ import (
 	"seanime/internal/events"
 	"seanime/internal/platforms/anilist_platform"
 	"seanime/internal/platforms/platform"
+	"seanime/internal/platforms/shared_platform"
 	"seanime/internal/platforms/simulated_platform"
 	"seanime/internal/user"
 	"seanime/internal/util"
@@ -121,7 +122,7 @@ func (a *App) applyRuntimeAnilistClient(client anilist.AnilistClient) error {
 	var nextPlatform platform.Platform
 	var err error
 	if client.IsAuthenticated() {
-		nextPlatform = anilist_platform.NewAnilistPlatform(a.AnilistClientRef, a.ExtensionBankRef, a.Logger, a.Database, a.LogoutFromAnilist)
+		nextPlatform = anilist_platform.NewAnilistPlatform(a.AnilistClientRef, a.ExtensionBankRef, a.Logger, a.Database, func() { a.autoLogoutFromAnilist(0) })
 	} else {
 		nextPlatform, err = simulated_platform.NewSimulatedPlatform(a.LocalManager, a.AnilistClientRef, a.ExtensionBankRef, a.Logger, a.Database)
 		if err != nil {
@@ -214,7 +215,7 @@ func (a *App) LoginToAnilist(token string) error {
 	// delegate); evict it so it rebuilds with the freshly-linked account/token.
 	a.evictSession(a.adminUserID())
 
-	anilistPlatform := anilist_platform.NewAnilistPlatform(a.AnilistClientRef, a.ExtensionBankRef, a.Logger, a.Database, a.LogoutFromAnilist)
+	anilistPlatform := anilist_platform.NewAnilistPlatform(a.AnilistClientRef, a.ExtensionBankRef, a.Logger, a.Database, func() { a.autoLogoutFromAnilist(0) })
 	a.UpdatePlatform(anilistPlatform)
 
 	a.InitOrRefreshAnilistData()
@@ -265,6 +266,68 @@ func (a *App) LogoutFromAnilist() {
 
 	a.InitOrRefreshModules()
 	a.InitOrRefreshAnilistData()
+}
+
+// autoLogoutFromAnilist is the logoutFunc handed to a platform's AniList cache layer. It
+// runs when AniList answers a query with an auth error ("invalid token" / "user not
+// found").
+//
+// Unlike the user-initiated logout it re-checks the token with a direct GetViewer call
+// first. AniList returns the same "Invalid token" GraphQL error for transient/edge
+// failures as it does for a genuinely revoked one, and this path DESTROYS the stored
+// credential (UpsertAccount with an empty token) — so a single bad response permanently
+// unlinks the account with no way back but a fresh OAuth round-trip. That is exactly what
+// happened on 2026-08-12: one 400 on an AnimeCollection query unlinked the admin, leaving
+// every profile showing the same blank simulated user.
+//
+// userID 0 means the App-global (admin) plane; any other id is that user's own account.
+func (a *App) autoLogoutFromAnilist(userID uint) {
+	token := ""
+	if userID == 0 {
+		token = a.Database.GetAnilistToken()
+	} else if u, err := a.Database.GetUserByID(userID); err == nil && u != nil {
+		if acc, err := a.Database.GetAccountForUser(u); err == nil && acc != nil {
+			token = acc.Token
+		}
+	}
+
+	if a.anilistTokenStillAuthenticates(token) {
+		a.Logger.Warn().Uint("userId", userID).
+			Msg("app: Ignoring AniList auto-logout, the stored token still authenticates")
+		return
+	}
+
+	// The cache layer no longer announces the expiry itself — it can't know whether the
+	// logout will actually happen. Scope the notice to the affected user so one profile's
+	// dead token doesn't tell everyone on the server that their session expired.
+	const expiredMsg = "Your AniList session has expired. Please log in again."
+	if userID == 0 {
+		a.WSEventManager.SendEvent(events.ServerLoggedOutAnilist, expiredMsg)
+	} else {
+		events.NewScopedWSEventManager(a.WSEventManager, userID).SendEvent(events.ServerLoggedOutAnilist, expiredMsg)
+	}
+
+	if userID == 0 {
+		a.LogoutFromAnilist()
+		return
+	}
+	a.logoutUserFromAnilist(userID)
+}
+
+// anilistTokenStillAuthenticates reports whether token is still accepted by AniList.
+// A network/5xx failure counts as "still valid": refusing to destroy a credential while
+// the API is unreachable is the safe direction to be wrong in.
+func (a *App) anilistTokenStillAuthenticates(token string) bool {
+	if token == "" {
+		return false
+	}
+	viewer, err := anilist.NewAnilistClient(token, a.AnilistCacheDir).GetViewer(context.Background())
+	if err == nil {
+		return viewer != nil && viewer.Viewer != nil && len(viewer.Viewer.Name) > 0
+	}
+	// Only an auth-shaped error proves the token is dead; anything else is the API being
+	// unhappy for reasons that have nothing to do with our credential.
+	return !shared_platform.IsAnilistAuthError(err)
 }
 
 // GetAnimeCollection returns the user's Anilist collection if it in the cache, otherwise it queries Anilist for the user's collection.

@@ -33,6 +33,18 @@ func NewUser(model *models.Account) (*User, error) {
 	}, nil
 }
 
+// NewSimulatedUserNamed is NewSimulatedUser carrying a display name — the Seanime profile
+// name on a multi-user server. Without it every profile that hasn't linked an AniList
+// account renders as the literal string "User", so separate logins are indistinguishable
+// in the UI even though the server resolves them as different users.
+func NewSimulatedUserNamed(name string) *User {
+	u := NewSimulatedUser()
+	if name != "" {
+		u.Viewer.Name = name
+	}
+	return u
+}
+
 func NewSimulatedUser() *User {
 	acc := anilist.GetViewer_Viewer{
 		Name:        "User",

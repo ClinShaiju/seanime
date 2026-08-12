@@ -302,3 +302,57 @@ func TestValidateReleaseUrl(t *testing.T) {
 		})
 	}
 }
+
+// TestCompareVersionForkRevision pins the fork versioning scheme: this fork keeps the
+// upstream version it is built on and appends a fourth segment (3.10.2.1 = fork build 1
+// on upstream 3.10.2). That form is not valid semver, and CompareVersion returns
+// "no update" for anything it cannot parse — so without ParseForkVersion every 3.10.2.x
+// build would silently stop offering updates.
+func TestCompareVersionForkRevision(t *testing.T) {
+	testCases := []struct {
+		currVersion    string
+		otherVersion   string
+		expectedOutput int
+		shouldUpdate   bool
+	}{
+		// The fork revision decides when the upstream release matches.
+		{"3.10.2", "3.10.2.1", -1, true},
+		{"3.10.2.1", "3.10.2", 1, false},
+		{"3.10.2.1", "3.10.2.2", -1, true},
+		{"3.10.2.2", "3.10.2.1", 1, false},
+		{"3.10.2.1", "3.10.2.1", 0, false},
+		// The upstream head still outranks the fork revision.
+		{"3.10.2.5", "3.10.3", -1, true},
+		{"3.10.2.5", "3.11.0", -2, true},
+		{"3.10.2.5", "4.0.0", -3, true},
+		{"3.11.0", "3.10.2.9", 2, false},
+		// Junk stays rejected rather than coerced into a bogus ordering.
+		{"3.10.2.x", "3.10.2.1", 0, false},
+		{"not-a-version", "3.10.2", 0, false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.currVersion+" vs "+tc.otherVersion, func(t *testing.T) {
+			output, boolOutput := CompareVersion(tc.currVersion, tc.otherVersion)
+			if output != tc.expectedOutput || boolOutput != tc.shouldUpdate {
+				t.Errorf("Expected output to be %d and shouldUpdate to be %v, got output=%d and shouldUpdate=%v",
+					tc.expectedOutput, tc.shouldUpdate, output, boolOutput)
+			}
+		})
+	}
+}
+
+func TestParseForkVersion(t *testing.T) {
+	v, rev, err := ParseForkVersion("v3.10.2.4")
+	require.NoError(t, err)
+	assert.Equal(t, "3.10.2", v.String())
+	assert.Equal(t, uint64(4), rev)
+
+	// A plain upstream version is revision 0, so it sorts below any fork build of it.
+	_, rev, err = ParseForkVersion("3.10.2")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(0), rev)
+
+	_, _, err = ParseForkVersion("3.10.2.1.7")
+	assert.Error(t, err)
+}

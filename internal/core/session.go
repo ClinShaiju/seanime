@@ -465,7 +465,10 @@ func (a *App) buildUserSession(userID uint) *UserSession {
 		}
 	}
 	if usr == nil {
-		usr = user.NewSimulatedUser()
+		// Named after the Seanime profile, not the bare "User" default: on a multi-user
+		// server every unlinked profile would otherwise render the same anonymous name in
+		// the sidebar, making distinct logins look like one shared account.
+		usr = user.NewSimulatedUserNamed(u.Username)
 	}
 
 	clientRef := util.NewRef[anilist.AnilistClient](anilist.NewAnilistClient(token, userAnilistCacheDir(a.AnilistCacheDir, userID)))
@@ -476,7 +479,7 @@ func (a *App) buildUserSession(userID uint) *UserSession {
 	// gets a clean slate: empty collections (see the getters below) + working public
 	// browse/search through the unauthenticated client.
 	plat := anilist_platform.NewAnilistPlatform(clientRef, a.ExtensionBankRef, a.Logger, a.Database, func() {
-		a.logoutUserFromAnilist(userID)
+		a.autoLogoutFromAnilist(userID)
 	})
 	if linked {
 		plat.SetUsername(usr.Viewer.Name)

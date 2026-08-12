@@ -360,11 +360,15 @@ func (c *CacheLayer) checkAndUpdateWorkingState(err error) {
 		}
 
 		// handle invalid token
-		if isAnilistAuthError(err) {
-			events.GlobalWSEventManager.SendEvent(events.ServerLoggedOutAnilist, "Your AniList session has expired. Please log in again.")
+		if IsAnilistAuthError(err) {
+			// The owner of logoutFunc decides whether the token is really dead AND notifies
+			// the client, because this path destroys the stored credential. Announcing the
+			// expiry here would tell the user to re-link even when the logout is skipped.
 			if c.logoutFunc != nil {
 				go c.logoutFunc()
+				return
 			}
+			events.GlobalWSEventManager.SendEvent(events.ServerLoggedOutAnilist, "Your AniList session has expired. Please log in again.")
 			return
 		}
 
@@ -403,7 +407,10 @@ func (c *CacheLayer) checkAndUpdateWorkingState(err error) {
 	}
 }
 
-func isAnilistAuthError(err error) bool {
+// IsAnilistAuthError reports whether err is AniList telling us the token is not usable.
+// Exported because the auto-logout owner re-checks the token before destroying it and
+// must classify that second response the same way.
+func IsAnilistAuthError(err error) bool {
 	if err == nil {
 		return false
 	}

@@ -355,7 +355,7 @@ func NewApp(configOpts *ConfigOptions, selfupdater *updater.SelfUpdater) *App {
 	// Initialize Anilist platform
 	anilistPlatform := anilist_platform.NewAnilistPlatform(anilistCWRef, extensionBankRef, logger, database, func() {
 		if app != nil {
-			app.LogoutFromAnilist()
+			app.autoLogoutFromAnilist(0)
 		}
 	})
 

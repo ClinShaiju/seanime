@@ -26,6 +26,41 @@ func IsValidBasicSemver(version string) bool {
 	return true
 }
 
+// ParseForkVersion splits a fork version into its upstream semver head and its fork
+// revision.
+//
+// This fork keeps the upstream Seanime version it is built on and appends a fourth
+// segment for its own builds: "3.10.2.1" reads as "fork build 1 on top of upstream
+// 3.10.2". That form is deliberately NOT valid semver — semver.NewVersion rejects it —
+// so every comparison has to come through here. Passing it straight to the semver
+// package returns an error that CompareVersion swallows as "versions are equal", which
+// silently disables the in-app updater for the whole 3.10.2.x line.
+//
+// A plain "3.10.2" parses with revision 0, so upstream versions sort below any fork
+// build of the same upstream release.
+func ParseForkVersion(version string) (*semver.Version, uint64, error) {
+	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
+
+	if parsed, err := semver.NewVersion(v); err == nil {
+		return parsed, 0, nil
+	}
+
+	// Only the 4-numeric-segment form gets a second chance; anything else is genuinely bad.
+	parts := strings.Split(v, ".")
+	if len(parts) != 4 {
+		return nil, 0, fmt.Errorf("invalid version %q", version)
+	}
+	rev, err := strconv.ParseUint(parts[3], 10, 64)
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid fork revision in %q", version)
+	}
+	parsed, err := semver.NewVersion(strings.Join(parts[:3], "."))
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid version %q", version)
+	}
+	return parsed, rev, nil
+}
+
 // CompareVersion compares two versions and returns the difference between them.
 //
 //	 3: Current version is newer by major version.
@@ -34,19 +69,29 @@ func IsValidBasicSemver(version string) bool {
 //		-3: Current version is older by major version.
 //		-2: Current version is older by minor version.
 //		-1: Current version is older by patch version.
+//
+// A difference in the fork revision alone (3.10.2 vs 3.10.2.1) ranks as a patch-level
+// change, since it is a rebuild of the same upstream release.
 func CompareVersion(current string, b string) (comp int, shouldUpdate bool) {
 
-	currV, err := semver.NewVersion(current)
+	currV, currRev, err := ParseForkVersion(current)
 	if err != nil {
 		return 0, false
 	}
-	otherV, err := semver.NewVersion(b)
+	otherV, otherRev, err := ParseForkVersion(b)
 	if err != nil {
 		return 0, false
 	}
 
 	comp = currV.Compare(otherV)
 	if comp == 0 {
+		// Same upstream release — the fork revision decides.
+		switch {
+		case currRev > otherRev:
+			return 1, false
+		case currRev < otherRev:
+			return -1, true
+		}
 		return 0, false
 	}
 

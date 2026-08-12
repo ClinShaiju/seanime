@@ -86,9 +86,36 @@ func (db *Database) GetAdminUser() (*models.User, error) {
 	return &u, nil
 }
 
-// DeleteUser removes a user and revokes all of their sessions.
+// DeleteUser removes a user along with everything scoped to them: sessions, theme,
+// settings overrides and their linked AniList account row.
+//
+// The account row matters most — it holds a live AniList OAuth token, so leaving it
+// behind orphans a working credential in the database forever with no owner and no UI
+// that can reach it.
 func (db *Database) DeleteUser(id uint) error {
+	u, err := db.GetUserByID(id)
+	if err != nil {
+		return err
+	}
+
 	_ = db.gormdb.Where("user_id = ?", id).Delete(&models.Session{}).Error
+	_ = db.gormdb.Where("user_id = ?", id).Delete(&models.Theme{}).Error
+	_ = db.gormdb.Where("user_id = ?", id).Delete(&models.UserSettings{}).Error
+
+	// Two exceptions. The admin's row is the app-global account that the single-user paths
+	// (GetAccount / UpsertAccount / GetAnilistToken) read regardless of profiles, so it
+	// outlives any one user record. And an account another profile still points at is not
+	// this user's to delete.
+	if u.AnilistAccountID != nil && u.Role != models.UserRoleAdmin {
+		var stillLinked int64
+		err := db.gormdb.Model(&models.User{}).
+			Where("anilist_account_id = ? AND id != ?", *u.AnilistAccountID, id).
+			Count(&stillLinked).Error
+		if err == nil && stillLinked == 0 {
+			_ = db.gormdb.Delete(&models.Account{}, *u.AnilistAccountID).Error
+		}
+	}
+
 	return db.gormdb.Delete(&models.User{}, id).Error
 }
 

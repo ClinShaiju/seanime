@@ -6,7 +6,11 @@ import (
 )
 
 const (
-	Version              = "3.10.2"
+	// Version keeps the upstream Seanime release this fork is built on and appends a
+	// fork revision: 3.10.2.1 is fork build 1 on top of upstream 3.10.2. See
+	// util.ParseForkVersion — the 4-segment form is not valid semver and every
+	// comparison has to go through it.
+	Version              = "3.10.2.1"
 	VersionName          = "Saisei"
 	GcTime               = time.Minute * 30
 	ConfigFileName       = "config.toml"
