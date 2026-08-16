@@ -329,39 +329,32 @@ jobs:
       - name: Move & Rename Electron assets 📝🗃️
         # Move Electron assets to the root directory and rename them
         run: |
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_arm64.zip ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_arm64.zip ./seanime-denshi-${{ env.VERSION }}_MacOS_arm64.zip
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_arm64.zip.blockmap ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_arm64.zip.blockmap ./seanime-denshi-${{ env.VERSION }}_MacOS_arm64.zip.blockmap
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_arm64.dmg ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_arm64.dmg ./seanime-denshi-${{ env.VERSION }}_MacOS_arm64.dmg
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_arm64.dmg.blockmap ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_arm64.dmg.blockmap ./seanime-denshi-${{ env.VERSION }}_MacOS_arm64.dmg.blockmap
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_x64.dmg ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_x64.dmg ./seanime-denshi-${{ env.VERSION }}_MacOS_x64.dmg
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_x64.zip ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_x64.zip ./seanime-denshi-${{ env.VERSION }}_MacOS_x64.zip
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_x64.dmg.blockmap ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_MacOS_x64.dmg.blockmap ./seanime-denshi-${{ env.VERSION }}_MacOS_x64.dmg.blockmap
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_Linux_x86_64.AppImage ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_Linux_x86_64.AppImage ./seanime-denshi-${{ env.VERSION }}_Linux_x86_64.AppImage
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_Windows_x64.exe ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_Windows_x64.exe ./seanime-denshi-${{ env.VERSION }}_Windows_x64.exe
-          fi
-          if [ -f ./artifacts/seanime-denshi-${{ env.VERSION }}_Windows_x64.exe.blockmap ]; then
-              mv ./artifacts/seanime-denshi-${{ env.VERSION }}_Windows_x64.exe.blockmap ./seanime-denshi-${{ env.VERSION }}_Windows_x64.exe.blockmap
-          fi
+          # Match on the "seanime-denshi-" prefix, NOT on env.VERSION.
+          #
+          # electron-builder names its output from seanime-denshi/package.json, which has to be
+          # valid semver, while env.VERSION comes from the tag and this fork uses a 4-segment
+          # version (3.10.2.2) that semver rejects. So the tag v3.10.2.2 produced
+          # "seanime-denshi-3.10.2_*" files while every mv below looked for
+          # "seanime-denshi-3.10.2.2_*". Each mv was guarded by `if [ -f ]`, so all ten skipped
+          # silently, the job reported success, and v3.10.2.2 was published with no Denshi build.
+          #
+          # The files are NOT renamed to env.VERSION: the electron-builder YML manifests copied
+          # below reference these exact filenames (with hashes), so renaming them breaks Denshi's
+          # auto-update.
+          find ./artifacts -maxdepth 1 -name 'seanime-denshi-*' -exec mv {} ./ \;
 
           # Copy electron-builder YML files if they exist
           find ./artifacts -name "*.yml" -exec cp {} ./ \;
+
+      - name: Verify Electron assets were found 🔍
+        # A missing Denshi build must fail the release, not sail through as a green run.
+        run: |
+          count=$(ls -1 seanime-denshi-* 2>/dev/null | wc -l)
+          echo "Found $count Denshi asset(s)"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No seanime-denshi-* assets found; the electron build produced names this step did not match."
+            exit 1
+          fi
 
       - name: Print all
         run: ls -la .
@@ -406,14 +399,10 @@ jobs:
             latest-linux.yml
             latest-mac.yml
             latest-mac-arm64.yml
-            # Electron Desktop builds
-            seanime-denshi-${{ env.VERSION }}_MacOS_arm64.zip
-            seanime-denshi-${{ env.VERSION }}_MacOS_arm64.zip.blockmap
-            seanime-denshi-${{ env.VERSION }}_MacOS_arm64.dmg
-            seanime-denshi-${{ env.VERSION }}_MacOS_arm64.dmg.blockmap
-            seanime-denshi-${{ env.VERSION }}_Linux_x86_64.AppImage
-            seanime-denshi-${{ env.VERSION }}_Windows_x64.exe
-            seanime-denshi-${{ env.VERSION }}_Windows_x64.exe.blockmap
+            # Electron Desktop builds. Globbed rather than spelled out per version: electron-builder
+            # names these from seanime-denshi/package.json (semver), which does not match a
+            # 4-segment fork tag — see the move step above.
+            seanime-denshi-*
             # Server builds
             seanime-${{ env.VERSION }}_MacOS_x86_64.tar.gz
             seanime-${{ env.VERSION }}_MacOS_arm64.tar.gz
