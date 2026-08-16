@@ -1,6 +1,7 @@
 package util
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/5rahim/habari"
@@ -50,4 +51,64 @@ func TestLanguagesFromFlags(t *testing.T) {
 	assert.Contains(t, LanguagesFromFlags("Show E10 🌐 🇫🇷"), "french")
 	assert.Contains(t, LanguagesFromFlags("Show E10 🌐 🇪🇸"), "spanish")
 	assert.Empty(t, LanguagesFromFlags("Show E10 1080p no flags here"))
+}
+
+// TestDeriveAudioLanguages_MatchesBadgeExpectations pins the audio-vs-subtitle split that both
+// auto-select ranking and the torrent-list badges read. Each case is a real release name; the
+// expectation is the AUDIO language list the picker badges "Original + Dub" / "Dubbed" from.
+func TestDeriveAudioLanguages_MatchesBadgeExpectations(t *testing.T) {
+	cases := []struct {
+		name      string
+		release   string
+		wantAudio []string
+	}{
+		{
+			// Japanese audio, ENG/POR-BR/SPA-LA SUBTITLES. Must yield no audio languages at all:
+			// crediting them badged this "Dubbed" and would rank it as a foreign dub.
+			name:      "subtitle languages are not audio",
+			release:   "[Erai-raws] Show - 07 [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA]",
+			wantAudio: nil,
+		},
+		{
+			// Japanese audio with CHINESE subtitles, expressed as audio flags. Both languages are
+			// reported, but English is absent — so no dub badge, and ranking demotes it.
+			name:      "jp/cn flags stay two foreign-market languages",
+			release:   "[TB] Nyaa.si 1080p\n📁 Kakekoi E04\n🏷️ LoliHouse\n🌐 🇯🇵 / 🇨🇳",
+			wantAudio: []string{"Japanese", "Chinese"},
+		},
+		{
+			// Audio flags before the 📝 marker are English+Japanese; the subtitle flags after it
+			// must not leak in.
+			name:      "audio flags win over subtitle flags",
+			release:   "[TB] SeaDex 1080p (Best)\n📁 Show S01 • E12\n🌐 🇬🇧 / 🇯🇵📝 🇬🇧 / 🇸🇦 / 🇫🇷",
+			wantAudio: []string{"English", "Japanese"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			cleaned := CleanReleaseName(tt.release)
+			parsed := habari.Parse(cleaned)
+			got, _ := DeriveAudioLanguages(
+				DisplayLanguagesFromFlags(tt.release),
+				parsed.Language,
+				parsed.Subtitles,
+				IsDualAudioRelease(parsed.AudioTerm, strings.ToLower(cleaned)),
+			)
+			assert.Equal(t, tt.wantAudio, got)
+		})
+	}
+}
+
+// TestIsServiceMultiAudio covers the one case where "Multi Audio" really does mean the Japanese
+// original plus an English dub: a Western streaming service. The French scene "MULTi" must not.
+func TestIsServiceMultiAudio(t *testing.T) {
+	crunchyroll := strings.ToLower(CleanReleaseName("📁 Mushoku Tensei S03 • E01\n🏷️ VARYG📡 Crunchyroll \n🔍 Multi Subs|Multi Audio"))
+	assert.True(t, IsServiceMultiAudio([]string{"Multi Audio"}, crunchyroll))
+
+	frenchScene := strings.ToLower("Nisekoi.S01E04.MULTi.1080p.BluRay.x264-SHiNiGAMi")
+	assert.False(t, IsServiceMultiAudio(nil, frenchScene), "scene MULTi is French, not an English dub")
+
+	multiSubsOnly := strings.ToLower(CleanReleaseName("📁 Show S01 • E04\n🏷️ ToonsHub📡 Crunchyroll\n🔍 Multi Subs"))
+	assert.False(t, IsServiceMultiAudio(nil, multiSubsOnly), "multi SUBS is not multi audio")
 }

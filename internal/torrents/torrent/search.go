@@ -583,11 +583,36 @@ func (r *Repository) createAnimeTorrentPreview(opts createAnimeTorrentPreviewOpt
 	var parsedData *habari.Metadata
 	tMetadata, found := metadataCache.Get(opts.torrent.Name)
 	if !found { // Should always be found
-		parsedData = habari.Parse(util.CleanReleaseName(opts.torrent.Name))
-		// CleanReleaseName strips emoji before habari, so releases that express language only as
-		// flag emoji (🇬🇧/🇯🇵 — common from AIOStreams) end up with no Language. Fold the
-		// flag-decoded languages back in so the UI shows them (and the "Original + Dub" badge).
-		parsedData.Language = util.MergeLanguages(parsedData.Language, util.DisplayLanguagesFromFlags(opts.torrent.Name))
+		cleaned := util.CleanReleaseName(opts.torrent.Name)
+		parsedData = habari.Parse(cleaned)
+		// Make Language mean AUDIO languages, using the same rule auto-select ranks by, so the
+		// badges the UI infers from it ("Original + Dub" / "Dubbed") can't contradict the ranking.
+		// Two things have to happen here:
+		//
+		//  1. CleanReleaseName strips emoji before habari, so releases that express language only as
+		//     flag emoji (🇬🇧/🇯🇵 — common from AIOStreams) end up with no Language at all. The
+		//     flag-decoded languages are audio-scoped (everything before the 📝 subtitle marker).
+		//  2. habari reports SUBTITLE languages in Language, so "[Erai-raws] Show - 07 [1080p]
+		//     [Multiple Subtitle] [ENG][POR-BR][SPA-LA]" parses to Language=[ENG POR-BR SPA-LA] on a
+		//     Japanese-audio release — which the UI badged "Dubbed". Those move to Subtitles, where
+		//     they belong, rather than being dropped.
+		audioLangs, _ := util.DeriveAudioLanguages(
+			util.DisplayLanguagesFromFlags(opts.torrent.Name),
+			parsedData.Language,
+			parsedData.Subtitles,
+			util.IsDualAudioRelease(parsedData.AudioTerm, strings.ToLower(cleaned)),
+		)
+		if len(audioLangs) == 0 && len(parsedData.Language) > 0 {
+			parsedData.Subtitles = util.MergeLanguages(parsedData.Subtitles, parsedData.Language)
+		}
+		// A "Multi Audio" release from a Western streaming service carries the Japanese original AND
+		// an English dub without naming either — auto-select already ranks it into the English-dub
+		// tier for that reason, so spell the two languages out rather than let the picker show a
+		// bare "Multi Audio" on the release the ranker put first.
+		if util.IsServiceMultiAudio(parsedData.AudioTerm, strings.ToLower(cleaned)) {
+			audioLangs = util.MergeLanguages(audioLangs, []string{"Japanese", "English"})
+		}
+		parsedData.Language = audioLangs
 		newM := &TorrentMetadata{
 			Distance: 1000,
 			Metadata: parsedData,

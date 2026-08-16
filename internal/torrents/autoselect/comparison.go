@@ -14,28 +14,20 @@ import (
 	"github.com/5rahim/habari"
 )
 
-// dualAudioNameRe matches "dual audio" / "dual-audio" / "dualaudio" (separator optional). In
-// fansub convention that specifically means the Japanese original PLUS an English dub, so it is
-// credible evidence of English audio on its own.
-var dualAudioNameRe = regexp.MustCompile(`(?i)dual[\s._-]?audio`)
-
-// multiAudioNameRe matches "multi audio" / "multi-audio" / "multiaudio". Unlike "dual audio" it
-// names NO language: in scene naming "MULTi" is the FRENCH convention (VF + original), e.g.
-// "Nisekoi.S01E04.MULTi.1080p.BluRay.x264-SHiNiGAMi", which AIOStreams renders as
-// "🔍 Multi Audio 🌐 🌎" with no decodable flag. So "multi" alone earns no English credit and
-// lands in the neutral tier — but it is not evidence of a foreign dub either, so it is never
-// demoted below the Japanese original.
+// trustedSourceRe matches releases that come straight from the retail source rather than from a
+// third-party re-encode of it: Crunchyroll (the aggregator's "📡 Crunchyroll" service tag, or the
+// scene abbreviation "CR") and disc sources.
 //
-// Deliberately does NOT match bare "multi": "Multi Subs" / "[Multiple Subtitle]" are subtitle
-// markers on Japanese-audio releases.
-var multiAudioNameRe = regexp.MustCompile(`(?i)multi[\s._-]?audio`)
-
-// englishDubServiceRe matches the Western streaming services whose multi-audio releases always
-// ship the English dub alongside the Japanese original — which is what separates a genuine
-// "🏷️ VARYG📡 Crunchyroll … 🔍 Multi Subs|Multi Audio" dub from the identically-labelled French
-// scene MULTi. Asian-region services are excluded: a Bilibili "multi audio" is Japanese plus
-// Chinese, not English.
-var englishDubServiceRe = regexp.MustCompile(`(?i)\b(crunchyroll|funimation|netflix|nflx|hidive|hulu|disney|dsnp|amazon|amzn)\b`)
+// Crunchyroll is here for its SUBTITLES, not its video. Its official subs typeset signs, translate
+// song lyrics and keep terminology consistent across a season; the small HEVC re-encodes that
+// dominate the results for a currently-airing show almost always strip that work down to plain
+// dialogue. That difference is invisible to every other signal we rank on — the re-encode parses as
+// the same 1080p, the same episode, the same audio, and wins on a preferred codec.
+//
+// Disc sources share the rung rather than sitting below it so a BluRay/REMUX is never demoted by a
+// CR WEB-DL: within the rung the existing score decides, and it already weights BluRay (+30 source)
+// and REMUX (+100) above a web release.
+var trustedSourceRe = regexp.MustCompile(`(?i)\b(crunchyroll|cr|blu[-. ]?ray|bd[-. ]?rip|bdmv|remux)\b`)
 
 const (
 	scoreResolutionBase    = 100
@@ -67,6 +59,13 @@ const (
 	scoreEpisodeMismatch = 100000 // wrong episode → always last, even cached
 	scoreEnglishDub      = 2000    // English (top-preferred) audio / dub present
 	scoreForeignAudio    = 2000    // a release only in a non-preferred foreign language
+	// A release that carries the Japanese original ALONGSIDE a non-preferred language — a LoliHouse
+	// "🌐 🇯🇵 / 🇨🇳" WEBRip (Japanese audio, Chinese subtitles) or a jp/ru dub. Sized to dominate the
+	// whole format spread (~450 at most: resolution 100 + group 50 + codec 40 + source 30 + the
+	// bonuses) so it always sinks below a plain Japanese release, yet stay well inside the neutral
+	// band (|score| < 1000) so it never falls below a foreign-ONLY release, which has no playable
+	// Japanese track at all.
+	scoreForeignMarketRelease = 700
 
 	// Quality-signal tiebreakers, borrowed from AIOStreams' visualTag/audioTag/seadex sort
 	// keys. Deliberately SMALL (sum well under 1000) so they only separate otherwise-equivalent
@@ -104,9 +103,15 @@ type candidate struct {
 	// bonuses: an S1 BluRay REMUX beat the correctly-labelled S03 WEB-DL of Mushoku Tensei
 	// (+100 remux +30 BluRay source vs +60 season match) and played a season-1 file.
 	seasonExact bool
-	priority    int
-	bonus       int
-	score       int
+	// trustedSource is true for a release taken straight from the retail source (Crunchyroll, or a
+	// disc) instead of re-encoded from it — see trustedSourceRe. Like seasonExact it is a SORT KEY,
+	// not a score: the whole problem is that a re-encode wins on format weights (a preferred codec
+	// is +40) while carrying visibly worse subtitles, so any score-level signal is out-weighed by
+	// the thing it is meant to beat.
+	trustedSource bool
+	priority      int
+	bonus         int
+	score         int
 }
 
 type TorrentWithCacheStatus struct {
@@ -188,9 +193,9 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 		}
 		c := candidates[i]
 		c.isDualAudio = isDualAudioRelease(c.parsed, c.lowerName)
-		c.isServiceMultiAudio = (containsTerm(c.parsed.AudioTerm, "multi") || multiAudioNameRe.MatchString(c.lowerName)) &&
-			englishDubServiceRe.MatchString(c.lowerName)
+		c.isServiceMultiAudio = util.IsServiceMultiAudio(c.parsed.AudioTerm, c.lowerName)
 		c.audioLangs, c.nameLangMatchOK = deriveAudioLanguages(c.parsed, c.flagLanguages, c.isDualAudio)
+		c.trustedSource = trustedSourceRe.MatchString(c.lowerName)
 	}
 	return candidates
 }
@@ -199,48 +204,13 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 // the fansub convention for the Japanese original PLUS an English dub, so it is credible evidence
 // of English audio on its own — unlike "multi", see the note on dualAudioNameRe.
 func isDualAudioRelease(parsed *habari.Metadata, lowerName string) bool {
-	return containsTerm(parsed.AudioTerm, "dual", "dub") || dualAudioNameRe.MatchString(lowerName)
+	return util.IsDualAudioRelease(parsed.AudioTerm, lowerName)
 }
 
-// subtitleOnlyLangTokens are languages habari reports that describe SUBTITLES by definition —
-// "VOSTFR" is version originale sous-titrée français, i.e. Japanese audio with French subs, and
-// reading it as a French dub demotes a perfectly good Japanese release.
-var subtitleOnlyLangTokens = map[string]bool{
-	"vostfr": true, "vosta": true, "vost": true,
-	"softsub": true, "softsubs": true, "hardsub": true, "hardsubs": true,
-	"subbed": true, "sub": true, "subs": true,
-}
-
-// deriveAudioLanguages returns the languages that describe a release's AUDIO.
-//
-// habari reports subtitle languages in Metadata.Language, so a Japanese-audio release reads as an
-// English dub: "[Erai-raws] Show - 07 [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA]" parses to
-// Language=[ENG POR-BR SPA-LA], and the aggregator's "🔍 Multi Subs|English Subs" to
-// Language=[English]. Resolution order:
-//
-//  1. Flag emoji win when present: the aggregator lists audio flags ahead of the 📝 subtitle
-//     marker, so util.LanguagesFromFlags already returns audio and nothing else.
-//  2. Otherwise habari's languages — unless the release declares subtitles and declares no audio,
-//     in which case those languages belong to the subtitles.
-//
-// Tokens that are themselves subtitle markers are always dropped. nameMatchOK reports whether the
-// caller may additionally look for a language as free text in the name: only when neither better
-// source exists, since the text that produced the rejected languages ("[ENG][POR-BR]",
-// "Multi Subs|English Subs") is still sitting in the name and would re-credit them.
+// deriveAudioLanguages adapts habari's metadata to util.DeriveAudioLanguages, which is the single
+// audio-vs-subtitle rule shared with the torrent-list badges — see its doc comment.
 func deriveAudioLanguages(parsed *habari.Metadata, flagLangs []string, isDualAudio bool) (langs []string, nameMatchOK bool) {
-	if len(flagLangs) > 0 {
-		return flagLangs, false
-	}
-	if len(parsed.Subtitles) > 0 && !isDualAudio {
-		return nil, false
-	}
-	out := make([]string, 0, len(parsed.Language))
-	for _, l := range parsed.Language {
-		if !subtitleOnlyLangTokens[strings.ToLower(strings.TrimSpace(l))] {
-			out = append(out, l)
-		}
-	}
-	return out, true
+	return util.DeriveAudioLanguages(flagLangs, parsed.Language, parsed.Subtitles, isDualAudio)
 }
 
 // episodeCovered reports whether a parsed episode range can contain the requested episode.
@@ -419,8 +389,19 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 
 	isDual := c.isDualAudio
 
-	// A declared audio language that isn't in any preferred group is a foreign dub (e.g. FR, RU).
-	hasForeignLang := slices.ContainsFunc(c.audioLangs, func(l string) bool { return !tokenInAnyGroup(l) })
+	// A declared language that is neither preferred nor the Japanese original marks a release made
+	// for another market (FR, RU, CN…). Japanese is excluded explicitly rather than by relying on
+	// the preferred groups: a profile that lists only English would otherwise read every Japanese
+	// original as foreign and demote the entire result set.
+	//
+	// The presence of a Japanese track does NOT excuse it. A "🌐 🇯🇵 / 🇨🇳" LoliHouse WEBRip is
+	// Japanese audio with CHINESE subtitles — unwatchable here, but it used to land in the neutral
+	// band and then win it on a 10-bit bonus, beating the English-subbed releases of the same
+	// episode. Whether the foreign language is a dub track or a subtitle track, the release is
+	// built for a market that isn't ours.
+	hasForeignLang := slices.ContainsFunc(c.audioLangs, func(l string) bool {
+		return !tokenInAnyGroup(l) && !isJapaneseToken(l)
+	})
 	hasJapanese := slices.ContainsFunc(c.audioLangs, isJapaneseToken)
 
 	// English dub: top preferred audio present, a dual with no foreign dub language, or a
@@ -432,7 +413,15 @@ func audioLanguageScore(c *candidate, profile *anime.AutoSelectProfile) int {
 	if hasForeignLang && !isDual && !hasJapanese {
 		return -scoreForeignAudio
 	}
-	// Japanese original / neutral / dual-with-foreign (jp/fr).
+	// Japanese original plus a foreign one (jp/cn, jp/ru): still playable — the JP track is there —
+	// so it stays in the neutral band, but it is a release built for another market and its
+	// subtitles are in that market's language. Demoted WITHIN the band, below a plain Japanese
+	// release, instead of down to the foreign-only band where it would rank below a release that
+	// has no Japanese track at all.
+	if hasForeignLang && !isDual {
+		return -scoreForeignMarketRelease
+	}
+	// Japanese original / neutral.
 	return 0
 }
 
@@ -826,6 +815,7 @@ func (s *AutoSelect) smartCachedPrioritization(
 		resTier     int
 		seasonExact bool
 		best        bool
+		trusted     bool
 	}
 	items := make([]rankItem, 0, len(torrents))
 	for _, tws := range postSearchSort(torrents) {
@@ -836,12 +826,13 @@ func (s *AutoSelect) smartCachedPrioritization(
 			it.seasonExact = c.seasonExact
 			it.best = isCuratedBestRelease(c.torrent) &&
 				(profile == nil || profile.BestReleasePreference != anime.AutoSelectPreferenceAvoid)
+			it.trusted = c.trustedSource
 		}
 		items = append(items, it)
 	}
 
-	// Sort lexicographically: audio/episode band → resolution tier (quality floor) → cached
-	// within the tier → format score → per-episode size → seeders. So order is correct-episode
+	// Sort lexicographically: audio/episode band → resolution tier (quality floor) → curated →
+	// trusted source → cached within the tier → format score → per-episode size → seeders. So order is correct-episode
 	// English dub → … → foreign → wrong-episode; within a band a higher resolution always wins,
 	// and only within one resolution tier does a cached release come first.
 	slices.SortStableFunc(items, func(a, b rankItem) int {
@@ -869,6 +860,15 @@ func (s *AutoSelect) smartCachedPrioritization(
 		if a.best != b.best {
 			return boolFirst(a.best)
 		}
+		// Retail source (Crunchyroll subs / disc) beats a re-encode of it, cached or not — the same
+		// quality-over-cache rule one rung further down. This is the only rung that sees subtitle
+		// quality: for Mushoku Tensei S03E08 every candidate was 1080p and cached, so the ladder
+		// fell through to score, where a preferred codec (+40) put a 309 MB HEVC re-encode above the
+		// 1.72 GB Crunchyroll WEB-DL it was made from. Disc sources share the rung so a BluRay is
+		// never demoted by a web release; the score below still orders BluRay/REMUX above WEB-DL.
+		if a.trusted != b.trusted {
+			return boolFirst(a.trusted)
+		}
 		if a.cached != b.cached {
 			return boolFirst(a.cached)
 		}
@@ -885,7 +885,7 @@ func (s *AutoSelect) smartCachedPrioritization(
 	for i, it := range items {
 		result = append(result, it.torrent)
 		if i < 3 {
-			s.logger.Debug().Str("name", it.torrent.Name).Bool("cached", it.cached).Int("score", it.score).Str("provider", it.torrent.Provider).Msg("autoselect: Top candidates")
+			s.logger.Debug().Str("name", it.torrent.Name).Bool("cached", it.cached).Bool("trusted", it.trusted).Int("score", it.score).Str("provider", it.torrent.Provider).Msg("autoselect: Top candidates")
 		}
 	}
 	return result
@@ -896,7 +896,7 @@ func (s *AutoSelect) smartCachedPrioritization(
 // selections computed by an older ladder. Without this a ranking fix only reaches entries that
 // happen to miss the cache, which is exactly the continue-watching titles a user is mid-way
 // through and would notice first.
-const RankerVersion = "2026-08-09"
+const RankerVersion = "2026-08-16"
 
 // bandGated is the band of a release that can't serve the request at all (wrong episode or a
 // declared season other than the requested one). Named because the sort ladders treat it

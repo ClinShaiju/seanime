@@ -82,17 +82,30 @@ export function TorrentParsedMetadata({ metadata }: { metadata: Habari_Metadata 
     // const hasSubs = metadata?.subtitles?.some(n => n.toLocaleLowerCase().includes("sub"))
     const hasMultiSubs = metadata?.subtitles?.some(n => n.toLocaleLowerCase().includes("multi"))
 
+    // metadata.language holds AUDIO languages only: the server runs util.DeriveAudioLanguages (the
+    // same rule auto-select ranks by) before sending the preview, so subtitle languages stay in
+    // metadata.subtitles and can't be badged as audio here. Do NOT infer audio from anything else —
+    // habari's raw language list is where subtitle languages live, which is how
+    // "[Erai-raws] Show - 07 [Multiple Subtitle] [ENG][POR-BR][SPA-LA]" used to get a "Dubbed"
+    // badge on a Japanese-audio release.
     const languages = !!metadata?.language?.length ? [...new Set(metadata?.language)] : []
 
-    // Infer dual audio (original JP + a dub) from the languages when the parser didn't tag it as
-    // "dual"/"multi" in audio_term — e.g. aggregator releases that express languages only as flag
-    // emoji (🇬🇧/🇯🇵), now folded into metadata.language server-side. Without this, a genuinely
-    // dual-audio release shows no "Original + Dub" badge and is easy to skip in manual selection.
     const isJp = (l: string) => { const x = l.toLowerCase().trim(); return x === "jp" || x === "jpn" || x === "ja" || x.includes("japan") }
-    const hasTextualDual = !!metadata?.audio_term?.some(t => t.toLowerCase().includes("dual"))
-    const showFlagDual = !hasTextualDual && languages.some(isJp) && languages.some(l => !!l && !isJp(l))
-    // Dub-only: a non-Japanese audio language with no Japanese original (for anime the original is
-    // always JP, so an English-only release is a dub). Flag-derived, mirrors showFlagDual.
+    const isEng = (l: string) => { const x = l.toLowerCase().trim(); return x === "en" || x === "eng" || x.includes("english") }
+    // Mirrors util.IsDualAudioRelease: "dual" and "dub" in audio_term both mean the JP original
+    // plus an English dub. "multi" does not — in scene naming MULTi is French (VF + original) — so
+    // a multi-audio release only reaches the dub badges when the server resolved it to real
+    // languages (util.IsServiceMultiAudio, i.e. multi-audio from a Western streaming service).
+    const isDualTerm = (t: string) => { const x = t.toLowerCase(); return x.includes("dual") || x.includes("dub") }
+    const isMultiTerm = (t: string) => t.toLowerCase().includes("multi")
+    const hasTextualDual = !!metadata?.audio_term?.some(isDualTerm)
+    // Original + Dub: the Japanese original AND English. Requires English specifically, not merely
+    // "not Japanese" — a LoliHouse "🌐 🇯🇵 / 🇨🇳" release is Japanese audio with Chinese subtitles,
+    // which auto-select demotes as a foreign-market release (scoreForeignMarketRelease) rather than
+    // crediting as a dub. Its two language chips already say what it declares.
+    const showFlagDual = !hasTextualDual && languages.some(isJp) && languages.some(isEng)
+    // Dubbed: a non-Japanese audio language with no Japanese original at all. For anime the original
+    // is always JP, so this is a dub-only release — the foreign-audio tier in ranking.
     const showFlagDubbed = !hasTextualDual && !hasDubs && !languages.some(isJp) && languages.some(l => !!l && !isJp(l))
 
     const filterHEVC = (n: string) => {
@@ -117,7 +130,7 @@ export function TorrentParsedMetadata({ metadata }: { metadata: Habari_Metadata 
                     {term}
                 </Badge>
             ))}
-            {metadata?.audio_term?.filter(term => !term.toLowerCase().includes("dual") && !term.toLowerCase().includes("multi"))
+            {metadata?.audio_term?.filter(term => !isDualTerm(term) && !isMultiTerm(term))
                 .map(term => (
                     <Badge
                         key={term}
@@ -137,13 +150,13 @@ export function TorrentParsedMetadata({ metadata }: { metadata: Habari_Metadata 
                     {languages.join(", ")}
                 </span>
             </Tooltip> : null}
-            {metadata?.audio_term?.filter(term => term.toLowerCase().includes("dual") || term.toLowerCase().includes("multi")).map(term => (
+            {metadata?.audio_term?.filter(term => isDualTerm(term) || isMultiTerm(term)).map(term => (
                 <Badge
                     key={term}
                     className="rounded-md border-transparent bg-[--subtle] text-[.8rem] px-1"
                 >
                     {/* <LuAudioWaveform className="text-lg text-[--blue]" /> {term} */}
-                    <LiaMicrophoneSolid className="text-lg text-[--rose]" /> {term.toLowerCase().includes("dual")
+                    <LiaMicrophoneSolid className="text-lg text-[--rose]" /> {isDualTerm(term)
                     ? "Original + Dub"
                     : startCase(term)}
                 </Badge>

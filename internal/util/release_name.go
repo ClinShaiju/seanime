@@ -143,6 +143,99 @@ func DisplayLanguagesFromFlags(name string) []string {
 	return out
 }
 
+// dualAudioNameRe matches "dual audio" / "dual-audio" / "dualaudio" (separator optional). In
+// fansub convention that specifically means the Japanese original PLUS an English dub, so it is
+// credible evidence of English audio on its own. Note it deliberately does NOT match "multi
+// audio": in scene naming "MULTi" is the FRENCH convention (VF + original), which names no
+// English at all.
+var dualAudioNameRe = regexp.MustCompile(`(?i)dual[\s._-]?audio`)
+
+// multiAudioNameRe matches "multi audio" / "multi-audio" / "multiaudio". Unlike "dual audio" it
+// names NO language: in scene naming "MULTi" is the FRENCH convention (VF + original), e.g.
+// "Nisekoi.S01E04.MULTi.1080p.BluRay.x264-SHiNiGAMi". Deliberately does NOT match bare "multi":
+// "Multi Subs" / "[Multiple Subtitle]" are subtitle markers on Japanese-audio releases.
+var multiAudioNameRe = regexp.MustCompile(`(?i)multi[\s._-]?audio`)
+
+// englishDubServiceRe matches the Western streaming services whose multi-audio releases always ship
+// the English dub alongside the Japanese original — which is what separates a genuine
+// "🏷️ VARYG📡 Crunchyroll … 🔍 Multi Subs|Multi Audio" dub from the identically-labelled French
+// scene MULTi. Asian-region services are excluded: a Bilibili "multi audio" is Japanese plus
+// Chinese, not English.
+var englishDubServiceRe = regexp.MustCompile(`(?i)\b(crunchyroll|funimation|netflix|nflx|hidive|hulu|disney|dsnp|amazon|amzn)\b`)
+
+// IsServiceMultiAudio reports whether a release is a multi-audio release from a Western streaming
+// service, i.e. one that carries the Japanese original AND an English dub even though the name
+// names no language. Shared so the "Original + Dub" badge agrees with the audio tier auto-select
+// ranks the release into.
+func IsServiceMultiAudio(audioTerms []string, lowerName string) bool {
+	hasMulti := multiAudioNameRe.MatchString(lowerName)
+	for _, s := range audioTerms {
+		if strings.Contains(strings.ToLower(s), "multi") {
+			hasMulti = true
+			break
+		}
+	}
+	return hasMulti && englishDubServiceRe.MatchString(lowerName)
+}
+
+// subtitleOnlyLangTokens are languages a name parser reports that describe SUBTITLES by
+// definition — "VOSTFR" is version originale sous-titrée français, i.e. Japanese audio with French
+// subs, and reading it as a French dub demotes a perfectly good Japanese release.
+var subtitleOnlyLangTokens = map[string]bool{
+	"vostfr": true, "vosta": true, "vost": true,
+	"softsub": true, "softsubs": true, "hardsub": true, "hardsubs": true,
+	"subbed": true, "sub": true, "subs": true,
+}
+
+// IsDualAudioRelease reports whether a release declares a dual-audio track set, from a parser's
+// audio terms or from the name text.
+func IsDualAudioRelease(audioTerms []string, lowerName string) bool {
+	for _, s := range audioTerms {
+		l := strings.ToLower(s)
+		if strings.Contains(l, "dual") || strings.Contains(l, "dub") {
+			return true
+		}
+	}
+	return dualAudioNameRe.MatchString(lowerName)
+}
+
+// DeriveAudioLanguages returns the languages that describe a release's AUDIO, given the languages
+// decoded from flag emoji, the languages a name parser reported, and the subtitle terms it parsed.
+//
+// This is the ONE place that decides audio-vs-subtitle language, shared by auto-select ranking and
+// by the torrent-list badges, because the two disagreeing is a bug in itself: a name parser reports
+// SUBTITLE languages in its language field, so a Japanese-audio release reads as an English dub —
+// "[Erai-raws] Show - 07 [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA]" parses to
+// Language=[ENG POR-BR SPA-LA]. Ranking has excluded those since deriveAudioLanguages was written;
+// the UI did not, and badged that release "Dubbed".
+//
+// Resolution order:
+//
+//  1. Flag emoji win when present: aggregators list audio flags ahead of the 📝 subtitle marker, so
+//     DisplayLanguagesFromFlags/LanguagesFromFlags already return audio and nothing else.
+//  2. Otherwise the parser's languages — unless the release declares subtitles and declares no
+//     audio, in which case those languages belong to the subtitles.
+//
+// Tokens that are themselves subtitle markers are always dropped. nameMatchOK reports whether the
+// caller may additionally look for a language as free text in the name: only when neither better
+// source exists, since the text that produced the rejected languages ("[ENG][POR-BR]",
+// "Multi Subs|English Subs") is still sitting in the name and would re-credit them.
+func DeriveAudioLanguages(flagLangs, parsedLangs, subtitles []string, isDualAudio bool) (langs []string, nameMatchOK bool) {
+	if len(flagLangs) > 0 {
+		return flagLangs, false
+	}
+	if len(subtitles) > 0 && !isDualAudio {
+		return nil, false
+	}
+	out := make([]string, 0, len(parsedLangs))
+	for _, l := range parsedLangs {
+		if !subtitleOnlyLangTokens[strings.ToLower(strings.TrimSpace(l))] {
+			out = append(out, l)
+		}
+	}
+	return out, true
+}
+
 // MergeLanguages appends extra language labels to base, deduplicating case-insensitively and
 // preserving order. Used to fold flag-decoded languages into a parser's language list.
 func MergeLanguages(base, extra []string) []string {

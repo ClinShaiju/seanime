@@ -496,6 +496,80 @@ func TestAutoSelect_SmartCachedPrioritization(t *testing.T) {
 	}
 }
 
+// TestAutoSelect_Rank_TrustedSourceBeatsReencode reproduces the Mushoku Tensei S03E08 pick from
+// production: every candidate was 1080p AND cached, so the ladder fell through to score, where a
+// preferred HEVC codec (+40) lifted a 309 MB re-encode above the 1.72 GB Crunchyroll WEB-DL it was
+// made from — same video, visibly worse subtitles. Names are verbatim from the Pi's DBG log.
+func TestAutoSelect_Rank_TrustedSourceBeatsReencode(t *testing.T) {
+	s := newTestAutoSelect()
+
+	reencode := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Nyaa.si 1080p\n📁 Mushoku Tensei Jobless Reincarnation S03 • E08\n🎥 WEB-DL 🎞️ HEVC 🏷️ ToonsHub\n🎧 AAC \n📦 309 MB ",
+		Provider: "aiostreams-torrent-provider",
+		Size:     309 * 1024 * 1024,
+	}
+	crunchyroll := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Nyaa.si 1080p\n📁 Mushoku Tensei Jobless Reincarnation S03 • E08\n🎥 WEB-DL 🎞️ AVC 🏷️ ToonsHub📡 Crunchyroll \n🎧 AAC \n📦 1.72 GB ",
+		Provider: "aiostreams-torrent-provider",
+		Size:     1720 * 1024 * 1024,
+	}
+
+	// Both cached, exactly as in production — the trusted-source rung has to decide, not cache.
+	allCached := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+		for _, tr := range torrents {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: true})
+		}
+		return out
+	}
+
+	profile := &anime.AutoSelectProfile{
+		Resolutions:     []string{"1080p"},
+		PreferredCodecs: []string{"HEVC"}, // the +40 that flipped the order
+	}
+
+	ranked := s.Rank([]*hibiketorrent.AnimeTorrent{reencode, crunchyroll}, profile, 3, 8, 2021, allCached)
+
+	assert.Equal(t, crunchyroll.Name, ranked[0].Name, "Crunchyroll WEB-DL must outrank a cached re-encode with a preferred codec")
+}
+
+// TestAutoSelect_Rank_ForeignSubRawDemoted covers the "Love Unseen Beneath the Clear Night Sky" E04
+// pick: a LoliHouse "🌐 🇯🇵 / 🇨🇳" WEBRip is Japanese audio with CHINESE subtitles, but the Japanese
+// track used to excuse the foreign one, landing it in the neutral band where a 10-bit bonus (+12)
+// won it outright over the English-subbed releases of the same episode.
+func TestAutoSelect_Rank_ForeignSubRawDemoted(t *testing.T) {
+	s := newTestAutoSelect()
+
+	chineseRaw := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Nyaa.si 1080p\n📁 Kakekoi E04\n🎥 WEBRip 🎞️ HEVC 🏷️ LoliHouse\n📺 10bit 🎧 AAC \n📦 325 MB \n🌐 🇯🇵 / 🇨🇳",
+		Provider: "aiostreams-torrent-provider",
+		Size:     325 * 1024 * 1024,
+	}
+	japanese := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Debridio Scraper 1080p\n📁 Love Unseen Beneath The Clear Night Sky (2026) S01 • E04\n🎥 WEB-DL 🎞️ HEVC 🏷️ ToonsHub\n🎧 AAC \n📦 231 MB 🔍 Multi Subs\n🌐 🇯🇵",
+		Provider: "aiostreams-torrent-provider",
+		Size:     231 * 1024 * 1024,
+	}
+
+	allCached := func(torrents []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(torrents))
+		for _, tr := range torrents {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: true})
+		}
+		return out
+	}
+
+	profile := &anime.AutoSelectProfile{
+		Resolutions:        []string{"1080p"},
+		PreferredCodecs:    []string{"HEVC"},
+		PreferredLanguages: []string{"English", "Japanese"},
+	}
+
+	ranked := s.Rank([]*hibiketorrent.AnimeTorrent{chineseRaw, japanese}, profile, -1, 4, 2026, allCached)
+
+	assert.Equal(t, japanese.Name, ranked[0].Name, "a JP/CN release must rank below the plain Japanese one")
+}
+
 // TestResolutionTier covers the F-INV quality floor: higher resolution => higher tier, so cache
 // can only reorder within a tier, never across tiers.
 func TestResolutionTier(t *testing.T) {
