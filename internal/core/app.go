@@ -183,6 +183,11 @@ type (
 		ServerPasswordHash   string
 		ClientIdentitySecret string
 		logoutInProgress     atomic.Bool
+		// autoLogoutMu serializes autoLogoutFromAnilist. A burst of failing AniList queries
+		// fires one logoutFunc goroutine each, and each used to verify the token on its own;
+		// a single flaky verification was then enough to destroy the credential while its
+		// siblings concluded the token was fine.
+		autoLogoutMu sync.Mutex
 
 		// Plugin system
 		HookManager hook.Manager

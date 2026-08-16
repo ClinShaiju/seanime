@@ -282,6 +282,13 @@ func (a *App) LogoutFromAnilist() {
 //
 // userID 0 means the App-global (admin) plane; any other id is that user's own account.
 func (a *App) autoLogoutFromAnilist(userID uint) {
+	// One failing page fires several queries, so this runs on several goroutines at once.
+	// Serialize them: otherwise each verifies the token independently and the unluckiest
+	// sample wins, which is how the credential died again on 2026-08-14 even though two
+	// sibling checks passed seconds later.
+	a.autoLogoutMu.Lock()
+	defer a.autoLogoutMu.Unlock()
+
 	token := ""
 	if userID == 0 {
 		token = a.Database.GetAnilistToken()
@@ -289,6 +296,12 @@ func (a *App) autoLogoutFromAnilist(userID uint) {
 		if acc, err := a.Database.GetAccountForUser(u); err == nil && acc != nil {
 			token = acc.Token
 		}
+	}
+
+	if token == "" {
+		// Nothing left to destroy: either an earlier caller in this same burst already
+		// logged out, or the account was never linked.
+		return
 	}
 
 	if a.anilistTokenStillAuthenticates(token) {
@@ -314,6 +327,15 @@ func (a *App) autoLogoutFromAnilist(userID uint) {
 	a.logoutUserFromAnilist(userID)
 }
 
+const (
+	// A live token is answered with "Invalid token" often enough that one sample proves
+	// nothing: on 2026-08-14 three collection queries got that 400 within a second while
+	// the very same token authenticated twice a moment later. Only an unbroken run of
+	// auth-shaped answers counts as a dead credential.
+	anilistTokenChecks   = 3
+	anilistTokenCheckGap = 3 * time.Second
+)
+
 // anilistTokenStillAuthenticates reports whether token is still accepted by AniList.
 // A network/5xx failure counts as "still valid": refusing to destroy a credential while
 // the API is unreachable is the safe direction to be wrong in.
@@ -321,13 +343,28 @@ func (a *App) anilistTokenStillAuthenticates(token string) bool {
 	if token == "" {
 		return false
 	}
-	viewer, err := anilist.NewAnilistClient(token, a.AnilistCacheDir).GetViewer(context.Background())
-	if err == nil {
-		return viewer != nil && viewer.Viewer != nil && len(viewer.Viewer.Name) > 0
+	client := anilist.NewAnilistClient(token, a.AnilistCacheDir)
+	for i := 0; i < anilistTokenChecks; i++ {
+		if i > 0 {
+			time.Sleep(anilistTokenCheckGap)
+		}
+		if anilistCheckSaysAlive(client.GetViewer(context.Background())) {
+			return true
+		}
 	}
-	// Only an auth-shaped error proves the token is dead; anything else is the API being
-	// unhappy for reasons that have nothing to do with our credential.
-	return !shared_platform.IsAnilistAuthError(err)
+	a.Logger.Warn().Int("checks", anilistTokenChecks).
+		Msg("app: AniList rejected the stored token on every re-check, treating it as dead")
+	return false
+}
+
+// anilistCheckSaysAlive reports whether one GetViewer answer clears the token. Only an
+// auth-shaped error is a vote for "dead" — a network/5xx answer, or any other failure,
+// means the API is unhappy for reasons that have nothing to do with our credential.
+func anilistCheckSaysAlive(viewer *anilist.GetViewer, err error) bool {
+	if err != nil {
+		return !shared_platform.IsAnilistAuthError(err)
+	}
+	return viewer != nil && viewer.Viewer != nil && len(viewer.Viewer.Name) > 0
 }
 
 // GetAnimeCollection returns the user's Anilist collection if it in the cache, otherwise it queries Anilist for the user's collection.
