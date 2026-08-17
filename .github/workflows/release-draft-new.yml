@@ -335,7 +335,7 @@ jobs:
           # The names carry the 4-segment fork version (seanime-denshi-3.10.2.2_Windows_x64.exe),
           # which matches env.VERSION from the tag: seanime-denshi/package.json holds the semver
           # encoding "3.10.2-2" (npm and electron-builder reject a 4-segment version outright) and
-          # electron-builder.js derives the 4-segment `buildVersion` the artifactName templates use.
+          # electron-builder.cjs derives the 4-segment `buildVersion` the artifactName templates use.
           find ./artifacts -maxdepth 1 -name 'seanime-denshi-*' -exec mv {} ./ \;
 
           # Copy electron-builder YML files if they exist
@@ -354,11 +354,19 @@ jobs:
 
           # Every asset must carry the tag's version, otherwise the release advertises one version
           # and ships the installers of another.
+          # The Windows installer is the one that matters here and the one that has gone missing
+          # twice, each time from a job that still reported success.
+          if [ ! -f "seanime-denshi-${{ env.VERSION }}_Windows_x64.exe" ]; then
+            echo "::error::seanime-denshi-${{ env.VERSION }}_Windows_x64.exe is missing; check the Windows electron-build job."
+            ls -1 seanime-denshi-*
+            exit 1
+          fi
+
           mismatched=$(ls -1 seanime-denshi-* | grep -v "^seanime-denshi-${{ env.VERSION }}_" || true)
           if [ -n "$mismatched" ]; then
             echo "::error::Denshi assets do not match the tag version ${{ env.VERSION }}:"
             echo "$mismatched"
-            echo "Check seanime-denshi/package.json version and electron-builder.js buildVersion."
+            echo "Check seanime-denshi/package.json version and electron-builder.cjs buildVersion."
             exit 1
           fi
 

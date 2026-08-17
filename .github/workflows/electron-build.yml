@@ -69,7 +69,7 @@ jobs:
         id: get-version
         # package.json holds the semver encoding of the fork version ("3.10.2-2"); report the
         # 4-segment form ("3.10.2.2") that the tag and the built artifacts use.
-        # See seanime-denshi/electron-builder.js.
+        # See seanime-denshi/electron-builder.cjs.
         run: |
           NODE_VERSION=$(node -p "require('./seanime-denshi/package.json').version.replace(/^(\d+\.\d+\.\d+)-(\d+)$/, '\$1.\$2')")
           echo "version=$NODE_VERSION" >> $GITHUB_OUTPUT
@@ -181,7 +181,12 @@ jobs:
             DIST_ARG="-c.electronDist=${{ steps.custom-electron.outputs.dir }}"
             echo "Using custom Electron dist: $DIST_ARG"
           fi
-          npx electron-builder build ${{ matrix.electron_args }} $DIST_ARG
+          # Local bin, not `npx`: on Windows, `npx` runs the command through cmd, which searches the
+          # current directory first and treats any PATHEXT extension as executable — so a config
+          # file named electron-builder.js shadowed the CLI and wscript "ran" it, exiting 0 in two
+          # seconds with no build and no output. The config is now electron-builder.cjs, and this
+          # path removes the ambiguity entirely.
+          ./node_modules/.bin/electron-builder build ${{ matrix.electron_args }} $DIST_ARG
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -191,6 +196,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: electron-${{ matrix.id }}
+          # Fail instead of warning: the default let a build that produced nothing upload nothing
+          # and still report success, so the release quietly shipped without the Windows installer.
+          if-no-files-found: error
           path: |
             ./seanime-denshi/dist/seanime-denshi-*
             ./seanime-denshi/dist/*.yml

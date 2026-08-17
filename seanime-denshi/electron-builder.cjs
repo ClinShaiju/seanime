@@ -1,5 +1,11 @@
 // electron-builder configuration.
 //
+// The .cjs extension is required, not cosmetic: named "electron-builder.js" this file shadows the
+// CLI on Windows, because PATHEXT includes .JS and cmd searches the current directory before PATH,
+// so `npx electron-builder` hands the file to wscript, which exits 0 without building anything.
+// app-builder-lib looks for electron-builder.{yml,yaml,json,json5,toml,js,cjs,ts} — .cjs is in the
+// list and not in PATHEXT.
+//
 // This lives here rather than in package.json's "build" field because the fork uses a 4-segment
 // version (3.10.2.2 = upstream 3.10.2 + fork revision 2) that npm/electron-builder reject: they run
 // the package.json version through normalize-package-data, which throws `Invalid version` on

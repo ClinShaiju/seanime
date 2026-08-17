@@ -9,10 +9,10 @@ const require = createRequire(import.meta.url)
 const denshiRoot = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 const pkg = require("../package.json")
-const builderConfig = require("../electron-builder.js")
+const builderConfig = require("../electron-builder.cjs")
 
 // The 4-segment fork version (X.Y.Z.N) is stored in package.json as semver "X.Y.Z-N" and mapped
-// back in two places that must not drift: electron-builder.js (artifact names) and
+// back in two places that must not drift: electron-builder.cjs (artifact names) and
 // src/main/version.ts (what the update prompt shows the user).
 test("package.json version is a fork version", () => {
     assert.match(pkg.version, /^\d+\.\d+\.\d+-\d+$/)
