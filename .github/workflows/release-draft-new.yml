@@ -329,30 +329,36 @@ jobs:
       - name: Move & Rename Electron assets 📝🗃️
         # Move Electron assets to the root directory and rename them
         run: |
-          # Match on the "seanime-denshi-" prefix, NOT on env.VERSION.
+          # Moved, never renamed: the electron-builder YML manifests copied below reference these
+          # exact filenames (with hashes), so renaming them breaks Denshi's auto-update.
           #
-          # electron-builder names its output from seanime-denshi/package.json, which has to be
-          # valid semver, while env.VERSION comes from the tag and this fork uses a 4-segment
-          # version (3.10.2.2) that semver rejects. So the tag v3.10.2.2 produced
-          # "seanime-denshi-3.10.2_*" files while every mv below looked for
-          # "seanime-denshi-3.10.2.2_*". Each mv was guarded by `if [ -f ]`, so all ten skipped
-          # silently, the job reported success, and v3.10.2.2 was published with no Denshi build.
-          #
-          # The files are NOT renamed to env.VERSION: the electron-builder YML manifests copied
-          # below reference these exact filenames (with hashes), so renaming them breaks Denshi's
-          # auto-update.
+          # The names carry the 4-segment fork version (seanime-denshi-3.10.2.2_Windows_x64.exe),
+          # which matches env.VERSION from the tag: seanime-denshi/package.json holds the semver
+          # encoding "3.10.2-2" (npm and electron-builder reject a 4-segment version outright) and
+          # electron-builder.js derives the 4-segment `buildVersion` the artifactName templates use.
           find ./artifacts -maxdepth 1 -name 'seanime-denshi-*' -exec mv {} ./ \;
 
           # Copy electron-builder YML files if they exist
           find ./artifacts -name "*.yml" -exec cp {} ./ \;
 
       - name: Verify Electron assets were found 🔍
-        # A missing Denshi build must fail the release, not sail through as a green run.
+        # A missing or mis-versioned Denshi build must fail the release, not sail through as a green
+        # run — v3.10.2.2 first shipped with no Denshi assets at all because this went unchecked.
         run: |
           count=$(ls -1 seanime-denshi-* 2>/dev/null | wc -l)
           echo "Found $count Denshi asset(s)"
           if [ "$count" -eq 0 ]; then
             echo "::error::No seanime-denshi-* assets found; the electron build produced names this step did not match."
+            exit 1
+          fi
+
+          # Every asset must carry the tag's version, otherwise the release advertises one version
+          # and ships the installers of another.
+          mismatched=$(ls -1 seanime-denshi-* | grep -v "^seanime-denshi-${{ env.VERSION }}_" || true)
+          if [ -n "$mismatched" ]; then
+            echo "::error::Denshi assets do not match the tag version ${{ env.VERSION }}:"
+            echo "$mismatched"
+            echo "Check seanime-denshi/package.json version and electron-builder.js buildVersion."
             exit 1
           fi
 

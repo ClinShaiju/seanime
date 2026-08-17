@@ -31,6 +31,7 @@ import {
 } from "./desktop-runtime"
 import { log, setupLogging } from "./logging"
 import { disposeMpvCore, initializeMpvCore, prepareMpvCore, registerMpvCoreIpc } from "./mpv-core"
+import { toDisplayVersion } from "./version"
 
 let stripAnsi: ((str: string) => string) | undefined
 import("strip-ansi").then(module => {
@@ -445,7 +446,9 @@ autoUpdater.on("update-available", (info: any) => {
     logger.updater.info("Update available", info)
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-available", {
-            version: info.version, releaseDate: info.releaseDate, files: info.files,
+            // The renderer shows this to the user, so send the 4-segment fork version rather than
+            // the semver encoding latest.yml carries.
+            version: toDisplayVersion(info.version), releaseDate: info.releaseDate, files: info.files,
         })
     }
 })
@@ -468,7 +471,7 @@ autoUpdater.on("update-downloaded", (info: any) => {
     updateDownloaded = true
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("update-downloaded", {
-            version: info.version, releaseDate: info.releaseDate, files: info.files,
+            version: toDisplayVersion(info.version), releaseDate: info.releaseDate, files: info.files,
         })
     }
 })

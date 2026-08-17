@@ -67,8 +67,11 @@ jobs:
 
       - name: Get package version 📦
         id: get-version
+        # package.json holds the semver encoding of the fork version ("3.10.2-2"); report the
+        # 4-segment form ("3.10.2.2") that the tag and the built artifacts use.
+        # See seanime-denshi/electron-builder.js.
         run: |
-          NODE_VERSION=$(node -p "require('./seanime-denshi/package.json').version")
+          NODE_VERSION=$(node -p "require('./seanime-denshi/package.json').version.replace(/^(\d+\.\d+\.\d+)-(\d+)$/, '\$1.\$2')")
           echo "version=$NODE_VERSION" >> $GITHUB_OUTPUT
         shell: bash
 
