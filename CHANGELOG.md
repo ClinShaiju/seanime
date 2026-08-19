@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.10.2.4
+
+- ✨ Desktop (MpvCore): New native mpv window playback backend — opt-in through the `mpvNativePlayback` Denshi setting, Windows only. mpv-prism renders mpv offscreen and pumps the frames into the page on a fixed 40ms timer, which caps presentation at 25fps and leaves mpv with no real vsync to lock onto, so `video-sync=display-resample` and interpolation could not work at all. The new backend runs mpv as its own window over its JSON IPC with the Seanime UI painted on top, so mpv sees the actual refresh rate (143.988 Hz measured) and both work. Screenshots come from mpv itself, and Anime4K, the mini player, the tray/taskbar behaviour and the stats overlay are all covered; PiP is hidden, since it is a `<video>` element feature. Known limitation: page content can still paint over the mini player video and the transition into it flashes.
+- ⚡️ Desktop (MpvCore): Stats for nerds now reports display sync and render cost — a Display Sync line (active, vsync ratio, jitter, and whether interpolation is on), the Mistimed / Delayed counters, and per-pass render times aggregated by name, so an Anime4K chain reads as a handful of rows instead of the 60+ that used to push every stat below it off-screen.
+- 🦺 Built-in players: Stop the cold open being taken for the opening — on the common `[Intro][Opening][Part A][Ending]` mux the skip logic latched onto the ~90s cold open and never looked at the real OP, and at the tail a 60-150s next-episode preview stole the pick from the ending just before it. Detection now also covers double-length premieres (it gave up above 45min) and an OP sitting behind a cold open longer than 4:48.
+- 🦺 Desktop (MpvCore): Fixed the buffering indicator reporting "not buffering" while resetting the buffered position to the playhead, so Buffer Ahead flickered to 0.00s exactly when the stream was in trouble — `paused-for-cache` arrives as a boolean and `cache-buffering-state` as a number, but the reducer assumed every cache event carried the full `demuxer-cache-state` object. Affected mpv-prism too.
+- 🦺 Desktop (MpvCore, native backend): Seanime no longer disappears from the taskbar and alt-tab, the video window can no longer be raised over the UI or resized by dragging a screen edge, the app background repaints around the mini player instead of showing the desktop, and the video hole now tracks the page scroll.
+
 ## v3.10.2
 
 - 🦺 Applied the 2026-07-16 battle-test fix pass — admin/user gating on the torrent-client, auto-downloader and extension-management routes; a `concurrent map iteration` crash in the Nakama watch-party host; websocket, playlist, mediacore, videocore and cache-layer data races and goroutine leaks; transcoder timing logs that always printed `0.00s`.
