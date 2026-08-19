@@ -52,6 +52,19 @@ export function DenshiSettings() {
                 />
             </SettingsCard>
 
+            <SettingsCard title="Playback">
+                <Switch
+                    side="right"
+                    value={settings.mpvNativePlayback ?? false}
+                    onValueChange={(v) => updateSetting("mpvNativePlayback", v)}
+                    label="Native mpv window (experimental)"
+                    help={window.electron?.platform === "win32"
+                        ? "Play through a real mpv window instead of capturing its frames. Enables display sync and frame interpolation for smooth playback. Applied after a restart."
+                        : "This feature is currently Windows only."}
+                    disabled={window.electron?.platform !== "win32"}
+                />
+            </SettingsCard>
+
             <SettingsCard title="Server">
                 <TextInput
                     label="External server URL"

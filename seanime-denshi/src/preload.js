@@ -123,6 +123,26 @@ contextBridge.exposeInMainWorld(
             openAnime4KDirectory: (directory) => ipcRenderer.invoke("mpvcore:open-anime4k-directory", directory),
         },
 
+        mpvNative: {
+            isSupported: () => ipcRenderer.invoke("mpvnative:supported"),
+            isSupportedSync: () => ipcRenderer.sendSync("mpvnative:supported-sync"),
+            getDisplayFrequency: () => ipcRenderer.invoke("mpvnative:display-frequency"),
+            create: (playerId, options) => ipcRenderer.invoke("mpvnative:create", playerId, options),
+            destroy: (playerId) => ipcRenderer.invoke("mpvnative:destroy", playerId),
+            command: (playerId, args) => ipcRenderer.invoke("mpvnative:command", playerId, args),
+            getProperty: (playerId, name) => ipcRenderer.invoke("mpvnative:get-property", playerId, name),
+            setProperty: (playerId, name, value) => ipcRenderer.invoke("mpvnative:set-property", playerId, name, value),
+            observeProperty: (playerId, name) => ipcRenderer.invoke("mpvnative:observe-property", playerId, name),
+            screenshot: (playerId) => ipcRenderer.invoke("mpvnative:screenshot", playerId),
+            setVideoRect: (playerId, rect) => ipcRenderer.send("mpvnative:set-video-rect", playerId, rect),
+            setVisible: (playerId, visible) => ipcRenderer.send("mpvnative:set-visible", playerId, visible),
+            onEvent: (listener) => {
+                const handler = (_event, payload) => listener(payload)
+                ipcRenderer.on("mpvnative:event", handler)
+                return () => ipcRenderer.off("mpvnative:event", handler)
+            },
+        },
+
         powerSaveBlocker: {
             start: () => ipcRenderer.invoke("power-save-blocker:start"),
             stop: (id) => ipcRenderer.invoke("power-save-blocker:stop", id),

@@ -177,6 +177,76 @@ body {
     background-color: transparent !important;
 }
 
+/* Native mpv playback: mpv renders in its own window *behind* the Denshi window, so everything the player
+   draws on top of has to stop painting for the video to be visible. Only active while that backend plays. */
+html[data-mpv-native-video] {
+    background-color: transparent;
+}
+
+html[data-mpv-native-video="fullscreen"] .UI-AppLayout__root {
+    visibility: hidden;
+}
+
+/* The mini player floats over the app, so the shell is cut around the video rect instead of hidden */
+html[data-mpv-native-video="mini"] {
+    /* matches the drawer's rounded-lg, so the native window looks like the presenter one */
+    --mpv-hole-radius: 0.5rem;
+    --mpv-hole-clip: polygon(evenodd,
+        0 0, 100% 0, 100% 100%, 0 100%, 0 0,
+        var(--mpv-hole-x1, 0px) var(--mpv-hole-y1, 0px),
+        var(--mpv-hole-x1, 0px) var(--mpv-hole-y2, 0px),
+        var(--mpv-hole-x2, 0px) var(--mpv-hole-y2, 0px),
+        var(--mpv-hole-x2, 0px) var(--mpv-hole-y1, 0px),
+        var(--mpv-hole-x1, 0px) var(--mpv-hole-y1, 0px));
+}
+
+/* Shell-relative coordinates: this element is in normal flow, so its border box (what clip-path resolves
+   against) drifts from the viewport by the scroll offset. The fixed-position layers below use the viewport
+   pair instead. */
+html[data-mpv-native-video="mini"] .UI-AppLayout__root {
+    clip-path: polygon(evenodd,
+        0 0, 100% 0, 100% 100%, 0 100%, 0 0,
+        var(--mpv-shell-hole-x1, 0px) var(--mpv-shell-hole-y1, 0px),
+        var(--mpv-shell-hole-x1, 0px) var(--mpv-shell-hole-y2, 0px),
+        var(--mpv-shell-hole-x2, 0px) var(--mpv-shell-hole-y2, 0px),
+        var(--mpv-shell-hole-x2, 0px) var(--mpv-shell-hole-y1, 0px),
+        var(--mpv-shell-hole-x1, 0px) var(--mpv-shell-hole-y1, 0px));
+}
+
+/* Clipping the shell alone leaves the transparent html showing the desktop through every gap between
+   UI elements, so the app background is repainted as a backdrop with the same hole cut out of it. */
+html[data-mpv-native-video="mini"] body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: var(--background);
+    clip-path: var(--mpv-hole-clip);
+}
+
+/* A polygon cannot curve, so the hole's corners are rounded by covering them with four background-coloured
+   patches, each a square with a quarter-circle cut out of the side facing the video. */
+html[data-mpv-native-video="mini"] body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-repeat: no-repeat;
+    background-size: var(--mpv-hole-radius) var(--mpv-hole-radius);
+    background-image:
+        radial-gradient(circle at bottom right, transparent calc(var(--mpv-hole-radius) - 0.5px), var(--background) var(--mpv-hole-radius)),
+        radial-gradient(circle at bottom left, transparent calc(var(--mpv-hole-radius) - 0.5px), var(--background) var(--mpv-hole-radius)),
+        radial-gradient(circle at top right, transparent calc(var(--mpv-hole-radius) - 0.5px), var(--background) var(--mpv-hole-radius)),
+        radial-gradient(circle at top left, transparent calc(var(--mpv-hole-radius) - 0.5px), var(--background) var(--mpv-hole-radius));
+    background-position:
+        var(--mpv-hole-x1, 0px) var(--mpv-hole-y1, 0px),
+        calc(var(--mpv-hole-x2, 0px) - var(--mpv-hole-radius)) var(--mpv-hole-y1, 0px),
+        var(--mpv-hole-x1, 0px) calc(var(--mpv-hole-y2, 0px) - var(--mpv-hole-radius)),
+        calc(var(--mpv-hole-x2, 0px) - var(--mpv-hole-radius)) calc(var(--mpv-hole-y2, 0px) - var(--mpv-hole-radius));
+}
+
 /* denshi route view transitions */
 html[data-denshi-view-transitions] {
     --sea-denshi-vt-ease: ease;

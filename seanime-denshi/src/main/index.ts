@@ -31,6 +31,7 @@ import {
 } from "./desktop-runtime"
 import { log, setupLogging } from "./logging"
 import { disposeMpvCore, initializeMpvCore, prepareMpvCore, registerMpvCoreIpc } from "./mpv-core"
+import { disposeMpvNativeNow, isMpvNativeSupported, registerMpvNativeIpc } from "./mpv-native"
 import { toDisplayVersion } from "./version"
 
 let stripAnsi: ((str: string) => string) | undefined
@@ -946,6 +947,11 @@ function createMainWindow() {
         windowOptions.titleBarStyle = "hidden"
     }
 
+    if (denshiSettings.mpvNativePlayback && isMpvNativeSupported()) {
+        windowOptions.transparent = true
+        windowOptions.backgroundColor = "#00000000"
+    }
+
     const win = new BrowserWindow(windowOptions)
     mainWindow = win
 
@@ -1183,6 +1189,7 @@ function cleanupAndExit() {
 
     saveMainWindowState()
     disposeMpvCore()
+    disposeMpvNativeNow()
 
     // Clean up cast
     if (__CAST_ENABLED__ && castSender) {
@@ -1349,6 +1356,7 @@ app.whenReady().then(async () => {
     })
 
     registerMpvCoreIpc(mpvCoreSettings)
+    registerMpvNativeIpc(() => denshiSettings.mpvNativePlayback)
     registerIpcHandlers()
 
     setupAppProtocol()

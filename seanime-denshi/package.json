@@ -8,10 +8,12 @@
     "build:main": "tsc -p tsconfig.main.json",
     "test:main": "node --test tests/*.test.mjs",
     "sync:mpv-prism": "node scripts/sync-mpv-prism.mjs",
+    "fetch:mpv": "node scripts/fetch-mpv.mjs",
+    "test:mpv-native": "npm run build:main && electron tests/mpv-native-session.mjs",
     "dev": "npm run build:main && npm run sync:mpv-prism && NODE_ENV=development electron .",
     "build": "npm run build:main && npm run sync:mpv-prism && electron-builder build",
     "build:mac": "npm run build:main && npm run sync:mpv-prism -- darwin-arm64 && electron-builder build --mac --arm64",
-    "build:win": "npm run build:main && npm run sync:mpv-prism -- win32-x64 && electron-builder build --win --x64",
+    "build:win": "npm run build:main && npm run sync:mpv-prism -- win32-x64 && npm run fetch:mpv && electron-builder build --win --x64",
     "build:linux": "npm run build:main && npm run sync:mpv-prism -- linux-x64 && electron-builder build --linux --x64"
   },
   "dependencies": {

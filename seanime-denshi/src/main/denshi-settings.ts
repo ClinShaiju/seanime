@@ -13,6 +13,8 @@ export type DenshiSettings = {
     /** External server URL. Empty = run and use the bundled sidecar. */
     serverUrl: string
     mpvPrismLogging: boolean
+    /** Play through a real mpv window instead of mpv-prism's offscreen capture. Windows only, needs a restart. */
+    mpvNativePlayback: boolean
 }
 
 export const DENSHI_SETTINGS_DEFAULTS: DenshiSettings = {
@@ -24,6 +26,7 @@ export const DENSHI_SETTINGS_DEFAULTS: DenshiSettings = {
     windowMaximized: true,
     serverUrl: "", // External server URL. Empty = run and use the bundled sidecar.
     mpvPrismLogging: false,
+    mpvNativePlayback: false,
 }
 
 function getDenshiSettingsPath(): string {
