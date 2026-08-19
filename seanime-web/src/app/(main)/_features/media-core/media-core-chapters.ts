@@ -36,20 +36,26 @@ type SkipOptions = {
 const SKIP_IDEAL_LENGTH = 90
 const SKIP_MIN_LENGTH = 60
 const SKIP_MAX_LENGTH = 150
+// Upper bound for the unlabeled-chapter pass. Covers double-length premieres (~47min) while still
+// excluding movies, where a ~90s early chapter is usually just a chapter.
+const SKIP_MAX_RUNTIME = 3600
 
 function inSkipWindow(chapter: { start?: number, end?: number }) {
     const len = (chapter.end ?? 0) - (chapter.start ?? 0)
     return len >= SKIP_MIN_LENGTH && len <= SKIP_MAX_LENGTH
 }
 
-// Best candidate = length closest to 90s. Near-ties (within 15s) go to the LATER chapter:
-// two ~90s segments at the start usually means [recap/prologue][OP] - the second is the OP.
-function pickSkipCandidate<T extends { start?: number, end?: number }>(candidates: T[]): T | null {
+// Best candidate = length closest to 90s. Near-ties (within 15s) are broken by position, and the
+// right direction depends on which end of the file we are looking at:
+//   head - two ~90s segments at the start usually means [recap/prologue][OP], so the LATER wins.
+//   tail - two ~90s segments at the end usually means [ED][next-episode preview], so the EARLIER wins.
+// Candidates arrive in start order, so "prefer earlier" is simply the absence of the tiebreak.
+function pickSkipCandidate<T extends { start?: number, end?: number }>(candidates: T[], preferLater: boolean): T | null {
     let best: T | null = null
     let bestScore = Infinity
     for (const c of candidates) {
         const score = Math.abs(((c.end ?? 0) - (c.start ?? 0)) - SKIP_IDEAL_LENGTH)
-        if (score < bestScore - 15 || (score <= bestScore + 15 && (!best || (c.start ?? 0) > (best.start ?? 0)))) {
+        if (score < bestScore - 15 || (preferLater && score <= bestScore + 15 && (!best || (c.start ?? 0) > (best.start ?? 0)))) {
             best = c
             bestScore = Math.min(score, bestScore)
         }
@@ -66,27 +72,40 @@ export function getDefaultSkipChapters<T extends { label: string | null, start?:
     const usesIntro = options.guardIntro !== false && introIsOpening(chapters)
     const heuristics = options.heuristics === true
 
-    // Pass 1: labels. Opening/Ending are trusted as-is. Intro/Outro (common in anime muxes for the
-    // actual OP/ED) additionally need a plausible ~90s length, so a long cold-open labeled "Intro"
-    // isn't auto-skipped.
+    // Pass 1a: literal Opening/Ending labels are trusted as-is and outrank every heuristic below.
     for (const chapter of chapters) {
         const type = getChapterType(chapter.label)
-        if (!opening && !usesIntro && (type === "Opening" || (heuristics && type === "Intro" && inSkipWindow(chapter)))) opening = chapter
-        if (!ending && !usesIntro && (type === "Ending" || (heuristics && type === "Outro" && inSkipWindow(chapter)))) ending = chapter
+        if (!opening && !usesIntro && type === "Opening") opening = chapter
+        if (!ending && !usesIntro && type === "Ending") ending = chapter
         if (opening && ending) break
     }
 
+    // Pass 1b: Intro/Outro (common in anime muxes for the actual OP/ED) are only a fallback for when
+    // no literal label exists - an "Intro" sitting next to an "Opening" is the cold open, not the OP.
+    // They also need a plausible ~90s length, so a long cold open labeled "Intro" isn't auto-skipped.
+    if (heuristics && !usesIntro && (!opening || !ending)) {
+        for (const chapter of chapters) {
+            const type = getChapterType(chapter.label)
+            if (!opening && type === "Intro" && inSkipWindow(chapter)) opening = chapter
+            if (!ending && type === "Outro" && inSkipWindow(chapter)) ending = chapter
+        }
+    }
+
     // Pass 2: duration heuristic for generically-labeled chapters ("Part A", "Chapter 2", ""):
-    // a ~90s chapter in the first/last 20% of the file is almost certainly the OP/ED.
+    // a ~90s chapter near the head/tail of the file is almost certainly the OP/ED.
     // Episode-length files only - in a movie a ~90s early chapter is usually just a chapter.
     const duration = options.duration ?? 0
-    if (heuristics && duration > SKIP_MAX_LENGTH * 2 && duration < 2700 && (!opening || !ending)) {
+    if (heuristics && duration > SKIP_MAX_LENGTH * 2 && duration < SKIP_MAX_RUNTIME && (!opening || !ending)) {
+        // Head/tail window: 20% of the runtime, floored at 5min so an OP behind a long cold open is
+        // still in range, capped at 8min so a double-length episode doesn't turn this into a search
+        // of the whole first act.
+        const edge = Math.min(Math.max(duration * 0.2, 300), 480)
         const candidates = chapters.filter(c => !getChapterType(c.label) && inSkipWindow(c))
         if (!opening) {
-            opening = pickSkipCandidate(candidates.filter(c => (c.start ?? 0) < duration * 0.2))
+            opening = pickSkipCandidate(candidates.filter(c => (c.start ?? 0) < edge), true)
         }
         if (!ending) {
-            ending = pickSkipCandidate(candidates.filter(c => (c.end ?? 0) > duration * 0.8 && c !== opening))
+            ending = pickSkipCandidate(candidates.filter(c => (c.end ?? 0) > duration - edge && c !== opening), false)
         }
     }
 

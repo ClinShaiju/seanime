@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { getSkipChapters, getSkipPatternError } from "./media-core-chapters"
+import { getDefaultSkipChapters, getSkipChapters, getSkipPatternError } from "./media-core-chapters"
 
 function chapters(...labels: string[]) {
     return labels.map((label, index) => ({
@@ -78,5 +78,85 @@ describe("fork skip heuristics", () => {
             { label: "Part A", start: 90, end: 700 },
         ]
         expect(getSkipChapters(list, "", { guardIntro: false })).toEqual([])
+    })
+
+    // A literal Opening/Ending always wins over a same-length Intro/Outro, whatever the order.
+    // Regression: the Intro/Outro heuristic used to share pass 1 with the literal labels, so the
+    // first-match-wins loop skipped the cold open and left the real OP playing.
+    it("prefers a literal Opening over an earlier Intro", () => {
+        const list = [
+            { label: "Intro", start: 0, end: 90 },
+            { label: "Opening", start: 90, end: 180 },
+            { label: "Part A", start: 180, end: 1300 },
+        ]
+        expect(getDefaultSkipChapters(list, fork).opening).toBe(list[1])
+    })
+
+    it("prefers a literal Ending over an earlier Outro", () => {
+        const list = [
+            { label: "Part B", start: 0, end: 1200 },
+            { label: "Outro", start: 1200, end: 1290 },
+            { label: "Ending", start: 1290, end: 1380 },
+        ]
+        expect(getDefaultSkipChapters(list, fork).ending).toBe(list[2])
+    })
+
+    it("falls back to Intro/Outro when there is no literal label", () => {
+        const list = [
+            { label: "Intro", start: 0, end: 90 },
+            { label: "Part A", start: 90, end: 1300 },
+            { label: "Outro", start: 1300, end: 1390 },
+        ]
+        const { opening, ending } = getDefaultSkipChapters(list, fork)
+        expect(opening).toBe(list[0])
+        expect(ending).toBe(list[2])
+    })
+
+    it("reads two unlabeled ~90s chapters at the head as [recap][OP]", () => {
+        const list = [
+            { label: "Chapter 1", start: 0, end: 90 },
+            { label: "Chapter 2", start: 90, end: 180 },
+            { label: "Chapter 3", start: 180, end: 1440 },
+        ]
+        expect(getDefaultSkipChapters(list, fork).opening).toBe(list[1])
+    })
+
+    // Regression: the near-tie tiebreak used to prefer the later chapter at both ends, so a
+    // 60-150s next-episode preview stole the pick from the ED just before it.
+    it("reads two unlabeled ~90s chapters at the tail as [ED][preview]", () => {
+        const list = [
+            { label: "Chapter 1", start: 0, end: 1250 },
+            { label: "Chapter 2", start: 1250, end: 1340 },
+            { label: "Chapter 3", start: 1340, end: 1440 },
+        ]
+        expect(getDefaultSkipChapters(list, fork).ending).toBe(list[1])
+    })
+
+    it("promotes an unlabeled OP sitting behind a long cold open", () => {
+        const list = [
+            { label: "Chapter 1", start: 0, end: 290 },
+            { label: "Chapter 2", start: 290, end: 380 },
+            { label: "Chapter 3", start: 380, end: 1440 },
+        ]
+        expect(getDefaultSkipChapters(list, fork).opening).toBe(list[1])
+    })
+
+    it("still applies the heuristics to a double-length episode", () => {
+        const list = [
+            { label: "Chapter 1", start: 0, end: 90 },
+            { label: "Chapter 2", start: 90, end: 2730 },
+            { label: "Chapter 3", start: 2730, end: 2820 },
+        ]
+        const { opening, ending } = getDefaultSkipChapters(list, { ...fork, duration: 2820 })
+        expect(opening).toBe(list[0])
+        expect(ending).toBe(list[2])
+    })
+
+    it("leaves movie-length files alone", () => {
+        const list = [
+            { label: "Chapter 1", start: 0, end: 90 },
+            { label: "Chapter 2", start: 90, end: 7200 },
+        ]
+        expect(getDefaultSkipChapters(list, { ...fork, duration: 7200 }).opening).toBeNull()
     })
 })
