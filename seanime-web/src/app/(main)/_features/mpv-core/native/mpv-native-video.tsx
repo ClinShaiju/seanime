@@ -7,6 +7,10 @@ import { MpvNativePlayer } from "./mpv-native-player"
 type Rect = { x: number, y: number, width: number, height: number }
 
 const MIN_VISIBLE_SIZE = 4
+/** How long the hole must hold still before per-vsync sampling backs off. */
+const SETTLE_MS = 400
+/** Sampling interval once it has settled - fast enough that any movement is picked up within a frame or two. */
+const IDLE_SAMPLE_MS = 100
 
 function sameRect(a: Rect | null, b: Rect): boolean {
     return !!a && Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5
@@ -43,10 +47,18 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
         let lastRect: Rect | null = null
         let lastVisible: boolean | null = null
 
+        let lastSample = 0
+        let stableSince = 0
+
         // The hole moves without resizing (drawer opening, mini-player transition, window drag), and no
         // observer covers that, so its position is sampled per frame and only sent when it actually changed.
-        const tick = () => {
+        // Once it has held still, though, sampling every vsync is pure waste: each read forces layout and
+        // keeps Chromium's compositor busy at display rate, competing with mpv for the frame time this whole
+        // backend exists to protect. So it backs off while nothing moves and snaps back the moment it does.
+        const tick = (now: number) => {
             frame = requestAnimationFrame(tick)
+            if (stableSince && now - stableSince > SETTLE_MS && now - lastSample < IDLE_SAMPLE_MS) return
+            lastSample = now
             const bounds = element.getBoundingClientRect()
             const visible = bounds.width >= MIN_VISIBLE_SIZE && bounds.height >= MIN_VISIBLE_SIZE
             if (visible !== lastVisible) {
@@ -55,7 +67,11 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
             }
             if (!visible) return
             const rect: Rect = { x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height }
-            if (sameRect(lastRect, rect)) return
+            if (sameRect(lastRect, rect)) {
+                if (!stableSince) stableSince = now
+                return
+            }
+            stableSince = 0
             lastRect = rect
             native.setVideoRect(rect)
             // Drives the clip-path hole the app shell is cut with while the mini player is up
@@ -75,15 +91,31 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
         }
     }, [native])
 
+    // Only strip the app's own background once mpv is actually running. If it failed to start there is
+    // nothing behind this window, and a transparent shell would show the user's desktop through the app with
+    // no explanation of what went wrong.
+    const [mpvReady, setMpvReady] = React.useState(false)
+    React.useEffect(() => {
+        if (!native) return
+        let cancelled = false
+        native.awaitPresentationReady()
+            .then(() => !cancelled && setMpvReady(true))
+            .catch(() => undefined)
+        return () => {
+            cancelled = true
+            setMpvReady(false)
+        }
+    }, [native])
+
     // Flags the document so the app stops painting over the mpv window (see globals.css). Fullscreen hides
     // the app shell outright; the mini player only needs a hole cut where the video sits.
     React.useEffect(() => {
-        if (!native) return
+        if (!native || !mpvReady) return
         document.documentElement.dataset.mpvNativeVideo = miniPlayer ? "mini" : "fullscreen"
         return () => {
             delete document.documentElement.dataset.mpvNativeVideo
         }
-    }, [native, miniPlayer])
+    }, [native, miniPlayer, mpvReady])
 
     return (
         <div ref={ref} style={{ position: "relative", ...style }} {...rest}>

@@ -29,7 +29,19 @@ if (typeof window !== "undefined") void primeMpvBackend()
  * (the window has to be created transparent), and freezing it keeps the hook order below stable.
  */
 export function isMpvNativeBackend(): boolean {
-    if (sessionBackend === null) sessionBackend = nativeSupported ? "native" : "prism"
+    if (sessionBackend === null) {
+        // The async probe above may not have answered yet, and freezing on its default would silently run the
+        // whole session on mpv-prism with the setting on. The sync call cannot lose that race.
+        if (!nativeSupported) {
+            try {
+                nativeSupported = window.electron?.mpvNative?.isSupportedSync?.() ?? false
+            }
+            catch {
+                nativeSupported = false
+            }
+        }
+        sessionBackend = nativeSupported ? "native" : "prism"
+    }
     return sessionBackend === "native"
 }
 

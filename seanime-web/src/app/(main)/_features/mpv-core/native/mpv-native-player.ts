@@ -60,7 +60,30 @@ const BASE_OBSERVED_PROPERTIES = [
     "track-list",
     "demuxer-cache-state",
     "paused-for-cache",
+    "cache-buffering-state",
+    // mpv runs with --keep-open=yes, which makes it pause on the last frame and never emit `end-file`, so
+    // this property is the ONLY end-of-file signal on this backend (mpv-prism gets `end-file` and observes
+    // this too). Without it nothing finishes playback and auto-next never fires.
+    "eof-reached",
+    "aid",
+    "sid",
+    "vid",
+    "video-params",
+    "audio-params",
+    "avsync",
+    "frame-drop-count",
+    "decoder-frame-drop-count",
+    "mistimed-frame-count",
+    "vo-delayed-frame-count",
 ]
+
+/** Drop counters mpv-prism reports as `frameDrops`; the stats overlay reads them from there. */
+const FRAME_DROP_PROPERTIES = new Set([
+    "frame-drop-count",
+    "decoder-frame-drop-count",
+    "mistimed-frame-count",
+    "vo-delayed-frame-count",
+])
 
 const TRACK_KIND_PROPERTY: Record<MpvPrismTrackKind, string> = {
     audio: "aid",
@@ -87,9 +110,24 @@ export class MpvNativePlayer implements MpvPlayerApi {
     private destroyed = false
     private pausedState = true
     private tracks: MpvPrismTrack[] = []
+    private startError: string | null = null
+    private isSeeking = false
+    private queuedSeek: { seconds: number, mode: MpvPrismSeekMode, resolve: () => void, reject: (e: unknown) => void } | null = null
 
     constructor(readonly id: string, options: MpvPrismMpvInitOptions = {}) {
-        this.readyPromise = this.start(options)
+        // A failed start (mpv binary missing, spawn failure, pipe timeout) must surface as an `error` event:
+        // MpvCore only leaves the loading screen on one, and MpvNativeVideo only makes the app transparent
+        // once this promise resolves. The latch replays it to listeners that subscribe after the failure,
+        // which React effects always do.
+        this.readyPromise = this.start(options).catch(error => {
+            this.startError = error instanceof Error ? error.message : String(error)
+            this.emit("error", {
+                message: this.startError,
+                nativeEvent: { type: "mpv-native-start-failed", error: this.startError },
+            })
+            throw error
+        })
+        this.readyPromise.catch(() => {})
     }
 
     private get bridge() {
@@ -117,6 +155,13 @@ export class MpvNativePlayer implements MpvPlayerApi {
             this.listeners.set(type, set)
         }
         set.add(listener as Listener)
+        if (type === "error" && this.startError !== null) {
+            const message = this.startError
+            queueMicrotask(() => (listener as Listener)({
+                message,
+                nativeEvent: { type: "mpv-native-start-failed", error: message },
+            }))
+        }
         return () => this.off(type, listener)
     }
 
@@ -212,7 +257,22 @@ export class MpvNativePlayer implements MpvPlayerApi {
                 break
             case "demuxer-cache-state":
             case "paused-for-cache":
+            case "cache-buffering-state":
                 this.emit("cache", { state: value, nativeEvent })
+                break
+            case "aid":
+                this.emit("trackSelection", { kind: "audio", id: value, nativeEvent })
+                break
+            case "sid":
+                this.emit("trackSelection", { kind: "subtitle", id: value, nativeEvent })
+                break
+            case "vid":
+                this.emit("trackSelection", { kind: "video", id: value, nativeEvent })
+                break
+            default:
+                if (FRAME_DROP_PROPERTIES.has(name)) {
+                    this.emit("frameDrops", { name, value: typeof value === "number" ? value : null, nativeEvent })
+                }
                 break
         }
     }
@@ -226,6 +286,7 @@ export class MpvNativePlayer implements MpvPlayerApi {
     }
 
     async load(uri: string): Promise<void> {
+        this.syncPaused(false, "player-load")
         await this.readyPromise
         await this.bridge.command(this.id, ["loadfile", uri, "replace"])
     }
@@ -239,9 +300,20 @@ export class MpvNativePlayer implements MpvPlayerApi {
     }
 
     async setPaused(paused: boolean): Promise<void> {
+        this.syncPaused(paused, "player-set-paused")
         await this.readyPromise
-        this.pausedState = paused
         await this.bridge.setProperty(this.id, "pause", paused)
+    }
+
+    /**
+     * Reports the intent immediately and lets mpv's own `pause` property echo reconcile it, matching
+     * mpv-prism. Waiting for the round trip makes the play/pause button and the watch-party broadcast lag
+     * the input by a frame or more.
+     */
+    private syncPaused(paused: boolean, source: string): void {
+        if (this.pausedState === paused) return
+        this.pausedState = paused
+        this.emit("paused", { paused, nativeEvent: { type: source } })
     }
 
     async stop(): Promise<void> {
@@ -249,9 +321,41 @@ export class MpvNativePlayer implements MpvPlayerApi {
         await this.bridge.command(this.id, ["stop"])
     }
 
-    async seek(seconds: number, mode: MpvPrismSeekMode = "absolute"): Promise<void> {
-        await this.readyPromise
-        await this.bridge.command(this.id, ["seek", seconds, mode])
+    /**
+     * Mirrors mpv-prism: one seek in flight at a time, and a newer request *replaces* the queued one rather
+     * than stacking. Dragging the scrub bar emits a seek per pointer move, and each one is a demuxer flush —
+     * sending them all lags the scrub and, on a debrid stream, bursts range requests at the server.
+     */
+    seek(seconds: number, mode: MpvPrismSeekMode = "absolute+exact"): Promise<void> {
+        if (this.destroyed) return Promise.reject(new Error("mpv-native player has been destroyed"))
+        return new Promise<void>((resolve, reject) => {
+            this.queuedSeek?.resolve()
+            this.queuedSeek = { seconds, mode, resolve, reject }
+            void this.flushSeek()
+        })
+    }
+
+    private async flushSeek(): Promise<void> {
+        if (this.isSeeking) return
+        this.isSeeking = true
+        try {
+            while (this.queuedSeek && !this.destroyed) {
+                const pending = this.queuedSeek
+                this.queuedSeek = null
+                try {
+                    await this.readyPromise
+                    await this.bridge.command(this.id, ["seek", pending.seconds, pending.mode])
+                    pending.resolve()
+                }
+                catch (error) {
+                    pending.reject(error)
+                }
+            }
+        }
+        finally {
+            this.isSeeking = false
+            if (this.queuedSeek && !this.destroyed) void this.flushSeek()
+        }
     }
 
     async setSpeed(speed: number): Promise<void> {
@@ -358,6 +462,8 @@ export class MpvNativePlayer implements MpvPlayerApi {
     async destroy(): Promise<void> {
         if (this.destroyed) return
         this.destroyed = true
+        this.queuedSeek?.resolve()
+        this.queuedSeek = null
         this.unsubscribe?.()
         this.unsubscribe = null
         this.listeners.clear()
