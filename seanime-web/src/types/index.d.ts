@@ -86,6 +86,23 @@ declare global {
                 scanAnime4KDirectory: (directory: string) => Promise<MpvCoreAnime4KDirectory>;
                 openAnime4KDirectory: (directory?: string) => Promise<boolean>;
             };
+            mpvNative?: {
+                isSupported: () => Promise<boolean>;
+                getDisplayFrequency: () => Promise<number>;
+                create: (playerId: string, options: {
+                    options?: Record<string, string | number | boolean>;
+                    configFiles?: string[];
+                    observe?: string[];
+                }) => Promise<void>;
+                destroy: (playerId: string) => Promise<void>;
+                command: (playerId: string, args: unknown[]) => Promise<unknown>;
+                getProperty: (playerId: string, name: string) => Promise<unknown>;
+                setProperty: (playerId: string, name: string, value: unknown) => Promise<void>;
+                observeProperty: (playerId: string, name: string) => Promise<void>;
+                setVideoRect: (playerId: string, rect: { x: number; y: number; width: number; height: number }) => void;
+                setVisible: (playerId: string, visible: boolean) => void;
+                onEvent: (listener: (payload: any) => void) => () => void;
+            };
             powerSaveBlocker?: {
                 start: () => Promise<number>;
                 stop: (id: number) => Promise<void>;
@@ -170,5 +187,6 @@ declare global {
         openAtLaunch: boolean;
         updateChannel?: string;
         serverUrl?: string;
+        mpvNativePlayback?: boolean;
     }
 }

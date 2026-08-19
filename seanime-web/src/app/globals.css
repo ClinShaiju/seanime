@@ -177,6 +177,16 @@ body {
     background-color: transparent !important;
 }
 
+/* Native mpv playback: mpv renders in its own window *behind* the Denshi window, so everything the player
+   draws on top of has to stop painting for the video to be visible. Only active while that backend plays. */
+html[data-mpv-native-video] {
+    background-color: transparent;
+}
+
+html[data-mpv-native-video] .UI-AppLayout__root {
+    visibility: hidden;
+}
+
 /* denshi route view transitions */
 html[data-denshi-view-transitions] {
     --sea-denshi-vt-ease: ease;

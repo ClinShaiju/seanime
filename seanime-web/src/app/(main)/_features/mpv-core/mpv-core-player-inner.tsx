@@ -44,7 +44,8 @@ import { WSEvents } from "@/lib/server/ws-events"
 import { __isDesktop__ } from "@/types/constants"
 import type { MpvPrismMpvInitOptions, MpvPrismTrack, MpvPrismTrackSelection } from "@mpv-prism/core"
 
-import { MpvPrismVideo, useMpvPrismEvent, useMpvPrismPlayer } from "@mpv-prism/react"
+import { useMpvPrismEvent } from "@mpv-prism/react"
+import { isMpvNativeBackend, MpvVideo, useMpvPlayer } from "./native/mpv-backend"
 import { useQueryClient } from "@tanstack/react-query"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import React from "react"
@@ -200,6 +201,13 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         if (!("deband" in parsed)) {
             options["deband"] = initialDeband ? "yes" : "no"
         }
+        if (isMpvNativeBackend()) {
+            // mpv owns a real window here, so display sync finally has a vsync clock to lock onto and
+            // interpolation (which requires an active display-sync mode) actually does something
+            if (!("video-sync" in parsed)) options["video-sync"] = "display-resample"
+            if (!("interpolation" in parsed)) options["interpolation"] = "yes"
+            if (!("tscale" in parsed)) options["tscale"] = "oversample"
+        }
 
         const result: MpvPrismMpvInitOptions = {
             options,
@@ -212,6 +220,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 "hwdec-current",
                 "chapter-list",
                 "vo-passes",
+                "display-sync-active",
+                "vsync-ratio",
+                "mistimed-frame-count",
             ],
         }
         if (customMpvConfigPath) {
@@ -220,7 +231,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         return result
     }, [activeMpvConfig, customMpvConfigPath, initialDeband])
     const expectedPlayerId = `seanime-mpv-core-active-${playerGeneration}`
-    const createdPlayer = useMpvPrismPlayer({
+    const createdPlayer = useMpvPlayer({
         playerId: expectedPlayerId,
         mpv: mpvOptions,
     })
@@ -1839,7 +1850,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                     data-vc-element="container"
                     ref={setContainerElement}
                     className={cn(
-                        "relative w-full h-full bg-black overflow-clip flex items-center justify-center text-white select-none outline-none focus:outline-none",
+                        "relative w-full h-full overflow-clip flex items-center justify-center text-white select-none outline-none focus:outline-none",
+                        // the native backend needs this to stay see-through: mpv paints behind the window
+                        isMpvNativeBackend() ? "bg-transparent" : "bg-black",
                         (!busy && !state.miniPlayer) && "cursor-none",
                     )}
                     onDrop={handleDrop}
@@ -1848,7 +1861,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                     onPointerMove={handleContainerPointerMove}
                     tabIndex={0}
                 >
-                    <MpvPrismVideo
+                    <MpvVideo
                         player={player}
                         className="absolute inset-0 h-full w-full"
                         fit="contain"
@@ -2285,7 +2298,7 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                                 )}
                             </div>
                         )}
-                    </MpvPrismVideo>
+                    </MpvVideo>
                     {!state.miniPlayer && <VideoCoreInSight />}
                 </div>
             </MediaCoreDrawer>
