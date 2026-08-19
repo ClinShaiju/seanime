@@ -223,7 +223,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 "vo-passes",
                 "display-sync-active",
                 "vsync-ratio",
+                "vsync-jitter",
                 "mistimed-frame-count",
+                "vo-delayed-frame-count",
             ],
         }
         if (customMpvConfigPath) {
@@ -1147,12 +1149,19 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         if (event.kind === "subtitle") sendEvent("subtitle-track-changed", { trackId: event.id })
     })
     useMpvPrismEvent(player, "cache", event => {
-        const value = event.state as Record<string, unknown> | number | null
-        const isBuffering = typeof value === "number"
-            ? value > 0
-            : Boolean(value && (value["underrun"] || Number(value["cache-buffering-state"]) > 0))
+        const value = event.state as Record<string, unknown> | number | boolean | null
+        const isBuffering = typeof value === "boolean"
+            ? value
+            : typeof value === "number"
+                ? value > 0
+                : Boolean(value && (value["underrun"] || Number(value["cache-buffering-state"]) > 0))
         setBuffering(isBuffering)
-        setBuffered(mc_cacheBufferedSeconds(event.state, durationRef.current, currentTimeRef.current))
+        // Only demuxer-cache-state carries ranges/duration. cache-buffering-state (a number) and
+        // paused-for-cache (a boolean) arrive on this same event and would otherwise drag the buffered
+        // position back to the playhead every time buffering starts or stops.
+        if (value && typeof value === "object") {
+            setBuffered(mc_cacheBufferedSeconds(value, durationRef.current, currentTimeRef.current))
+        }
     })
     useMpvPrismEvent(player, "cache", event => setCacheState(event.state))
     useMpvPrismEvent(player, "frameDrops", event => {
@@ -1580,6 +1589,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
 
     async function togglePip(force?: boolean) {
         if (!player) return
+        // PiP is the <video> element's, which does not exist on the native backend. The button is hidden
+        // there, but the keybinding, the remote-control payload and the cast overlay all still reach here.
+        if (isMpvNativeBackend()) return
         const next = force ?? !player.isPip
         try {
             if (next) {
@@ -1605,7 +1617,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
     }
 
     async function takeScreenshot() {
-        if (!player || !window.electron?.mpvCore) return
+        if (!player) return
+        // Each backend captures through its own bridge; mpvCore is prism's and says nothing about native.
+        if (!(isMpvNativeBackend() ? window.electron?.mpvNative : window.electron?.mpvCore)) return
         try {
             // The native backend has no frame in the DOM to read, so mpv captures it instead
             if (isMpvNativeBackend()) {
@@ -1784,6 +1798,38 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         return () => window.clearTimeout(t)
     }, [hasPlayback])
 
+    /**
+     * mpv answers these on demand but never sends a change notification for `display-sync-active` (measured:
+     * one event at observe time, none after), and the warm player observes it at app start while idle — so
+     * the overlay would report "inactive" for the whole session no matter what mpv was really doing. Polled
+     * only while the overlay is open, so it costs nothing the rest of the time.
+     */
+    React.useEffect(() => {
+        if (!showStats || !player || !hasPlayback) return
+        let cancelled = false
+        // vo-passes carries per-pass GPU timings - the only direct read on whether the shader chain fits in
+        // the frame budget. Like display-sync-active it does not arrive by change notification.
+        const names = ["display-sync-active", "display-fps", "vsync-ratio", "vsync-jitter", "interpolation",
+            "vo-passes"]
+        const poll = async () => {
+            const values = await Promise.all(names.map(name => player.getProperty<unknown>(name).catch(() => undefined)))
+            if (cancelled) return
+            setDiagnostics(current => {
+                const next = { ...current }
+                names.forEach((name, index) => {
+                    if (values[index] !== undefined) next[name] = values[index]
+                })
+                return next
+            })
+        }
+        void poll()
+        const timer = setInterval(poll, 1000)
+        return () => {
+            cancelled = true
+            clearInterval(timer)
+        }
+    }, [showStats, player, hasPlayback])
+
     const diagnosticsProperties = React.useMemo(() => new Set([
         "video-params",
         "audio-params",
@@ -1795,6 +1841,11 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
         "hwdec-current",
         "avsync",
         "vo-passes",
+        // display-sync is the whole point of the native backend; without these the stats overlay cannot
+        // tell whether video-sync=display-resample actually engaged or is silently falling back
+        "display-sync-active",
+        "vsync-ratio",
+        "vsync-jitter",
     ]), [])
 
     return (

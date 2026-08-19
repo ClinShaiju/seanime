@@ -2,7 +2,11 @@ import type { Player_PlaybackInfo } from "@/api/generated/types"
 import type { MpvPrismTrack } from "@mpv-prism/core"
 import React from "react"
 import { mc_trackKind } from "./mpv-core"
+import { isMpvNativeBackend } from "./native/mpv-backend"
 import type { MpvCoreAnime4KQuality, MpvCoreShaderMode } from "./mpv-core.atoms"
+
+/** Enough to name the expensive stages without pushing the rest of the panel off-screen. */
+const PASS_ROWS = 6
 
 export interface MpvCoreStatsProps {
     info: Player_PlaybackInfo | null
@@ -49,6 +53,9 @@ export function MpvCoreStats(props: MpvCoreStatsProps) {
     const audioBitrate = Number(props.diagnostics["audio-bitrate"] ?? audio?.["demux-bitrate"] ?? 0)
     const outputDrops = props.frameDrops["frame-drop-count"] ?? 0
     const decoderDrops = props.frameDrops["decoder-frame-drop-count"] ?? 0
+    const displaySyncActive = props.diagnostics["display-sync-active"] === true
+    const vsyncRatio = Number(props.diagnostics["vsync-ratio"])
+    const vsyncJitter = Number(props.diagnostics["vsync-jitter"])
     const cache = props.cache as Record<string, unknown> | null
     const rawCacheDuration = Number(cache?.["cache-duration"])
     const cacheDuration = Number.isFinite(rawCacheDuration)
@@ -82,6 +89,18 @@ export function MpvCoreStats(props: MpvCoreStatsProps) {
         }
     }
     const renderTimeMs = hasRenderPasses ? (totalRenderTimeNs / 1_000_000).toFixed(2) : null
+
+    // Anime4K repeats the same conv-layer name dozens of times, which buried every stat below this list.
+    // Summing per name turns ~60 rows into a handful that also say which stage actually costs the frame.
+    const passTotals = new Map<string, { ms: number, count: number }>()
+    for (const pass of freshPasses) {
+        const name = String(pass.desc ?? "pass")
+        const entry = passTotals.get(name) ?? { ms: 0, count: 0 }
+        entry.ms += Number(pass.avg ?? pass.last ?? 0) / 1_000_000
+        entry.count += 1
+        passTotals.set(name, entry)
+    }
+    const passBreakdown = [...passTotals.entries()].sort((a, b) => b[1].ms - a[1].ms)
 
     const videoLang = video?.lang ? `[${video.lang.toUpperCase()}]` : ""
     const videoTitle = video?.title ? ` - ${video.title}` : ""
@@ -132,29 +151,50 @@ export function MpvCoreStats(props: MpvCoreStatsProps) {
                     label="Framerate"
                     value={`${fps > 0 ? `${fps.toFixed(2)} fps` : "unknown"}${displayFps > 0 ? ` (Display: ${displayFps.toFixed(2)} Hz)` : ""}`}
                 />
-                <StatLine label="Frame Drops (Output / Decoder)" value={`${outputDrops} / ${decoderDrops}`} />
+                {/* Proves video-sync=display-resample engaged. Ratio is refresh / fps (6 at 144 Hz on 24 fps
+                    content); jitter above ~0.02 means the refresh rate mpv was handed does not match reality. */}
                 <StatLine
-                    label="Presenter Drops (Queue / Browser)"
-                    value={`${props.frameDrops["presenter-queue-drops"] ?? 0} / ${props.frameDrops["presenter-browser-drops"] ?? 0}`}
+                    label="Display Sync"
+                    value={displaySyncActive
+                        ? `active${Number.isFinite(vsyncRatio) ? ` - ratio ${vsyncRatio.toFixed(2)}` : ""}${Number.isFinite(vsyncJitter)
+                            ? ` - jitter ${vsyncJitter.toFixed(4)}`
+                            : ""}${props.diagnostics["interpolation"] === true ? " - interpolated" : ""}`
+                        : "inactive"}
                 />
+                <StatLine label="Frame Drops (Output / Decoder)" value={`${outputDrops} / ${decoderDrops}`} />
+                {/* The native backend has no frame presenter - mpv paints its own window, so these counters do not exist. */}
+                {!isMpvNativeBackend() && (
+                    <StatLine
+                        label="Presenter Drops (Queue / Browser)"
+                        value={`${props.frameDrops["presenter-queue-drops"] ?? 0} / ${props.frameDrops["presenter-browser-drops"] ?? 0}`}
+                    />
+                )}
                 {renderTimeMs && (
                     <>
                         <StatLine label="Avg Render Time" value={`${renderTimeMs} ms`} />
                         <div className="pl-4 border-l border-gray-800 space-y-0.5 my-1">
-                            {freshPasses.map((pass, idx) => {
-                                const name = String(pass.desc ?? `pass-${idx}`)
-                                const avgTime = (Number(pass.avg ?? pass.last ?? 0) / 1_000_000).toFixed(3)
-                                return (
-                                    <div key={idx} className="text-[10px] text-gray-400 flex justify-between gap-4">
-                                        <span className="truncate" title={name}>{name}</span>
-                                        <span className="flex-none font-semibold">{avgTime} ms</span>
-                                    </div>
-                                )
-                            })}
+                            {passBreakdown.slice(0, PASS_ROWS).map(([name, pass]) => (
+                                <div key={name} className="text-[10px] text-gray-400 flex justify-between gap-4">
+                                    <span className="truncate" title={name}>
+                                        {name}{pass.count > 1 ? ` x${pass.count}` : ""}
+                                    </span>
+                                    <span className="flex-none font-semibold">{pass.ms.toFixed(3)} ms</span>
+                                </div>
+                            ))}
+                            {passBreakdown.length > PASS_ROWS && (
+                                <div className="text-[10px] text-gray-500">
+                                    +{passBreakdown.length - PASS_ROWS} more ({passBreakdown.slice(PASS_ROWS)
+                                        .reduce((sum, [, pass]) => sum + pass.ms, 0)
+                                        .toFixed(3)} ms)
+                                </div>
+                            )}
                         </div>
                     </>
                 )}
-                {/*<StatLine label="Mistimed / Delayed" value={`${props.frameDrops["mistimed-frame-count"] ?? 0} / ${props.frameDrops["vo-delayed-frame-count"] ?? 0}`} />*/}
+                <StatLine
+                    label="Mistimed / Delayed"
+                    value={`${props.frameDrops["mistimed-frame-count"] ?? 0} / ${props.frameDrops["vo-delayed-frame-count"] ?? 0}`}
+                />
                 <StatLine
                     label="A/V Sync"
                     value={`${typeof props.diagnostics["avsync"] === "number"
