@@ -75,7 +75,7 @@ app.whenReady().then(async () => {
         uiWindow,
         {
             options: { "video-sync": "display-resample", interpolation: "yes", tscale: "oversample" },
-            observe: ["time-pos", "pause", "track-list"],
+            observe: ["time-pos", "pause", "track-list", "eof-reached"],
         },
         event => events.push(event),
         reason => console.log("SESSION_EXIT", reason),
@@ -95,9 +95,26 @@ app.whenReady().then(async () => {
     check("session plays", typeof timePos === "number" && timePos > 0.5, `time-pos=${timePos}`)
     check("display sync active", displaySyncActive === true)
     check("video-sync applied", videoSync === "display-resample", videoSync)
-    check("interpolation on", interpolation === true)
-    check("display fps matches monitor", displayFps === (display.displayFrequency || 60), `mpv=${displayFps} electron=${display.displayFrequency}`)
+    // Interpolation is now conditional: it only earns its cost when the display/video FPS ratio is far from
+    // a whole number. A 24 fps clip on a 144 Hz panel is an even 6, so it must be OFF here - leaving it on
+    // makes mpv render every vsync instead of every frame, which is what buried Anime4K in dropped frames.
+    const containerFps = await session.getProperty("container-fps")
+    const ratio = displayFps / containerFps
+    const expectInterpolation = Math.abs(ratio - Math.round(ratio)) > 0.05
+    check("interpolation matches the cadence", interpolation === expectInterpolation,
+        `interpolation=${interpolation} expected=${expectInterpolation} ratio=${ratio.toFixed(3)}`)
+    // No --display-fps-override is passed any more: mpv measures the true rate itself even through --wid.
+    // Electron only ever reports a rounded integer, so mpv should land near it but NOT on it.
+    check("mpv detects the real refresh rate", Math.abs(displayFps - (display.displayFrequency || 60)) < 1,
+        `mpv=${displayFps} electron=${display.displayFrequency}`)
     check("vsync ratio sane", typeof vsyncRatio === "number" && vsyncRatio > 0, `ratio=${vsyncRatio}`)
+    // display-fps-override is handed to mpv from Electron's (integer) display frequency, so a panel that is
+    // really 59.94 Hz is told 60. mpv trusts the number instead of measuring, and the lie shows up here:
+    // jitter is the relative stddev of actual vsync intervals, and mistimed frames climb when it is wrong.
+    const vsyncJitter = await session.getProperty("vsync-jitter")
+    const mistimed = await session.getProperty("mistimed-frame-count")
+    check("vsync jitter low", typeof vsyncJitter === "number" && vsyncJitter < 0.02,
+        `jitter=${vsyncJitter} mistimed=${mistimed}`)
     check("property events flowing", events.some(event => event.event === "property-change" && event.name === "time-pos"),
         `${events.length} events`)
     check("file-loaded delivered", events.some(event => event.event === "file-loaded"))
@@ -127,6 +144,31 @@ app.whenReady().then(async () => {
     await session.command(["change-list", "glsl-shaders", "clr", ""])
     const clearedList = await session.getProperty("glsl-shaders")
     check("shaders cleared", Array.isArray(clearedList) && clearedList.length === 0, JSON.stringify(clearedList))
+
+    // mpv's detected rate and its own measurement of actual vsync intervals must agree. They diverge when
+    // something forces a wrong rate on it, which is exactly what --display-fps-override used to do.
+    await delay(7000)
+    const measured = await session.getProperty("estimated-display-fps")
+    const detected = await session.getProperty("display-fps")
+    check("detected refresh rate matches the measured one",
+        typeof measured === "number" && Math.abs(detected - measured) < 0.5,
+        `display-fps=${detected} estimated=${measured}`)
+
+    trace("eof:start")
+    // Regression guard for auto-next. The session runs mpv with --keep-open=yes, which makes it pause on the
+    // last frame and NEVER emit `end-file` (measured: end-file only arrives with --keep-open=no), so
+    // `eof-reached` is the only end-of-file signal the renderer can act on. If this stops arriving, playback
+    // silently stops at the end of every episode instead of advancing.
+    const eofBefore = events.filter(event => event.event === "end-file").length
+    await session.setProperty("pause", false)
+    await session.command(["seek", 19.5, "absolute+exact"])
+    await delay(3000)
+    const eofEvents = events.filter(event => event.event === "property-change" && event.name === "eof-reached")
+    check("eof-reached observed at end of file", eofEvents.some(event => event.data === true),
+        JSON.stringify(eofEvents.map(event => event.data)))
+    check("keep-open still suppresses end-file",
+        events.filter(event => event.event === "end-file").length === eofBefore,
+        "end-file must not be relied on for auto-next")
 
     trace("clip:start")
     // The mini player relies on a clip-path with a fill rule; verify Chromium actually parses it
