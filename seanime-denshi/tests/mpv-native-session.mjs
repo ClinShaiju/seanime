@@ -115,8 +115,14 @@ app.whenReady().then(async () => {
     const mistimed = await session.getProperty("mistimed-frame-count")
     check("vsync jitter low", typeof vsyncJitter === "number" && vsyncJitter < 0.02,
         `jitter=${vsyncJitter} mistimed=${mistimed}`)
-    check("property events flowing", events.some(event => event.event === "property-change" && event.name === "time-pos"),
-        `${events.length} events`)
+    // Progress reporting rides entirely on time-pos: the renderer's 1 Hz status heartbeat reads the value
+    // these events set, and the server writes continuity (resume position) to disk on every tick, plus marks
+    // the episode watched at 80%. If these stop arriving, progress silently stops being saved.
+    const timePosEvents = events.filter(event => event.event === "property-change" && event.name === "time-pos")
+    check("time-pos events flowing", timePosEvents.length >= 3, `${timePosEvents.length} in ${events.length} events`)
+    const positions = timePosEvents.map(event => Number(event.data)).filter(Number.isFinite)
+    check("time-pos advances", positions.length >= 2 && positions[positions.length - 1] > positions[0],
+        `${positions[0]} -> ${positions[positions.length - 1]}`)
     check("file-loaded delivered", events.some(event => event.event === "file-loaded"))
 
     // Pause/seek round trip through the same path the renderer uses

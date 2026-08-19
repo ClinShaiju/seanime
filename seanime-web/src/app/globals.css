@@ -200,8 +200,17 @@ html[data-mpv-native-video="mini"] {
         var(--mpv-hole-x1, 0px) var(--mpv-hole-y1, 0px));
 }
 
+/* Shell-relative coordinates: this element is in normal flow, so its border box (what clip-path resolves
+   against) drifts from the viewport by the scroll offset. The fixed-position layers below use the viewport
+   pair instead. */
 html[data-mpv-native-video="mini"] .UI-AppLayout__root {
-    clip-path: var(--mpv-hole-clip);
+    clip-path: polygon(evenodd,
+        0 0, 100% 0, 100% 100%, 0 100%, 0 0,
+        var(--mpv-shell-hole-x1, 0px) var(--mpv-shell-hole-y1, 0px),
+        var(--mpv-shell-hole-x1, 0px) var(--mpv-shell-hole-y2, 0px),
+        var(--mpv-shell-hole-x2, 0px) var(--mpv-shell-hole-y2, 0px),
+        var(--mpv-shell-hole-x2, 0px) var(--mpv-shell-hole-y1, 0px),
+        var(--mpv-shell-hole-x1, 0px) var(--mpv-shell-hole-y1, 0px));
 }
 
 /* Clipping the shell alone leaves the transparent html showing the desktop through every gap between

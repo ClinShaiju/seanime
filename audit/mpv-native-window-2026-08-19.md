@@ -311,6 +311,30 @@ blocks the renderer once at startup; acceptable for a boolean.
   (`body::after`) to match the drawer's `rounded-lg`. Root cause was that only `.UI-AppLayout__root` was
   clipped while `html` was globally transparent, so every gap between UI elements showed the desktop.
 
+### B13. Mini player: the app shell paints over the video — CONFIRMED — MED — status: OPEN (deferred 2026-08-19)
+
+With the mini player up, page content (episode cards and their text) draws on top of the video instead of
+being clipped away around it, and leaving fullscreen with Escape shows a brief see-through flash. Reported and
+reproduced by the user; predates the rect-sampling throttle, and neither the throttle fix nor the
+coordinate-space fix below resolved it.
+
+Fixed along the way but NOT the cause: `clip-path` percentages resolve against the clipped element's own
+border box, while `--mpv-hole-*` carried viewport coordinates. `.UI-AppLayout__root` is a normal-flow element,
+so once the page scrolls its box drifts from the viewport by the scroll offset and the hole was cut in the
+wrong place. It now gets its own `--mpv-shell-hole-*` pair measured against its own box, with the shell offset
+included in the change detection (scrolling moves the shell without moving the fixed drawer). That was a real
+bug and is worth keeping, but the overlay persists, so something else is also wrong.
+
+What is ruled out: the throttle (predates it), the scroll offset (fixed, no change), and the backdrop/corner
+layers (`position: fixed`, so their viewport coordinates were always correct — which is why they looked right
+while the shell clip did not).
+
+Next step is to stop theorising and observe: attach CDP to the running app, read the computed `clip-path` on
+`.UI-AppLayout__root` and the live `--mpv-shell-hole-*` values against the drawer's actual
+`getBoundingClientRect()`, and find where they disagree. Candidates worth checking there: whether the
+overlapping content is even a descendant of the clipped shell (a portal or a sibling container would never be
+clipped), and whether an ancestor transform on the drawer shifts the coordinate space again.
+
 ---
 
 ## Priority
@@ -333,7 +357,7 @@ blocks the renderer once at startup; acceptable for a boolean.
    `buffered` from the demuxer-cache-state object. Fixes the same latent bug on the prism path.
 9. ~~B8 — zoom factor in `applyBounds()`.~~ DONE.
 
-**Deferrable** — all closed 2026-08-19 except B9.
+**Deferrable** — all closed 2026-08-19 except B9 and B13 (mini player overlay, see above).
 - ~~B6~~ optimistic `paused` emit ported from prism. ~~B7~~ `togglePip()` now returns early on native (one
   guard in the shared function, covering the keybinding, the remote payload and the cast overlay); the
   subtitle half was withdrawn. ~~B11~~ screenshot guard now checks the bridge the branch actually uses.

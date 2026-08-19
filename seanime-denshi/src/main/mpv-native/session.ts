@@ -139,6 +139,14 @@ export class MpvNativeSession {
             // this one can never be raised above it by a click, alt-tab or a taskbar activation.
             focusable: false,
             skipTaskbar: true,
+            // Its geometry is driven entirely by setVideoRect. Left resizable (the Electron default) it is a
+            // frameless screen-sized window with live resize borders on every screen edge, so in fullscreen a
+            // drag at the edge resizes the video and the bottom edge swallows the taskbar's hover target.
+            resizable: false,
+            movable: false,
+            minimizable: false,
+            maximizable: false,
+            fullscreenable: false,
             webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
         })
         this.videoWindow.setMenu(null)
