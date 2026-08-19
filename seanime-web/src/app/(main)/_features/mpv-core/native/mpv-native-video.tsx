@@ -1,5 +1,7 @@
 import type { MpvPrismVideoProps } from "@mpv-prism/react"
+import { useAtomValue } from "jotai/react"
 import React from "react"
+import { mpvCore_stateAtom } from "../mpv-core.atoms"
 import { MpvNativePlayer } from "./mpv-native-player"
 
 type Rect = { x: number, y: number, width: number, height: number }
@@ -27,6 +29,12 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
     const holeRef = React.useRef<HTMLDivElement | null>(null)
     const native = player as unknown as MpvNativePlayer | null
 
+    // The mini player floats over the app, and an opaque page background cannot be punched through from a
+    // descendant, so the mpv window stays hidden there until a background clip-path layer exists.
+    const miniPlayer = useAtomValue(mpvCore_stateAtom).miniPlayer
+    const miniPlayerRef = React.useRef(miniPlayer)
+    miniPlayerRef.current = miniPlayer
+
     React.useEffect(() => {
         const element = holeRef.current
         if (!native?.setVideoRect || !element) return
@@ -40,7 +48,8 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
         const tick = () => {
             frame = requestAnimationFrame(tick)
             const bounds = element.getBoundingClientRect()
-            const visible = bounds.width >= MIN_VISIBLE_SIZE && bounds.height >= MIN_VISIBLE_SIZE
+            const visible = !miniPlayerRef.current
+                && bounds.width >= MIN_VISIBLE_SIZE && bounds.height >= MIN_VISIBLE_SIZE
             if (visible !== lastVisible) {
                 lastVisible = visible
                 native.setVideoVisible(visible)
@@ -58,12 +67,12 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
 
     // Flags the document so the app stops painting over the mpv window (see globals.css)
     React.useEffect(() => {
-        if (!native) return
+        if (!native || miniPlayer) return
         document.documentElement.dataset.mpvNativeVideo = "1"
         return () => {
             delete document.documentElement.dataset.mpvNativeVideo
         }
-    }, [native])
+    }, [native, miniPlayer])
 
     return (
         <div ref={ref} style={{ position: "relative", ...style }} {...rest}>

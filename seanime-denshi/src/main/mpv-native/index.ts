@@ -1,4 +1,6 @@
-import { BrowserWindow, ipcMain, screen } from "electron"
+import { app, BrowserWindow, ipcMain, screen } from "electron"
+import * as fs from "node:fs/promises"
+import * as path from "node:path"
 import { log } from "../logging"
 import { MpvNativeBounds, MpvNativeCreateOptions, MpvNativeSession } from "./session"
 
@@ -79,6 +81,19 @@ export function registerMpvNativeIpc(isEnabled: () => boolean): void {
 
     ipcMain.handle("mpvnative:observe-property", async (_: Electron.IpcMainInvokeEvent, playerId: string, name: string) => {
         await requireSession(playerId).observeProperty(name)
+    })
+
+    // There is no frame in the DOM to grab on this backend, so mpv writes the screenshot itself
+    ipcMain.handle("mpvnative:screenshot", async (_: Electron.IpcMainInvokeEvent, playerId: string) => {
+        const session = requireSession(playerId)
+        const file = path.join(app.getPath("temp"), `seanime-mpv-screenshot-${Date.now()}.png`)
+        try {
+            await session.command(["screenshot-to-file", file, "video"])
+            return (await fs.readFile(file)).toString("base64")
+        }
+        finally {
+            await fs.rm(file, { force: true }).catch(() => undefined)
+        }
     })
 
     ipcMain.on("mpvnative:set-video-rect", (_: Electron.IpcMainEvent, playerId: string, rect: MpvNativeBounds) => {

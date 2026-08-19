@@ -310,6 +310,12 @@ export class MpvNativePlayer implements MpvPlayerApi {
         await this.readyPromise
     }
 
+    /** Captures a frame through mpv (there is no DOM frame to read on this backend). Returns base64 PNG. */
+    async captureScreenshot(): Promise<string> {
+        await this.readyPromise
+        return this.bridge.screenshot(this.id)
+    }
+
     /** Positions the mpv window under the UI's video element. Rect is in CSS px relative to the window. */
     setVideoRect(rect: { x: number, y: number, width: number, height: number }): void {
         if (this.destroyed) return

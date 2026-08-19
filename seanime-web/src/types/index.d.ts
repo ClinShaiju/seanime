@@ -99,6 +99,7 @@ declare global {
                 getProperty: (playerId: string, name: string) => Promise<unknown>;
                 setProperty: (playerId: string, name: string, value: unknown) => Promise<void>;
                 observeProperty: (playerId: string, name: string) => Promise<void>;
+                screenshot: (playerId: string) => Promise<string>;
                 setVideoRect: (playerId: string, rect: { x: number; y: number; width: number; height: number }) => void;
                 setVisible: (playerId: string, visible: boolean) => void;
                 onEvent: (listener: (payload: any) => void) => () => void;

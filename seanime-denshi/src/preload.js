@@ -132,6 +132,7 @@ contextBridge.exposeInMainWorld(
             getProperty: (playerId, name) => ipcRenderer.invoke("mpvnative:get-property", playerId, name),
             setProperty: (playerId, name, value) => ipcRenderer.invoke("mpvnative:set-property", playerId, name, value),
             observeProperty: (playerId, name) => ipcRenderer.invoke("mpvnative:observe-property", playerId, name),
+            screenshot: (playerId) => ipcRenderer.invoke("mpvnative:screenshot", playerId),
             setVideoRect: (playerId, rect) => ipcRenderer.send("mpvnative:set-video-rect", playerId, rect),
             setVisible: (playerId, visible) => ipcRenderer.send("mpvnative:set-visible", playerId, visible),
             onEvent: (listener) => {
