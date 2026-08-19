@@ -1830,7 +1830,9 @@ function MpvCorePlayerContent(props: MpvCorePlayerContentProps) {
                 size={state.miniPlayer ? "md" : "full"}
                 side={state.miniPlayer ? "right" : "bottom"}
                 contentClass={cn(
-                    "p-0 m-0 bg-black border-0 overflow-hidden",
+                    "p-0 m-0 border-0 overflow-hidden",
+                    // the native backend draws behind the window, so this must not paint over the hole
+                    (isMpvNativeBackend() && !state.miniPlayer) ? "bg-transparent" : "bg-black",
                     !state.miniPlayer && "h-full",
                 )}
                 allowOutsideInteraction

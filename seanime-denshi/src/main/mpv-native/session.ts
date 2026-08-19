@@ -46,10 +46,11 @@ function windowHandleToWid(window: BrowserWindow): string {
 }
 
 /**
- * One mpv process rendering into its own window, with the Seanime UI window re-parented on top of it.
+ * One mpv process rendering into its own window, kept directly beneath the Seanime UI window.
  *
- * The video window is the parent because Electron always stacks a child window above its parent, and the UI
- * window has to be the one on top. mpv fills the video window and letterboxes the video itself.
+ * Both windows are top-level and are raised as a pair: making the UI window a child of the video window costs
+ * the app its taskbar and alt-tab entry, and did not reliably keep it on top either. mpv fills the video
+ * window and letterboxes the video itself.
  */
 export class MpvNativeSession {
     private readonly ipc = new MpvIpcClient()
@@ -59,7 +60,30 @@ export class MpvNativeSession {
     private nextObserveId = 1
     private destroyed = false
     private videoRect: MpvNativeBounds | null = null
+    private loggedFirstBounds = false
+    private videoHidden = false
     private readonly syncBounds = () => this.applyBounds()
+
+    /** Raises the video window, then the UI window straight above it, so nothing can land between them. */
+    private readonly raisePair = () => {
+        if (this.destroyed || this.videoHidden) return
+        if (this.videoWindow && !this.videoWindow.isDestroyed() && this.videoWindow.isVisible()) {
+            this.videoWindow.moveTop()
+        }
+        if (!this.uiWindow.isDestroyed()) this.uiWindow.moveTop()
+    }
+
+    private readonly handleUiShown = () => {
+        if (this.destroyed || this.videoHidden) return
+        if (this.videoWindow && !this.videoWindow.isDestroyed()) this.videoWindow.showInactive()
+        this.raisePair()
+    }
+
+    /** The video window is independent, so it has to follow the UI window into the tray or the taskbar. */
+    private readonly handleUiHidden = () => {
+        if (this.destroyed) return
+        if (this.videoWindow && !this.videoWindow.isDestroyed()) this.videoWindow.hide()
+    }
 
     private constructor(
         readonly playerId: string,
@@ -100,6 +124,9 @@ export class MpvNativeSession {
             transparent: true,
             backgroundColor: "#00000000",
             title: "Seanime",
+            // Never activatable and never listed: the UI window stays the app's taskbar/alt-tab entry, and
+            // this one can never be raised above it by a click, alt-tab or a taskbar activation.
+            focusable: false,
             skipTaskbar: true,
             webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
         })
@@ -129,18 +156,24 @@ export class MpvNativeSession {
         await this.ipc.connect(pipePath, IPC_CONNECT_TIMEOUT_MS)
         this.ipc.onEvent(event => this.handleEvent(event))
 
-        // The UI window becomes a child so it is composited above the video window and follows it around.
-        // moveTop is required: creating mpv's child HWND leaves the host above the UI window otherwise.
-        this.videoWindow.show()
-        this.uiWindow.setParentWindow(this.videoWindow)
-        this.uiWindow.moveTop()
-        this.uiWindow.focus()
+        // Both windows stay top-level. Making the UI window a child of this one costs the app its taskbar and
+        // alt-tab entry (Windows never lists owned windows) and still did not reliably keep it on top, so the
+        // two are kept adjacent in the z-order by raising them together instead.
+        this.videoWindow.showInactive()
+        this.raisePair()
 
         // A ResizeObserver in the renderer only reports element changes, so window moves are tracked here
         this.uiWindow.on("move", this.syncBounds)
         this.uiWindow.on("resize", this.syncBounds)
         this.uiWindow.on("enter-full-screen", this.syncBounds)
         this.uiWindow.on("leave-full-screen", this.syncBounds)
+
+        // Keep the pair glued: z-order on every activation, visibility on minimize/tray
+        this.uiWindow.on("focus", this.raisePair)
+        this.uiWindow.on("show", this.handleUiShown)
+        this.uiWindow.on("restore", this.handleUiShown)
+        this.uiWindow.on("hide", this.handleUiHidden)
+        this.uiWindow.on("minimize", this.handleUiHidden)
 
         for (const name of options.observe ?? []) await this.observeProperty(name)
     }
@@ -227,6 +260,10 @@ export class MpvNativeSession {
         const rect = this.videoRect
         if (!rect) return
         const content = this.uiWindow.getContentBounds()
+        if (!this.loggedFirstBounds) {
+            this.loggedFirstBounds = true
+            log.info(`[mpv-native] first video rect ${JSON.stringify(rect)} content ${JSON.stringify(content)}`)
+        }
         this.videoWindow.setBounds({
             x: Math.round(content.x + rect.x),
             y: Math.round(content.y + rect.y),
@@ -236,10 +273,11 @@ export class MpvNativeSession {
     }
 
     setVisible(visible: boolean): void {
+        this.videoHidden = !visible
         if (!this.videoWindow || this.videoWindow.isDestroyed()) return
         if (visible) {
             this.videoWindow.showInactive()
-            this.uiWindow.moveTop()
+            this.raisePair()
         }
         else {
             this.videoWindow.hide()
@@ -280,13 +318,16 @@ export class MpvNativeSession {
             })
         }
 
-        // Detach before closing the parent, otherwise closing it takes the UI window down with it
         if (!this.uiWindow.isDestroyed()) {
             this.uiWindow.off("move", this.syncBounds)
             this.uiWindow.off("resize", this.syncBounds)
             this.uiWindow.off("enter-full-screen", this.syncBounds)
             this.uiWindow.off("leave-full-screen", this.syncBounds)
-            this.uiWindow.setParentWindow(null)
+            this.uiWindow.off("focus", this.raisePair)
+            this.uiWindow.off("show", this.handleUiShown)
+            this.uiWindow.off("restore", this.handleUiShown)
+            this.uiWindow.off("hide", this.handleUiHidden)
+            this.uiWindow.off("minimize", this.handleUiHidden)
         }
         if (this.videoWindow && !this.videoWindow.isDestroyed()) this.videoWindow.destroy()
         this.videoWindow = null

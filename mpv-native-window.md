@@ -18,16 +18,21 @@ renderer, and the renderer paints it into a `<video>` fed by a track generator. 
 ## Architecture
 
 ```
-video window (BrowserWindow, transparent, parent)   <- mpv.exe --wid=<HWND> renders here
-   └── main window (BrowserWindow, transparent, child)  <- the whole Seanime UI + player controls
+main window (BrowserWindow, transparent)   <- the whole Seanime UI + player controls, taskbar/alt-tab entry
+video window (BrowserWindow, transparent, focusable: false, skipTaskbar)   <- mpv.exe --wid=<HWND> renders here
 ```
 
-Electron constraints that force this exact shape (verified against the docs):
+Both are top-level and are raised as a pair (`videoWindow.moveTop()` then `uiWindow.moveTop()`) on every
+activation, with the video window following the UI window into the tray/taskbar on hide and minimize.
+
+Electron constraints that force this shape (verified against the docs and in the app):
 
 - `transparent` is **construction-only** — the main window has to be created transparent, so the native backend
   is a Denshi setting that takes effect on restart.
-- A child window is **always above its parent** — therefore the video window is the parent and the main window
-  is re-parented into it (`mainWindow.setParentWindow(videoWindow)`) while a native player exists.
+- **Do not re-parent the UI window into the video window.** A child is always above its parent on paper, which
+  is why it was tried first, but Windows never lists owned windows, so the app vanished from the taskbar and
+  alt-tab — and the video window still managed to end up above the UI after enough clicking. The video window
+  is instead `focusable: false` + `skipTaskbar`, so nothing can activate it.
 - `--wid` pointed at the *main* window does not work: Chromium paints through DirectComposition, so mpv's child
   HWND either covers the UI or detaches (mpv#10189). Hence the separate host window.
 
