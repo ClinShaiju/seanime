@@ -4,7 +4,7 @@
 import { app, BrowserWindow, desktopCapturer, screen } from "electron"
 import { spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
-import { existsSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -35,9 +35,26 @@ function ensureTestClip() {
     return clip
 }
 
+/** Minimal valid mpv user shader, enough to prove the glsl-shaders list actually takes a path. */
+function ensureTestShader() {
+    const shader = path.join(app.getPath("temp"), "seanime-mpv-native-test.glsl")
+    writeFileSync(shader, `//!HOOK MAIN
+//!BIND HOOKED
+//!DESC identity
+vec4 hook() { return HOOKED_tex(HOOKED_pos); }
+`)
+    return shader
+}
+
+const traceFile = process.env.SESSION_TRACE
+function trace(step) {
+    if (traceFile) appendFileSync(traceFile, step + "\n")
+}
+
 const failures = []
 
 function check(name, condition, detail) {
+    trace(`check:${name}`)
     console.log(`${condition ? "PASS" : "FAIL"} ${name}${detail === undefined ? "" : ` (${detail})`}`)
     if (!condition) failures.push(name)
 }
@@ -98,6 +115,32 @@ app.whenReady().then(async () => {
     const relative = await session.getProperty("time-pos")
     check("relative seek applied", typeof relative === "number" && Math.abs(relative - 9) < 0.5, `time-pos=${relative}`)
 
+    trace("shaders:start")
+    // Anime4K goes through these exact commands (mirrored from mpv-prism): clr, then one append per path
+    const shader = ensureTestShader()
+    await session.command(["change-list", "glsl-shaders", "clr", ""])
+    await session.command(["change-list", "glsl-shaders", "append", shader])
+    trace("shaders:appended")
+    const shaderList = await session.getProperty("glsl-shaders")
+    trace(`shaders:list=${JSON.stringify(shaderList)}`)
+    check("shader appended", Array.isArray(shaderList) && shaderList.length === 1, JSON.stringify(shaderList))
+    await session.command(["change-list", "glsl-shaders", "clr", ""])
+    const clearedList = await session.getProperty("glsl-shaders")
+    check("shaders cleared", Array.isArray(clearedList) && clearedList.length === 0, JSON.stringify(clearedList))
+
+    trace("clip:start")
+    // The mini player relies on a clip-path with a fill rule; verify Chromium actually parses it
+    const clipPath = await uiWindow.webContents.executeJavaScript(`(() => {
+        const el = document.createElement("div")
+        el.style.clipPath = "polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, 10px 10px, 10px 20px, 20px 20px, 20px 10px, 10px 10px)"
+        document.body.appendChild(el)
+        const value = getComputedStyle(el).clipPath
+        el.remove()
+        return value
+    })()`)
+    check("clip-path hole supported", typeof clipPath === "string" && clipPath.includes("evenodd"), clipPath)
+
+    trace("capture:start")
     const sources = await desktopCapturer.getSources({
         types: ["screen"],
         thumbnailSize: { width: display.size.width, height: display.size.height },

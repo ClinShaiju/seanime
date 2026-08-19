@@ -2,6 +2,7 @@ import type {
     MpvPrismCommandArgument,
     MpvPrismEventListener,
     MpvPrismEventType,
+    MpvPrismListAction,
     MpvPrismMpvInitOptions,
     MpvPrismNativeEvent,
     MpvPrismPlayer,
@@ -38,6 +39,11 @@ export type MpvPlayerApi = Pick<MpvPrismPlayer,
     | "command"
     | "runCommand"
     | "getTracks"
+    | "setShaders"
+    | "appendShader"
+    | "removeShader"
+    | "clearShaders"
+    | "changeList"
     | "enterPip"
     | "exitPip"
     | "awaitPresentationReady"
@@ -101,9 +107,7 @@ export class MpvNativePlayer implements MpvPlayerApi {
             configFiles: options.config?.files,
             observe: [...new Set([...BASE_OBSERVED_PROPERTIES, ...(options.observe ?? [])])],
         })
-        for (const shader of options.shaders ?? []) {
-            await this.bridge.command(this.id, ["change-list", "glsl-shaders", "append", shader])
-        }
+        if (options.shaders?.length) await this.setShaders(options.shaders)
     }
 
     on<Type extends MpvPrismEventType>(type: Type, listener: MpvPrismEventListener<Type>): () => void {
@@ -288,6 +292,30 @@ export class MpvNativePlayer implements MpvPlayerApi {
 
     async runCommand(name: string, ...args: MpvPrismCommandArgument[]): Promise<void> {
         await this.command([name, ...args])
+    }
+
+    async changeList(name: string, action: MpvPrismListAction, value?: MpvPrismCommandArgument): Promise<void> {
+        // JSON IPC rejects a 3-argument change-list with "invalid parameter" even for operations that ignore
+        // the value (clr), unlike libmpv's C API which mpv-prism talks to, so always send one.
+        await this.command(["change-list", name, action, value ?? ""])
+    }
+
+    /** Replaces the shader chain, matching mpv-prism: clear the list, then append each path in order. */
+    async setShaders(paths: string[]): Promise<void> {
+        await this.clearShaders()
+        for (const path of paths) await this.appendShader(path)
+    }
+
+    async appendShader(path: string): Promise<void> {
+        await this.changeList("glsl-shaders", "append", path)
+    }
+
+    async removeShader(path: string): Promise<void> {
+        await this.changeList("glsl-shaders", "remove", path)
+    }
+
+    async clearShaders(): Promise<void> {
+        await this.changeList("glsl-shaders", "clr")
     }
 
     async getTracks(): Promise<MpvPrismTrack[]> {

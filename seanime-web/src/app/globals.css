@@ -183,8 +183,19 @@ html[data-mpv-native-video] {
     background-color: transparent;
 }
 
-html[data-mpv-native-video] .UI-AppLayout__root {
+html[data-mpv-native-video="fullscreen"] .UI-AppLayout__root {
     visibility: hidden;
+}
+
+/* The mini player floats over the app, so the shell is cut around the video rect instead of hidden */
+html[data-mpv-native-video="mini"] .UI-AppLayout__root {
+    clip-path: polygon(evenodd,
+        0 0, 100% 0, 100% 100%, 0 100%, 0 0,
+        var(--mpv-hole-x1, 0px) var(--mpv-hole-y1, 0px),
+        var(--mpv-hole-x1, 0px) var(--mpv-hole-y2, 0px),
+        var(--mpv-hole-x2, 0px) var(--mpv-hole-y2, 0px),
+        var(--mpv-hole-x2, 0px) var(--mpv-hole-y1, 0px),
+        var(--mpv-hole-x1, 0px) var(--mpv-hole-y1, 0px));
 }
 
 /* denshi route view transitions */

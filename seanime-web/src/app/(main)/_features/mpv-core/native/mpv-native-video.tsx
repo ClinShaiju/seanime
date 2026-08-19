@@ -29,8 +29,8 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
     const holeRef = React.useRef<HTMLDivElement | null>(null)
     const native = player as unknown as MpvNativePlayer | null
 
-    // The mini player floats over the app, and an opaque page background cannot be punched through from a
-    // descendant, so the mpv window stays hidden there until a background clip-path layer exists.
+    // The mini player floats over the app, which keeps painting behind it. A descendant cannot make an
+    // ancestor see-through, so the app shell gets clipped around this rect instead (see globals.css).
     const miniPlayer = useAtomValue(mpvCore_stateAtom).miniPlayer
     const miniPlayerRef = React.useRef(miniPlayer)
     miniPlayerRef.current = miniPlayer
@@ -48,8 +48,7 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
         const tick = () => {
             frame = requestAnimationFrame(tick)
             const bounds = element.getBoundingClientRect()
-            const visible = !miniPlayerRef.current
-                && bounds.width >= MIN_VISIBLE_SIZE && bounds.height >= MIN_VISIBLE_SIZE
+            const visible = bounds.width >= MIN_VISIBLE_SIZE && bounds.height >= MIN_VISIBLE_SIZE
             if (visible !== lastVisible) {
                 lastVisible = visible
                 native.setVideoVisible(visible)
@@ -59,16 +58,28 @@ export const MpvNativeVideo = React.forwardRef<HTMLDivElement, MpvPrismVideoProp
             if (sameRect(lastRect, rect)) return
             lastRect = rect
             native.setVideoRect(rect)
+            // Drives the clip-path hole the app shell is cut with while the mini player is up
+            const style = document.documentElement.style
+            style.setProperty("--mpv-hole-x1", `${bounds.left}px`)
+            style.setProperty("--mpv-hole-y1", `${bounds.top}px`)
+            style.setProperty("--mpv-hole-x2", `${bounds.right}px`)
+            style.setProperty("--mpv-hole-y2", `${bounds.bottom}px`)
         }
 
         frame = requestAnimationFrame(tick)
-        return () => cancelAnimationFrame(frame)
+        return () => {
+            cancelAnimationFrame(frame)
+            for (const name of ["--mpv-hole-x1", "--mpv-hole-y1", "--mpv-hole-x2", "--mpv-hole-y2"]) {
+                document.documentElement.style.removeProperty(name)
+            }
+        }
     }, [native])
 
-    // Flags the document so the app stops painting over the mpv window (see globals.css)
+    // Flags the document so the app stops painting over the mpv window (see globals.css). Fullscreen hides
+    // the app shell outright; the mini player only needs a hole cut where the video sits.
     React.useEffect(() => {
-        if (!native || miniPlayer) return
-        document.documentElement.dataset.mpvNativeVideo = "1"
+        if (!native) return
+        document.documentElement.dataset.mpvNativeVideo = miniPlayer ? "mini" : "fullscreen"
         return () => {
             delete document.documentElement.dataset.mpvNativeVideo
         }
