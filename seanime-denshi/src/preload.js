@@ -125,6 +125,7 @@ contextBridge.exposeInMainWorld(
 
         mpvNative: {
             isSupported: () => ipcRenderer.invoke("mpvnative:supported"),
+            isSupportedSync: () => ipcRenderer.sendSync("mpvnative:supported-sync"),
             getDisplayFrequency: () => ipcRenderer.invoke("mpvnative:display-frequency"),
             create: (playerId, options) => ipcRenderer.invoke("mpvnative:create", playerId, options),
             destroy: (playerId) => ipcRenderer.invoke("mpvnative:destroy", playerId),

@@ -18,6 +18,16 @@ export type MpvNativeBounds = { x: number, y: number, width: number, height: num
 
 const IPC_CONNECT_TIMEOUT_MS = 15_000
 const QUIT_GRACE_MS = 2_000
+/** Verbose mpv output is only forwarded for these; everything else is kept to warnings and errors. */
+const LOGGED_MPV_PREFIXES = ["vo", "ao", "vd", "ad", "cplayer", "video", "audio"]
+
+type MpvLogMessage = { prefix?: string, level?: string, text?: string }
+
+/**
+ * How far the display/video FPS ratio has to sit from a whole number before interpolation earns its cost.
+ * 24 fps on a 143.8 Hz panel is 5.998 - already an even 6-vsync cadence, nothing to smooth.
+ */
+const INTERPOLATION_RATIO_TOLERANCE = 0.05
 
 /** Options the UI must not be able to set: they would break embedding, input routing or the IPC channel. */
 const FORBIDDEN_OPTIONS = new Set([
@@ -62,6 +72,7 @@ export class MpvNativeSession {
     private videoRect: MpvNativeBounds | null = null
     private loggedFirstBounds = false
     private videoHidden = false
+    private ownsInterpolation = false
     private readonly syncBounds = () => this.applyBounds()
 
     /** Raises the video window, then the UI window straight above it, so nothing can land between them. */
@@ -134,7 +145,8 @@ export class MpvNativeSession {
 
         const pipePath = `\\\\.\\pipe\\seanime-mpv-${process.pid}-${this.playerId.replace(/[^a-zA-Z0-9_-]/g, "")}`
         const args = this.buildArgs(pipePath, options)
-        log.info(`[mpv-native] starting ${binary} for ${this.playerId}`)
+        // Full argv, so "was --display-fps-override actually passed?" is answerable from the log alone
+        log.info(`[mpv-native] starting ${binary} for ${this.playerId} :: ${args.join(" ")}`)
 
         this.process = spawn(binary, args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] })
         this.process.stderr?.setEncoding("utf8")
@@ -155,10 +167,30 @@ export class MpvNativeSession {
 
         await this.ipc.connect(pipePath, IPC_CONNECT_TIMEOUT_MS)
         this.ipc.onEvent(event => this.handleEvent(event))
+        // The child's own exit is not the only way a session dies: if the pipe drops while mpv keeps running,
+        // nothing else here notices and every later command just rejects with "not connected" forever.
+        // mpv runs with --no-terminal, so its own diagnosis of a problem (which adapter the GPU context
+        // picked, why display-sync was refused or dropped, audio device fallbacks) went nowhere. Route it
+        // into the Denshi log; the filter below keeps it to the subsystems worth reading.
+        try {
+            await this.ipc.command(["request_log_messages", "v"])
+        }
+        catch (error) {
+            log.warn(`[mpv-native] could not enable mpv log messages: ${String(error)}`)
+        }
+        this.ipc.onClose(() => {
+            if (this.destroyed) return
+            log.warn(`[mpv-native] ipc closed while the session was live (${this.playerId})`)
+            this.onExit("mpv ipc connection closed")
+        })
 
         // Both windows stay top-level. Making the UI window a child of this one costs the app its taskbar and
         // alt-tab entry (Windows never lists owned windows) and still did not reliably keep it on top, so the
         // two are kept adjacent in the z-order by raising them together instead.
+        // Shown immediately, even though no rect has arrived yet: mpv initialises its VO against this window,
+        // and a hidden one leaves it without a display to measure (display-fps reads 0, which silently
+        // disables display-sync). It sits behind the opaque UI window until the player opens, so the
+        // full-size black rectangle this briefly is costs nothing visually.
         this.videoWindow.showInactive()
         this.raisePair()
 
@@ -197,17 +229,17 @@ export class MpvNativeSession {
             "--title=Seanime",
         ]
 
-        // mpv renders into a window we own, so it cannot query the monitor itself. Display sync is worthless
-        // without a real refresh rate, so hand it the rate of whichever display the UI window is on.
-        if (!(options.options && "display-fps-override" in options.options)) {
-            const display = screen.getDisplayMatching(this.uiWindow.getBounds())
-            args.push(`--display-fps-override=${display.displayFrequency || 60}`)
-        }
+        // No --display-fps-override: mpv measures the true refresh rate itself even when embedded through
+        // --wid (measured: 143.988 Hz on a panel Electron reports as 144, matching standalone mpv exactly).
+        // Overriding it forced an integer, and correcting that from mpv's own estimate mid-startup fed a
+        // reading taken during shader compilation back in as fact, which wrecked display sync for the
+        // session. Letting mpv detect it is both simpler and what standalone mpv does.
 
         for (const file of options.configFiles ?? []) {
             if (fs.existsSync(file)) args.push(`--include=${file}`)
         }
 
+        this.ownsInterpolation = !!options.options && "interpolation" in options.options
         for (const [name, value] of Object.entries(options.options ?? {})) {
             if (FORBIDDEN_OPTIONS.has(name)) {
                 log.warn(`[mpv-native] ignoring forbidden option ${name}`)
@@ -219,13 +251,61 @@ export class MpvNativeSession {
         return args
     }
 
+    /**
+     * Interpolation makes mpv render a fresh frame every vsync instead of every source frame - at 4K on a
+     * 144 Hz panel that is ~6x the output-stage work, and with user shaders (Anime4K) it is the difference
+     * between zero dropped frames and hundreds. It only buys anything when the display/video ratio is far
+     * from a whole number (24 fps on 60 Hz), so it is enabled for exactly that case.
+     */
+    private async tuneInterpolation(): Promise<void> {
+        // Untouched when the user's own mpv config sets it: their choice wins.
+        if (this.destroyed || !this.ownsInterpolation) return
+        try {
+            const displayFps = await this.getProperty("display-fps")
+            const videoFps = await this.getProperty("container-fps")
+            if (typeof displayFps !== "number" || typeof videoFps !== "number") return
+            if (!(displayFps > 0) || !(videoFps > 0)) return
+            const ratio = displayFps / videoFps
+            const wanted = Math.abs(ratio - Math.round(ratio)) > INTERPOLATION_RATIO_TOLERANCE
+            await this.setProperty("interpolation", wanted)
+            log.info(`[mpv-native] interpolation ${wanted ? "on" : "off"}: `
+                + `${videoFps.toFixed(3)} fps on ${displayFps.toFixed(3)} Hz = ratio ${ratio.toFixed(3)}`)
+        }
+        catch (error) {
+            log.warn(`[mpv-native] could not tune interpolation: ${String(error)}`)
+        }
+    }
+
     private handleEvent(event: MpvIpcEvent): void {
+        if (event.event === "log-message") {
+            this.forwardLogMessage(event as unknown as MpvLogMessage)
+            return
+        }
+        if (event.event === "file-loaded") void this.tuneInterpolation()
         if (event.event === "property-change" && typeof event.id === "number") {
             // mpv echoes the observe id; restore the name so the renderer sees prism-shaped property events
             const name = this.observedIds.get(event.id)
             if (name) event.name = name
         }
         this.onEvent(event)
+    }
+
+    /** Everything mpv reports as a problem, plus verbose output from the subsystems that explain playback. */
+    private forwardLogMessage(message: MpvLogMessage): void {
+        const text = String(message.text ?? "").trimEnd()
+        if (!text) return
+        const prefix = String(message.prefix ?? "mpv")
+        const level = String(message.level ?? "info")
+        if (level === "error" || level === "fatal") {
+            log.error(`[mpv-native] ${prefix}: ${text}`)
+            return
+        }
+        if (level === "warn") {
+            log.warn(`[mpv-native] ${prefix}: ${text}`)
+            return
+        }
+        if (!LOGGED_MPV_PREFIXES.some(candidate => prefix === candidate || prefix.startsWith(`${candidate}/`))) return
+        log.info(`[mpv-native] ${prefix}: ${text}`)
     }
 
     command(args: unknown[]): Promise<unknown> {
@@ -260,16 +340,25 @@ export class MpvNativeSession {
         const rect = this.videoRect
         if (!rect) return
         const content = this.uiWindow.getContentBounds()
+        // The renderer reports CSS pixels; Electron bounds are DIP. They coincide only at zoom factor 1, so
+        // a user who has ever pressed Ctrl+= would otherwise get a permanently offset, mis-sized video window.
+        const zoom = this.uiWindow.webContents.getZoomFactor() || 1
         if (!this.loggedFirstBounds) {
             this.loggedFirstBounds = true
             log.info(`[mpv-native] first video rect ${JSON.stringify(rect)} content ${JSON.stringify(content)}`)
         }
         this.videoWindow.setBounds({
-            x: Math.round(content.x + rect.x),
-            y: Math.round(content.y + rect.y),
-            width: Math.max(2, Math.round(rect.width)),
-            height: Math.max(2, Math.round(rect.height)),
+            x: Math.round(content.x + rect.x * zoom),
+            y: Math.round(content.y + rect.y * zoom),
+            width: Math.max(2, Math.round(rect.width * zoom)),
+            height: Math.max(2, Math.round(rect.height * zoom)),
         })
+        // The window is created at the UI window's full size and must not be shown at that size: with a warm
+        // player it would sit there, black and full-screen, from app start until the first rect arrives.
+        if (!this.videoHidden && !this.videoWindow.isVisible()) {
+            this.videoWindow.showInactive()
+            this.raisePair()
+        }
     }
 
     setVisible(visible: boolean): void {
@@ -318,6 +407,30 @@ export class MpvNativeSession {
             })
         }
 
+        this.releaseWindows()
+    }
+
+    /**
+     * Synchronous teardown for app quit. `destroy()` waits up to QUIT_GRACE_MS for mpv to exit on its own,
+     * but shutdown force-exits Electron after 500 ms, so the graceful path loses the race and leaves an
+     * orphan mpv.exe holding the audio device. At quit there is nothing to shut down gracefully.
+     */
+    killNow(): void {
+        if (this.destroyed) return
+        this.destroyed = true
+        this.ipc.dispose()
+        const child = this.process
+        this.process = null
+        try {
+            child?.kill()
+        }
+        catch {
+            // already gone
+        }
+        this.releaseWindows()
+    }
+
+    private releaseWindows(): void {
         if (!this.uiWindow.isDestroyed()) {
             this.uiWindow.off("move", this.syncBounds)
             this.uiWindow.off("resize", this.syncBounds)

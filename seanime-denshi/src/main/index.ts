@@ -31,7 +31,7 @@ import {
 } from "./desktop-runtime"
 import { log, setupLogging } from "./logging"
 import { disposeMpvCore, initializeMpvCore, prepareMpvCore, registerMpvCoreIpc } from "./mpv-core"
-import { disposeMpvNative, isMpvNativeSupported, registerMpvNativeIpc } from "./mpv-native"
+import { disposeMpvNativeNow, isMpvNativeSupported, registerMpvNativeIpc } from "./mpv-native"
 import { toDisplayVersion } from "./version"
 
 let stripAnsi: ((str: string) => string) | undefined
@@ -1189,7 +1189,7 @@ function cleanupAndExit() {
 
     saveMainWindowState()
     disposeMpvCore()
-    void disposeMpvNative()
+    disposeMpvNativeNow()
 
     // Clean up cast
     if (__CAST_ENABLED__ && castSender) {

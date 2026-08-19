@@ -9,6 +9,13 @@ type PendingRequest = {
 }
 
 const CONNECT_RETRY_MS = 100
+/**
+ * A reply can be lost for good: the 4 MB line-buffer overflow below drops whatever it was mid-way
+ * through. Without a deadline that request never settles, and since every player method awaits its
+ * command, one lost reply wedges playback permanently. Generous - mpv answers in microseconds when
+ * it is healthy.
+ */
+const COMMAND_TIMEOUT_MS = 20_000
 const MAX_LINE_BYTES = 4 * 1024 * 1024
 
 function delay(ms: number): Promise<void> {
@@ -24,6 +31,7 @@ export class MpvIpcClient {
     private buffer = ""
     private nextRequestId = 1
     private readonly pending = new Map<number, PendingRequest>()
+    private readonly closeListeners = new Set<() => void>()
     private readonly eventListeners = new Set<(event: MpvIpcEvent) => void>()
     private closed = false
 
@@ -79,9 +87,17 @@ export class MpvIpcClient {
 
         const requestId = this.nextRequestId++
         return new Promise((resolve, reject) => {
-            this.pending.set(requestId, { resolve, reject })
+            const timer = setTimeout(() => {
+                this.pending.delete(requestId)
+                reject(new Error(`mpv ipc timed out after ${COMMAND_TIMEOUT_MS}ms: ${JSON.stringify(args[0])}`))
+            }, COMMAND_TIMEOUT_MS)
+            this.pending.set(requestId, {
+                resolve: value => { clearTimeout(timer); resolve(value) },
+                reject: error => { clearTimeout(timer); reject(error) },
+            })
             socket.write(`${JSON.stringify({ command: args, request_id: requestId })}\n`, error => {
                 if (!error) return
+                clearTimeout(timer)
                 this.pending.delete(requestId)
                 reject(error)
             })
@@ -135,16 +151,33 @@ export class MpvIpcClient {
         }
     }
 
+    /** Fired when the pipe dies. mpv may still be running, in which case nothing else notices. */
+    onClose(listener: () => void): () => void {
+        this.closeListeners.add(listener)
+        return () => this.closeListeners.delete(listener)
+    }
+
     private handleClose(): void {
+        const wasConnected = this.socket !== null
         this.socket = null
         const error = new Error("mpv ipc connection closed")
         for (const pending of this.pending.values()) pending.reject(error)
         this.pending.clear()
+        if (!wasConnected || this.closed) return
+        for (const listener of [...this.closeListeners]) {
+            try {
+                listener()
+            }
+            catch (error) {
+                log.warn(`[mpv-native] ipc close listener threw: ${String(error)}`)
+            }
+        }
     }
 
     dispose(): void {
         this.closed = true
         this.eventListeners.clear()
+        this.closeListeners.clear()
         const socket = this.socket
         this.handleClose()
         try {

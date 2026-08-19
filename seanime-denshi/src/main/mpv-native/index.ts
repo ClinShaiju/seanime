@@ -5,6 +5,23 @@ import { log } from "../logging"
 import { MpvNativeBounds, MpvNativeCreateOptions, MpvNativeSession } from "./session"
 
 const sessions = new Map<string, MpvNativeSession>()
+/**
+ * Create and destroy for one player must not interleave. A destroy arriving while a create is still running
+ * finds nothing in `sessions` and no-ops, and the create then registers a session nobody owns — an orphan
+ * mpv process plus its window. React remounts (playerId / warm-epoch changes) hit exactly this window.
+ */
+const operations = new Map<string, Promise<unknown>>()
+
+function serialize<T>(playerId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = operations.get(playerId) ?? Promise.resolve()
+    const result = previous.then(operation, operation)
+    const tail = result.then(() => undefined, () => undefined)
+    operations.set(playerId, tail)
+    void tail.then(() => {
+        if (operations.get(playerId) === tail) operations.delete(playerId)
+    })
+    return result
+}
 
 /** True when the native mpv window backend can run at all. Windows only for now — see mpv-native-window.md. */
 export function isMpvNativeSupported(): boolean {
@@ -36,6 +53,13 @@ function requireSession(playerId: string): MpvNativeSession {
 export function registerMpvNativeIpc(isEnabled: () => boolean): void {
     ipcMain.handle("mpvnative:supported", () => isMpvNativeSupported() && isEnabled())
 
+    // The renderer has to know the backend before it renders the player, and an async probe can lose that
+    // race (the answer would silently fall back to mpv-prism for the whole session). One blocking call at
+    // module load is cheap and removes the race entirely.
+    ipcMain.on("mpvnative:supported-sync", (event: Electron.IpcMainEvent) => {
+        event.returnValue = isMpvNativeSupported() && isEnabled()
+    })
+
     ipcMain.handle("mpvnative:display-frequency", (event: Electron.IpcMainInvokeEvent) => {
         const window = BrowserWindow.fromWebContents(event.sender)
         const bounds = window && !window.isDestroyed() ? window.getBounds() : null
@@ -48,23 +72,25 @@ export function registerMpvNativeIpc(isEnabled: () => boolean): void {
         const window = BrowserWindow.fromWebContents(event.sender)
         if (!window) throw new Error("native mpv playback requires a window")
 
-        await destroySession(playerId)
-        const session = await MpvNativeSession.create(
-            playerId,
-            window,
-            options ?? {},
-            mpvEvent => sendEvent(window, playerId, mpvEvent),
-            reason => {
-                sendEvent(window, playerId, { event: "shutdown", reason })
-                void destroySession(playerId)
-            },
-        )
-        sessions.set(playerId, session)
-        log.info(`[mpv-native] session ready for ${playerId}`)
+        await serialize(playerId, async () => {
+            await destroySession(playerId)
+            const session = await MpvNativeSession.create(
+                playerId,
+                window,
+                options ?? {},
+                mpvEvent => sendEvent(window, playerId, mpvEvent),
+                reason => {
+                    sendEvent(window, playerId, { event: "shutdown", reason })
+                    void destroySession(playerId)
+                },
+            )
+            sessions.set(playerId, session)
+            log.info(`[mpv-native] session ready for ${playerId}`)
+        })
     })
 
     ipcMain.handle("mpvnative:destroy", async (_: Electron.IpcMainInvokeEvent, playerId: string) => {
-        await destroySession(playerId)
+        await serialize(playerId, () => destroySession(playerId))
     })
 
     ipcMain.handle("mpvnative:command", async (_: Electron.IpcMainInvokeEvent, playerId: string, args: unknown[]) => {
@@ -106,5 +132,20 @@ export function registerMpvNativeIpc(isEnabled: () => boolean): void {
 }
 
 export async function disposeMpvNative(): Promise<void> {
-    await Promise.all([...sessions.keys()].map(destroySession))
+    await Promise.all([...sessions.keys()].map(playerId => destroySession(playerId).catch(error => {
+        log.warn(`[mpv-native] failed to destroy ${playerId}: ${String(error)}`)
+    })))
+}
+
+/** Quit path: Electron force-exits 500 ms after shutdown starts, which the graceful destroy cannot win. */
+export function disposeMpvNativeNow(): void {
+    for (const [playerId, session] of [...sessions]) {
+        sessions.delete(playerId)
+        try {
+            session.killNow()
+        }
+        catch (error) {
+            log.warn(`[mpv-native] failed to kill ${playerId}: ${String(error)}`)
+        }
+    }
 }

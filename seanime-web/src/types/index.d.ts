@@ -88,6 +88,7 @@ declare global {
             };
             mpvNative?: {
                 isSupported: () => Promise<boolean>;
+                isSupportedSync: () => boolean;
                 getDisplayFrequency: () => Promise<number>;
                 create: (playerId: string, options: {
                     options?: Record<string, string | number | boolean>;
