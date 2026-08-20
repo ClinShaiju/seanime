@@ -176,6 +176,13 @@ jobs:
           npm ci
           npm run build:main
           npm run sync:mpv-prism -- ${{ matrix.mpv_prism_target }}
+          # The native playback backend spawns a real mpv.exe out of resources/binaries/mpv.
+          # electron-builder only copies binaries/ verbatim, so without this fetch the Windows
+          # installer ships without mpv and every native playback attempt dies with
+          # "mpv binary not found" (v3.10.2.4 shipped that way).
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            npm run fetch:mpv
+          fi
           DIST_ARG=""
           if [ -n "${{ steps.custom-electron.outputs.dir }}" ]; then
             DIST_ARG="-c.electronDist=${{ steps.custom-electron.outputs.dir }}"
