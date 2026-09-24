@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.10.3.1
+
+- ⬆️ Merged upstream v3.10.3 (last added/updated filters, plugin marketplace URL, mediastream direct-play + progress fixes, continuity history kept on completion, torrentstream autoplay fixes). Fork changes retained; mpv-prism stays pinned to 0.1.0/0.1.1 (0.1.9 not adopted).
+
+## v3.10.3
+
+- ⚡️ AniList: Last added, last updated filtering options
+- ⚡️ Plugin APIs: Ability to change marketplace URL
+- 🦺 Continuity: History no longer deleted on episode completion
+- 🦺 VideoCore: Potential fix for disappearing subtitles
+- 🦺 Torrentstream: Fixed wrong torrent from being selected for autoplay #948
+- 🦺 Torrentstream: Fixed VLC mobile compatibility #928
+- 🦺 Plugins: Fixed newEpisodeGridItemMenuItem in torrent streaming
+- 🦺 Mediastream: Direct play and progress fixes #926
+- 🦺 MpvCore: Fixed audio issues on macOS 27
+- ⬆️ Updated dependencies
+
 ## v3.10.2.4
 
 - ✨ Desktop (MpvCore): New native mpv window playback backend — opt-in through the `mpvNativePlayback` Denshi setting, Windows only. mpv-prism renders mpv offscreen and pumps the frames into the page on a fixed 40ms timer, which caps presentation at 25fps and leaves mpv with no real vsync to lock onto, so `video-sync=display-resample` and interpolation could not work at all. The new backend runs mpv as its own window over its JSON IPC with the Seanime UI painted on top, so mpv sees the actual refresh rate (143.988 Hz measured) and both work. Screenshots come from mpv itself, and Anime4K, the mini player, the tray/taskbar behaviour and the stats overlay are all covered; PiP is hidden, since it is a `<video>` element feature. Known limitation: page content can still paint over the mini player video and the transition into it flashes.

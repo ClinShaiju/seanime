@@ -679,7 +679,7 @@ func (s *BaseStream) startSubtitleStreamP(stream Stream, playbackCtx context.Con
 					s.maybeRetrySubtitleStream(stream, playbackCtx, err, offset, resumePos, request)
 				} else {
 					s.logger.Info().Int64("offset", offset).Msg("directstream: Subtitle streaming completed by parser.")
-					subtitleStream.Stop(true)
+					subtitleStream.completed.Store(true)
 				}
 				flushBatch(false)
 				return // Terminate goroutine

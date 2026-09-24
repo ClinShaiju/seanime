@@ -2090,6 +2090,7 @@ declare namespace $app {
      */
     interface AL_AnimeCollection_MediaListCollection_Lists_Entries {
         completedAt?: AL_AnimeCollection_MediaListCollection_Lists_Entries_CompletedAt;
+        createdAt?: number;
         id: number;
         media?: AL_BaseAnime;
         notes?: string;
@@ -2099,6 +2100,7 @@ declare namespace $app {
         score?: number;
         startedAt?: AL_AnimeCollection_MediaListCollection_Lists_Entries_StartedAt;
         status?: AL_MediaListStatus;
+        updatedAt?: number;
     }
 
     /**
@@ -2771,6 +2773,7 @@ declare namespace $app {
      */
     interface AL_MangaCollection_MediaListCollection_Lists_Entries {
         completedAt?: AL_MangaCollection_MediaListCollection_Lists_Entries_CompletedAt;
+        createdAt?: number;
         id: number;
         media?: AL_BaseManga;
         notes?: string;
@@ -2780,6 +2783,7 @@ declare namespace $app {
         score?: number;
         startedAt?: AL_MangaCollection_MediaListCollection_Lists_Entries_StartedAt;
         status?: AL_MediaListStatus;
+        updatedAt?: number;
     }
 
     /**
@@ -3304,6 +3308,8 @@ declare namespace $app {
         repeat?: number;
         startedAt?: string;
         completedAt?: string;
+        createdAt?: number;
+        updatedAt?: number;
     }
 
     /**
@@ -3968,6 +3974,8 @@ declare namespace $app {
         repeat?: number;
         startedAt?: string;
         completedAt?: string;
+        createdAt?: number;
+        updatedAt?: number;
     }
 
     /**
