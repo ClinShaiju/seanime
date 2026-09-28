@@ -192,6 +192,7 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 			mediaYear:       mediaYear,
 		}
 		c := candidates[i]
+		normalizeSeasonEpisodeSpan(t.Name, c.parsed)
 		c.isDualAudio = isDualAudioRelease(c.parsed, c.lowerName)
 		c.isServiceMultiAudio = util.IsServiceMultiAudio(c.parsed.AudioTerm, c.lowerName)
 		c.audioLangs, c.nameLangMatchOK = deriveAudioLanguages(c.parsed, c.flagLanguages, c.isDualAudio)
@@ -256,6 +257,49 @@ func declaredSeasons(c *candidate) []int {
 		}
 	}
 	return out
+}
+
+// seasonEpisodeSpanRe matches a compact "S02-20" / "S2 - 20" span: a season-marked number, then a
+// bare one. A real multi-season span marks both halves ("S1 - S4"), so it never matches here.
+var seasonEpisodeSpanRe = regexp.MustCompile(`(?i)\bs(?:eason)?\s*0*(\d{1,2})\s*[-~]\s*0*(\d{1,4})\b`)
+
+// normalizeSeasonEpisodeSpan repairs habari's reading of "S02-20": it reports BOTH halves as
+// seasons ({2,20}) with no episode, but the shape is season 2, EPISODE 20 - aggregator display
+// names flatten "Season 2 - 20" to it. Left alone, seasonCovered widens {2,20} to the range
+// 2..20, so every sequel request in between (Re:Zero S4E14) matched a season-2 episode, scored as
+// a season-exact hit, and sailed through the season gate; the episode guard stayed blind too,
+// since no episode was parsed at all.
+//
+// Only rewrites when habari itself classified both halves as seasons, which is what makes the
+// second capture safe: a trailing number habari read as anything else (resolution in "S02 - 1080p",
+// a year) is not in SeasonNumber, so the name is left untouched.
+func normalizeSeasonEpisodeSpan(name string, m *habari.Metadata) {
+	if m == nil || len(m.SeasonNumber) < 2 {
+		return
+	}
+	match := seasonEpisodeSpanRe.FindStringSubmatch(name)
+	if match == nil {
+		return
+	}
+	season, okS := util.StringToInt(match[1])
+	episode, okE := util.StringToInt(match[2])
+	if !okS || !okE || !parsedHasNumber(m.SeasonNumber, season) || !parsedHasNumber(m.SeasonNumber, episode) {
+		return
+	}
+	m.SeasonNumber = []string{match[1]}
+	if len(m.EpisodeNumber) == 0 {
+		m.EpisodeNumber = []string{match[2]}
+	}
+}
+
+// parsedHasNumber reports whether a habari string list holds the given number, ignoring zero padding.
+func parsedHasNumber(values []string, n int) bool {
+	for _, v := range values {
+		if parsed, ok := util.StringToInt(v); ok && parsed == n {
+			return true
+		}
+	}
+	return false
 }
 
 // seasonCovered reports whether the requested season is covered by a release's declared seasons.
@@ -896,7 +940,7 @@ func (s *AutoSelect) smartCachedPrioritization(
 // selections computed by an older ladder. Without this a ranking fix only reaches entries that
 // happen to miss the cache, which is exactly the continue-watching titles a user is mid-way
 // through and would notice first.
-const RankerVersion = "2026-08-16"
+const RankerVersion = "2026-09-24"
 
 // bandGated is the band of a release that can't serve the request at all (wrong episode or a
 // declared season other than the requested one). Named because the sort ladders treat it
@@ -1062,7 +1106,15 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 		seasons := declaredSeasons(c)
 		switch {
 		case len(seasons) == 0:
-			if isUnlabeledSeasonPack(c) {
+			if isCuratedBestRelease(t) && len(c.parsed.EpisodeNumber) == 1 {
+				// SeaDex is looked up per AniList entry, so a curated release with no season label
+				// ("Dr. Stone - Stone Wars E02") is already this entry's - never the S1 leak. The
+				// aggregator also flags it seasonPack (its folder is a pack) even when the stream is
+				// one episode, which used to bury it at rank 137/139 behind every labelled release.
+				// Single-episode only: a genuinely unlabeled pack keeps the leak penalty below.
+				c.seasonExact = true
+				bonus += scoreSeasonMatch
+			} else if isUnlabeledSeasonPack(c) {
 				priority -= scoreSeasonAmbiguousBatch
 			}
 		case seasonCovered(seasons, c.expectedSeason, isUnlabeledSeasonPack(c)):

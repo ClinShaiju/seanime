@@ -1270,3 +1270,51 @@ func TestAutoSelect_YearGuard_PremiereYearBatchSurvives(t *testing.T) {
 	assert.Equal(t, completeBatch.Name, ranked[0].Name,
 		"a premiere-year complete batch with a dub must not be buried below a plain correct-year single")
 }
+
+// SeaDex is looked up per entry, and AIOStreams flags its single-episode stream seasonPack (the
+// folder is a pack) with no "S02" in the name. It used to take the unlabeled-S1-batch penalty and
+// sink to the bottom of a sequel's list (Dr. Stone: Stone Wars E02 ranked 137/139).
+func TestAutoSelect_Rank_SeadexBestUnlabeledSeasonNotBuried(t *testing.T) {
+	s := newTestAutoSelect()
+
+	seadex := &hibiketorrent.AnimeTorrent{
+		Name:          "[TB☁️⚡] SeaDex 1080p (Best)\n📁 Dr. Stone - Stone Wars E02\n🎥 BluRay 🎞️ HEVC 🏷️ sam\n🎧 FLAC \n📦 2.53 GB / 30.8 GB",
+		Provider:      "aiostreams-torrent-provider",
+		IsBatch:       true,
+		IsBestRelease: true,
+	}
+	labelled := &hibiketorrent.AnimeTorrent{
+		Name:     "[TB⚡] Debridio Scraper 1080p\n📁 Dr. Stone S02 • E02\n🎥 BluRay 🎞️ HEVC 🏷️ Netaro\n📦 2 GB",
+		Provider: "aiostreams-torrent-provider",
+	}
+	allCached := func(in []*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus {
+		out := make([]*TorrentWithCacheStatus, 0, len(in))
+		for _, tr := range in {
+			out = append(out, &TorrentWithCacheStatus{Torrent: tr, IsCached: true})
+		}
+		return out
+	}
+	profile := &anime.AutoSelectProfile{Resolutions: []string{"1080p"}}
+
+	ranked := s.Rank([]*hibiketorrent.AnimeTorrent{labelled, seadex}, profile, 2, 2, 2021, allCached)
+	assert.Same(t, seadex, ranked[0])
+
+	// A curated release that DECLARES another season must still sink.
+	wrong := &hibiketorrent.AnimeTorrent{
+		Name:          "[TB⚡] SeaDex 1080p (Best)\n📁 Dr. Stone S01 • E02\n🎥 BluRay 🏷️ sam",
+		Provider:      "aiostreams-torrent-provider",
+		IsBestRelease: true,
+	}
+	ranked = s.Rank([]*hibiketorrent.AnimeTorrent{wrong, labelled}, profile, 2, 2, 2021, allCached)
+	assert.Same(t, labelled, ranked[0])
+
+	// An unlabeled curated PACK (no single parsed episode) keeps the S1-leak penalty.
+	pack := &hibiketorrent.AnimeTorrent{
+		Name:          "[TB⚡] SeaDex 1080p (Best)\n📁 Dr. Stone Complete\n🎥 BluRay 🏷️ sam",
+		Provider:      "aiostreams-torrent-provider",
+		IsBatch:       true,
+		IsBestRelease: true,
+	}
+	ranked = s.Rank([]*hibiketorrent.AnimeTorrent{pack, labelled}, profile, 2, 2, 2021, allCached)
+	assert.Same(t, labelled, ranked[0])
+}
