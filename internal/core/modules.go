@@ -382,6 +382,7 @@ func (a *App) initModulesOnce() {
 		Logger:              a.Logger,
 		WSEventManager:      a.adminEvents,
 		Database:            a.Database,
+		FileCacher:          a.FileCacher,
 		MetadataProviderRef: a.MetadataProviderRef,
 		PlatformRef:         a.AnilistPlatformRef,
 		PlaybackManager:     a.PlaybackManager,

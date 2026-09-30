@@ -20,6 +20,7 @@ import { IconButton } from "@/components/ui/button"
 import { Popover } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
 import { logger } from "@/lib/helpers/debug"
+import { useSearchParams } from "@/lib/navigation"
 import { DEBRID_SERVICE } from "@/lib/server/settings"
 import { atom } from "jotai"
 import { useAtom } from "jotai/react"
@@ -50,6 +51,7 @@ export function DebridStreamPage(props: DebridStreamPageProps) {
     } = props
 
     const serverStatus = useServerStatus()
+    const manualRequested = useSearchParams().get("manual") === "1"
 
     // State to manage auto-select setting
     const [autoSelect, setAutoSelect] = React.useState(serverStatus?.debridSettings?.streamAutoSelect ?? false)
@@ -67,14 +69,17 @@ export function DebridStreamPage(props: DebridStreamPageProps) {
     const { data: episodeCollection, isLoading } = useGetAnimeEpisodeCollection(entry.mediaId)
 
     React.useLayoutEffect(() => {
-        // Set auto-select to the server status value
-        if (!episodeCollection?.hasMappingError) {
+        // Set auto-select to the server status value, unless the merged-season view sent the
+        // user here to pick a torrent manually (manual=1).
+        if (manualRequested) {
+            setAutoSelect(false)
+        } else if (!episodeCollection?.hasMappingError) {
             setAutoSelect(serverStatus?.debridSettings?.streamAutoSelect ?? false)
         } else {
             // Fall back to manual select if no download info (no Animap data)
             setAutoSelect(false)
         }
-    }, [serverStatus?.torrentstreamSettings?.autoSelect, episodeCollection])
+    }, [serverStatus?.torrentstreamSettings?.autoSelect, episodeCollection, manualRequested])
 
     // Atoms to control the torrent search drawer state
     const [, setTorrentSearchDrawerOpen] = useAtom(__torrentSearch_selectionAtom)
@@ -122,6 +127,12 @@ export function DebridStreamPage(props: DebridStreamPageProps) {
     const { data: batchHistory } = useGetTorrentstreamBatchHistory(entry?.mediaId, true)
 
     const [usePreviousBatch, setUsePreviousBatch] = React.useState(false)
+
+    // The source this user last streamed for the entry (server-remembered, per user). In manual
+    // mode, keep using it by default: a click runs auto-select, which the server pins to that
+    // pack/group. Turning it off opens the picker, and the new pick becomes the source to keep.
+    const previousSource = batchHistory?.previousSource
+    const [usePreviousSource, setUsePreviousSource] = React.useState(true)
 
     const { selectedDebridService } = useSelectedDebridService()
 
@@ -257,6 +268,13 @@ export function DebridStreamPage(props: DebridStreamPageProps) {
                 }
             }
 
+            if (!started && usePreviousSource && previousSource && !usePreviousBatch) {
+                forcePlaybackMethodFn(forcePlaybackMethod, () => {
+                    handleAutoSelect(entry, episode)
+                })
+                started = true
+            }
+
             if (!started) {
                 setTorrentSearchEpisode(episode.episodeNumber)
                 forcePlaybackMethodFn(forcePlaybackMethod, () => {
@@ -311,7 +329,17 @@ export function DebridStreamPage(props: DebridStreamPageProps) {
                             fieldClass="w-fit flex-none"
                         />
 
-                        {!autoSelect && !usePreviousBatch && (
+                        {!autoSelect && !usePreviousBatch && !!previousSource && (
+                            <Switch
+                                label="Use previous source"
+                                value={usePreviousSource}
+                                onValueChange={setUsePreviousSource}
+                                moreHelp={`Keep streaming from ${previousSource.group ? `[${previousSource.group}]` : "the last chosen release"}. Turn off to pick a new source.`}
+                                fieldClass="w-fit flex-none"
+                            />
+                        )}
+
+                        {!autoSelect && !usePreviousBatch && !(usePreviousSource && previousSource) && (
                             <Switch
                                 label="Auto-select file"
                                 value={autoSelectFile}

@@ -24,6 +24,7 @@ import (
 	"seanime/internal/torrents/autoselect"
 	"seanime/internal/torrents/torrent"
 	"seanime/internal/util"
+	"seanime/internal/util/filecache"
 	"seanime/internal/util/result"
 	"sync"
 	"time"
@@ -77,6 +78,7 @@ type (
 		platformRef         *util.Ref[platform.Platform]
 
 		autoSelect *autoselect.AutoSelect
+		fileCacher *filecache.Cacher // per-user preferred sources (source.go)
 
 		// prewarmLimiter spaces the scheduled continue-watching fan-out so a tick's N_users×N
 		// targets don't hit TorBox simultaneously (the concurrent burst was a prime 429 source).
@@ -106,6 +108,7 @@ type (
 		// SessionEventsFunc resolves the WS event manager scoped to a user (optional).
 		SessionEventsFunc func(userID uint) events.WSEventManagerInterface
 		DummyDebridEnabled bool
+		FileCacher         *filecache.Cacher
 	}
 )
 
@@ -115,6 +118,7 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 		logger:         opts.Logger,
 		wsEventManager: opts.WSEventManager,
 		db:             opts.Database,
+		fileCacher:     opts.FileCacher,
 		settings: &models.DebridSettings{
 			Enabled: false,
 		},

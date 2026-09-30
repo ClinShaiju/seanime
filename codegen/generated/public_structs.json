@@ -29264,6 +29264,17 @@
         "comments": []
       },
       {
+        "name": "autoLogoutMu",
+        "jsonName": "autoLogoutMu",
+        "goType": "sync.Mutex",
+        "typescriptType": "Mutex",
+        "usedTypescriptType": "Mutex",
+        "usedStructName": "sync.Mutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
         "name": "HookManager",
         "jsonName": "HookManager",
         "goType": "hook.Manager",
@@ -35938,6 +35949,19 @@
         "comments": []
       },
       {
+        "name": "fileCacher",
+        "jsonName": "fileCacher",
+        "goType": "filecache.Cacher",
+        "typescriptType": "Filecache_Cacher",
+        "usedTypescriptType": "Filecache_Cacher",
+        "usedStructName": "filecache.Cacher",
+        "required": false,
+        "public": false,
+        "comments": [
+          " per-user preferred sources (source.go)"
+        ]
+      },
+      {
         "name": "prewarmLimiter",
         "jsonName": "prewarmLimiter",
         "goType": "rate.Limiter",
@@ -36086,6 +36110,17 @@
         "goType": "bool",
         "typescriptType": "boolean",
         "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "FileCacher",
+        "jsonName": "FileCacher",
+        "goType": "filecache.Cacher",
+        "typescriptType": "Filecache_Cacher",
+        "usedTypescriptType": "Filecache_Cacher",
+        "usedStructName": "filecache.Cacher",
+        "required": false,
         "public": true,
         "comments": []
       }
@@ -37787,8 +37822,10 @@
       {
         "name": "fileIdCache",
         "jsonName": "fileIdCache",
-        "goType": "map[string]string",
-        "typescriptType": "Record\u003cstring, string\u003e",
+        "goType": "map[string]fileIdEntry",
+        "typescriptType": "Record\u003cstring, fileIdEntry\u003e",
+        "usedTypescriptType": "fileIdEntry",
+        "usedStructName": "torbox.fileIdEntry",
         "required": false,
         "public": false,
         "comments": []
@@ -38407,6 +38444,15 @@
         "comments": [
           " File ID or index"
         ]
+      },
+      {
+        "name": "ExpectedSize",
+        "jsonName": "ExpectedSize",
+        "goType": "int64",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
       },
       {
         "name": "UserAgent",
@@ -45256,6 +45302,17 @@
         "comments": []
       },
       {
+        "name": "bindings",
+        "jsonName": "bindings",
+        "goType": "bindingRegistry",
+        "typescriptType": "ExtensionRepo_bindingRegistry",
+        "usedTypescriptType": "ExtensionRepo_bindingRegistry",
+        "usedStructName": "extension_repo.bindingRegistry",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
         "name": "loader",
         "jsonName": "loader",
         "goType": "goja.Runtime",
@@ -46566,6 +46623,48 @@
         "required": false,
         "public": false,
         "comments": []
+      },
+      {
+        "name": "done",
+        "jsonName": "done",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "inflightMu",
+        "jsonName": "inflightMu",
+        "goType": "sync.Mutex",
+        "typescriptType": "Mutex",
+        "usedTypescriptType": "Mutex",
+        "usedStructName": "sync.Mutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "closed",
+        "jsonName": "closed",
+        "goType": "atomic.Bool",
+        "typescriptType": "Bool",
+        "usedTypescriptType": "Bool",
+        "usedStructName": "atomic.Bool",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "inflight",
+        "jsonName": "inflight",
+        "goType": "sync.WaitGroup",
+        "typescriptType": "WaitGroup",
+        "usedTypescriptType": "WaitGroup",
+        "usedStructName": "sync.WaitGroup",
+        "required": false,
+        "public": false,
+        "comments": []
       }
     ],
     "comments": []
@@ -46700,6 +46799,28 @@
         "typescriptType": "Bool",
         "usedTypescriptType": "Bool",
         "usedStructName": "atomic.Bool",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "inflightMu",
+        "jsonName": "inflightMu",
+        "goType": "sync.Mutex",
+        "typescriptType": "Mutex",
+        "usedTypescriptType": "Mutex",
+        "usedStructName": "sync.Mutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "inflight",
+        "jsonName": "inflight",
+        "goType": "sync.WaitGroup",
+        "typescriptType": "WaitGroup",
+        "usedTypescriptType": "WaitGroup",
+        "usedStructName": "sync.WaitGroup",
         "required": false,
         "public": false,
         "comments": []
@@ -59184,17 +59305,6 @@
         "typescriptType": "Buffer",
         "usedTypescriptType": "Buffer",
         "usedStructName": "bytes.Buffer",
-        "required": false,
-        "public": false,
-        "comments": []
-      },
-      {
-        "name": "mu",
-        "jsonName": "mu",
-        "goType": "sync.Mutex",
-        "typescriptType": "Mutex",
-        "usedTypescriptType": "Mutex",
-        "usedStructName": "sync.Mutex",
         "required": false,
         "public": false,
         "comments": []
@@ -81620,14 +81730,13 @@
       {
         "name": "lastCollectionUpdate",
         "jsonName": "lastCollectionUpdate",
-        "goType": "time.Time",
-        "typescriptType": "string",
-        "usedStructName": "time.Time",
+        "goType": "atomic.Int64",
+        "typescriptType": "Int64",
+        "usedTypescriptType": "Int64",
+        "usedStructName": "atomic.Int64",
         "required": false,
         "public": false,
-        "comments": [
-          " When collections were last fetched"
-        ]
+        "comments": []
       },
       {
         "name": "logoutFunc",
@@ -81647,6 +81756,28 @@
         "typescriptType": "Mutex",
         "usedTypescriptType": "Mutex",
         "usedStructName": "sync.Mutex",
+        "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "stop",
+        "jsonName": "stop",
+        "goType": "",
+        "typescriptType": "any",
+        "required": true,
+        "public": false,
+        "comments": [
+          " closed by Close() to stop the queued-update sync ticker"
+        ]
+      },
+      {
+        "name": "stopOnce",
+        "jsonName": "stopOnce",
+        "goType": "sync.Once",
+        "typescriptType": "Once",
+        "usedTypescriptType": "Once",
+        "usedStructName": "sync.Once",
         "required": false,
         "public": false,
         "comments": []
@@ -83823,6 +83954,15 @@
         "usedTypescriptType": "CancelFunc",
         "usedStructName": "context.CancelFunc",
         "required": false,
+        "public": false,
+        "comments": []
+      },
+      {
+        "name": "sessionGen",
+        "jsonName": "sessionGen",
+        "goType": "uint64",
+        "typescriptType": "number",
+        "required": true,
         "public": false,
         "comments": []
       }
@@ -99536,6 +99676,29 @@
   {
     "filepath": "../internal/torrents/autoselect/comparison.go",
     "filename": "comparison.go",
+    "name": "SeasonEpisode",
+    "formattedName": "SeasonEpisode",
+    "package": "autoselect",
+    "fields": [
+      {
+        "name": "Season",
+        "jsonName": "Season",
+        "goType": "int",
+        "typescriptType": "number",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " SeasonEpisode is an episode in TV-season numbering (TVDB, via animap metadata), which is what a",
+      " release that declares a season counts in: Dr. Stone New World Part 2 episode 1 is S3E12, because",
+      " the TV season spans both cours. Zero value = unknown."
+    ]
+  },
+  {
+    "filepath": "../internal/torrents/autoselect/comparison.go",
+    "filename": "comparison.go",
     "name": "TorrentWithCacheStatus",
     "formattedName": "TorrentWithCacheStatus",
     "package": "autoselect",
@@ -99631,6 +99794,69 @@
     ],
     "comments": [
       " TestSearchProvider is a programmable torrent provider for search tests."
+    ]
+  },
+  {
+    "filepath": "../internal/torrents/autoselect/source.go",
+    "filename": "source.go",
+    "name": "PreferredSource",
+    "formattedName": "PreferredSource",
+    "package": "autoselect",
+    "fields": [
+      {
+        "name": "Name",
+        "jsonName": "name",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": true,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "InfoHash",
+        "jsonName": "infoHash",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Group",
+        "jsonName": "group",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Resolution",
+        "jsonName": "resolution",
+        "goType": "string",
+        "typescriptType": "string",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "Manual",
+        "jsonName": "manual",
+        "goType": "bool",
+        "typescriptType": "boolean",
+        "required": true,
+        "public": true,
+        "comments": []
+      }
+    ],
+    "comments": [
+      " PreferredSource is the release a user last streamed for an entry. Auto-select keeps later",
+      " episodes on it - the same pack, else the same release group at the same resolution - so a",
+      " season doesn't hop between encodes from one episode to the next.",
+      "",
+      " A MANUAL pick outranks everything except the episode/season gates, until the user picks",
+      " manually again. An AUTO pick ranks just under SeaDex: a curated release still wins when one",
+      " exists, and the season then sticks to it."
     ]
   },
   {
@@ -100565,6 +100791,17 @@
         "typescriptType": "HibikeTorrent_BatchEpisodeFiles",
         "usedTypescriptType": "HibikeTorrent_BatchEpisodeFiles",
         "usedStructName": "hibiketorrent.BatchEpisodeFiles",
+        "required": false,
+        "public": true,
+        "comments": []
+      },
+      {
+        "name": "PreviousSource",
+        "jsonName": "previousSource",
+        "goType": "autoselect.PreferredSource",
+        "typescriptType": "PreferredSource",
+        "usedTypescriptType": "PreferredSource",
+        "usedStructName": "autoselect.PreferredSource",
         "required": false,
         "public": true,
         "comments": []

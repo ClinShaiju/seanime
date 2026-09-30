@@ -4,6 +4,7 @@ import (
 	"seanime/internal/database/db_bridge"
 	"seanime/internal/events"
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
+	"seanime/internal/torrents/autoselect"
 	"seanime/internal/util"
 
 	"github.com/5rahim/habari"
@@ -13,6 +14,9 @@ type BatchHistoryResponse struct {
 	Torrent           *hibiketorrent.AnimeTorrent      `json:"torrent"`
 	Metadata          *habari.Metadata                 `json:"metadata"`
 	BatchEpisodeFiles *hibiketorrent.BatchEpisodeFiles `json:"batchEpisodeFiles"`
+	// PreviousSource is the requesting user's remembered debrid source for the entry (set by
+	// the handler), which the manual view offers to keep using.
+	PreviousSource *autoselect.PreferredSource `json:"previousSource,omitempty"`
 }
 
 func (r *Repository) GetBatchHistory(mId int) (ret *BatchHistoryResponse) {
@@ -28,9 +32,9 @@ func (r *Repository) GetBatchHistory(mId int) (ret *BatchHistoryResponse) {
 	metadata := habari.Parse(torrent.Name)
 
 	return &BatchHistoryResponse{
-		torrent,
-		metadata,
-		batchFiles,
+		Torrent:           torrent,
+		Metadata:          metadata,
+		BatchEpisodeFiles: batchFiles,
 	}
 }
 

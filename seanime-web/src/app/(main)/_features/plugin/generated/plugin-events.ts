@@ -1411,9 +1411,7 @@ export type Plugin_Server_MarketplaceGetURLEventPayload = {
     requestId: string
 }
 
-export function usePluginListenMarketplaceGetURLEvent(cb: (payload: Plugin_Server_MarketplaceGetURLEventPayload, extensionId: string) => void,
-    extensionID: string,
-) {
+export function usePluginListenMarketplaceGetURLEvent(cb: (payload: Plugin_Server_MarketplaceGetURLEventPayload, extensionId: string) => void, extensionID: string) {
     return useWebsocketPluginMessageListener<Plugin_Server_MarketplaceGetURLEventPayload>({
         extensionId: extensionID,
         type: PluginServerEvents.MarketplaceGetURL,
@@ -1425,9 +1423,7 @@ export type Plugin_Server_MarketplaceSetURLEventPayload = {
     url: string
 }
 
-export function usePluginListenMarketplaceSetURLEvent(cb: (payload: Plugin_Server_MarketplaceSetURLEventPayload, extensionId: string) => void,
-    extensionID: string,
-) {
+export function usePluginListenMarketplaceSetURLEvent(cb: (payload: Plugin_Server_MarketplaceSetURLEventPayload, extensionId: string) => void, extensionID: string) {
     return useWebsocketPluginMessageListener<Plugin_Server_MarketplaceSetURLEventPayload>({
         extensionId: extensionID,
         type: PluginServerEvents.MarketplaceSetURL,

@@ -66,6 +66,7 @@ func (r *Repository) findBestTorrent(ctx context.Context, provider debrid.Provid
 	// Route auto-select status to this user's client, and suppress it entirely for silent
 	// background resolves (preload/prewarm) so they don't flash the playback pill.
 	ctx = autoselect.WithStatusRouting(ctx, userID, silent)
+	ctx = autoselect.WithPreferredSource(ctx, r.preferredSourceFor(userID, media))
 
 	profile := r.resolveAutoSelectProfile(userID)
 
@@ -240,7 +241,7 @@ func (r *Repository) RankTorrentsForDisplay(
 			mediaYear = *y
 		}
 	}
-	ordered = r.autoSelect.Rank(torrents, profile, expectedSeason, episodeNumber, mediaYear, postSearchSort)
+	ordered = r.autoSelect.Rank(torrents, profile, expectedSeason, episodeNumber, r.autoSelect.ResolveTVEpisode(media.GetID(), episodeNumber), mediaYear, postSearchSort)
 	return ordered, cachedHashes
 }
 

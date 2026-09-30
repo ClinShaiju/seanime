@@ -199,6 +199,11 @@ func (s *StreamManager) hydratePrewarmFromDB(ctx context.Context, opts *StartStr
 	if err := json.Unmarshal([]byte(rec.Data), &p); err != nil || p.StreamUrl == "" {
 		return nil, false
 	}
+	// The row replays whatever another resolve chose; a user who has a source to keep to gets a
+	// fresh resolve unless the recorded pick already continues it.
+	if pref := s.repository.PreferredSource(opts.UserID, opts.MediaId); pref != nil && pref.Match(p.Torrent) == 0 {
+		return nil, false
+	}
 
 	streamUrl := p.StreamUrl
 	urlResolvedAt := p.UrlResolvedAt

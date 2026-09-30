@@ -84,6 +84,11 @@ const (
 	scoreRemux = 100
 )
 
+// SeasonEpisode is an episode in TV-season numbering (TVDB, via animap metadata), which is what a
+// release that declares a season counts in: Dr. Stone New World Part 2 episode 1 is S3E12, because
+// the TV season spans both cours. Zero value = unknown.
+type SeasonEpisode struct{ Season, Episode int }
+
 type candidate struct {
 	torrent        *hibiketorrent.AnimeTorrent
 	parsed         *habari.Metadata
@@ -97,6 +102,7 @@ type candidate struct {
 	isServiceMultiAudio bool
 	expectedSeason  int      // Expected season of the requested media (>=2 for sequels), 0/-1 = unknown
 	expectedEpisode int      // Requested episode number, <=0 = unknown (skip episode scoring)
+	tvEpisode       SeasonEpisode // The requested episode in TV-season numbering, zero = unknown
 	mediaYear       int      // Requested media's start year, 0 = unknown (skip year scoring)
 	// seasonExact is true when the release explicitly declares the requested (sequel) season.
 	// It is a SORT KEY rather than a score, because a score can always be out-weighed by format
@@ -109,6 +115,10 @@ type candidate struct {
 	// is +40) while carrying visibly worse subtitles, so any score-level signal is out-weighed by
 	// the thing it is meant to beat.
 	trustedSource bool
+	// sourceMatch is how closely the release continues the user's preferred source for this
+	// entry (PreferredSource.Match); sourceManual marks that preference as a manual pick.
+	sourceMatch  int
+	sourceManual bool
 	priority      int
 	bonus         int
 	score         int
@@ -126,6 +136,7 @@ func (s *AutoSelect) filterAndSort(
 	profile *anime.AutoSelectProfile,
 	expectedSeason int,
 	expectedEpisode int,
+	tvEpisode SeasonEpisode,
 	mediaYear int,
 	postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus,
 ) []*hibiketorrent.AnimeTorrent {
@@ -137,7 +148,14 @@ func (s *AutoSelect) filterAndSort(
 	}
 
 	// Optimize: Parse metadata once
-	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode, mediaYear)
+	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode, tvEpisode, mediaYear)
+
+	if pref := preferredSourceFrom(ctx); pref != nil {
+		for _, c := range candidates {
+			c.sourceMatch = pref.Match(c.torrent)
+			c.sourceManual = pref.Manual
+		}
+	}
 
 	// Filter
 	candidates = s.filterCandidates(candidates, profile)
@@ -176,7 +194,7 @@ func (s *AutoSelect) filterAndSort(
 }
 
 // buildCandidates parses metadata once for each torrent.
-func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int, expectedEpisode int, mediaYear int) []*candidate {
+func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int, expectedEpisode int, tvEpisode SeasonEpisode, mediaYear int) []*candidate {
 	candidates := make([]*candidate, len(torrents))
 	for i, t := range torrents {
 		candidates[i] = &candidate{
@@ -189,6 +207,7 @@ func buildCandidates(torrents []*hibiketorrent.AnimeTorrent, expectedSeason int,
 			flagLanguages:   util.LanguagesFromFlags(t.Name),
 			expectedSeason:  expectedSeason,
 			expectedEpisode: expectedEpisode,
+			tvEpisode:       tvEpisode,
 			mediaYear:       mediaYear,
 		}
 		c := candidates[i]
@@ -237,6 +256,24 @@ func episodeCovered(parsedEpisodes []string, requested int) bool {
 		return true
 	}
 	return requested >= lo && requested <= hi
+}
+
+// episodeMatches reports whether the release can contain the requested episode. A release that
+// declares the requested episode's TV season counts in that season's numbering, so for a later cour
+// its number is the TV one: "Dr. Stone - New World S03E01" is cour 1, not Part 2 episode 1 (= S3E12).
+// Checking it against the relative number is how cour-1 releases won every Part 2 request. Releases
+// without that season label may use either numbering ("New World - 12" and "New World Part 2 - 01"
+// are both Part 2 episode 1).
+func (c *candidate) episodeMatches() bool {
+	eps := c.parsed.EpisodeNumber
+	tv := c.tvEpisode
+	if tv.Season <= 0 || tv.Episode <= 0 || tv.Episode == c.expectedEpisode {
+		return episodeCovered(eps, c.expectedEpisode)
+	}
+	if slices.Contains(declaredSeasons(c), tv.Season) {
+		return episodeCovered(eps, tv.Episode)
+	}
+	return episodeCovered(eps, c.expectedEpisode) || episodeCovered(eps, tv.Episode)
 }
 
 // declaredSeasons returns the season numbers a release name declares. It prefers habari's parse
@@ -341,6 +378,7 @@ func (s *AutoSelect) Rank(
 	profile *anime.AutoSelectProfile,
 	expectedSeason int,
 	expectedEpisode int,
+	tvEpisode SeasonEpisode,
 	mediaYear int,
 	postSearchSort func([]*hibiketorrent.AnimeTorrent) []*TorrentWithCacheStatus,
 ) []*hibiketorrent.AnimeTorrent {
@@ -348,7 +386,7 @@ func (s *AutoSelect) Rank(
 		return torrents
 	}
 
-	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode, mediaYear)
+	candidates := buildCandidates(torrents, expectedSeason, expectedEpisode, tvEpisode, mediaYear)
 	s.sortCandidates(candidates, profile)
 
 	sorted := make([]*hibiketorrent.AnimeTorrent, len(candidates))
@@ -360,7 +398,7 @@ func (s *AutoSelect) Rank(
 
 // filter is a shim for testing or legacy usage.
 func (s *AutoSelect) filter(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile) []*hibiketorrent.AnimeTorrent {
-	candidates := s.filterCandidates(buildCandidates(torrents, 0, 0, 0), profile)
+	candidates := s.filterCandidates(buildCandidates(torrents, 0, 0, SeasonEpisode{}, 0), profile)
 	ret := make([]*hibiketorrent.AnimeTorrent, len(candidates))
 	for i, c := range candidates {
 		ret[i] = c.torrent
@@ -370,7 +408,7 @@ func (s *AutoSelect) filter(torrents []*hibiketorrent.AnimeTorrent, profile *ani
 
 // sort is a shim for testing or legacy usage.
 func (s *AutoSelect) sort(torrents []*hibiketorrent.AnimeTorrent, profile *anime.AutoSelectProfile) {
-	candidates := buildCandidates(torrents, 0, 0, 0)
+	candidates := buildCandidates(torrents, 0, 0, SeasonEpisode{}, 0)
 	s.sortCandidates(candidates, profile)
 	for i, c := range candidates {
 		torrents[i] = c.torrent
@@ -860,6 +898,8 @@ func (s *AutoSelect) smartCachedPrioritization(
 		seasonExact bool
 		best        bool
 		trusted     bool
+		manualStick int // continues a manually picked source (PreferredSource.Match)
+		autoStick   int // continues an auto-picked source
 	}
 	items := make([]rankItem, 0, len(torrents))
 	for _, tws := range postSearchSort(torrents) {
@@ -871,6 +911,11 @@ func (s *AutoSelect) smartCachedPrioritization(
 			it.best = isCuratedBestRelease(c.torrent) &&
 				(profile == nil || profile.BestReleasePreference != anime.AutoSelectPreferenceAvoid)
 			it.trusted = c.trustedSource
+			if c.sourceManual {
+				it.manualStick = c.sourceMatch
+			} else {
+				it.autoStick = c.sourceMatch
+			}
 		}
 		items = append(items, it)
 	}
@@ -890,6 +935,11 @@ func (s *AutoSelect) smartCachedPrioritization(
 		if a.seasonExact != b.seasonExact {
 			return boolFirst(a.seasonExact)
 		}
+		// The user picked this source by hand: keep later episodes on it (same pack, else same
+		// group) over every preference below until they pick manually again.
+		if a.manualStick != b.manualStick {
+			return cmp.Compare(b.manualStick, a.manualStick)
+		}
 		if ba != bb {
 			return cmp.Compare(bb, ba)
 		}
@@ -903,6 +953,11 @@ func (s *AutoSelect) smartCachedPrioritization(
 		// puts SeaDex on top of the Japanese tier for shows with no English dub.
 		if a.best != b.best {
 			return boolFirst(a.best)
+		}
+		// Season consistency: stay on the pack/group auto-select already chose for this entry.
+		// Below SeaDex, so a curated release still wins (and becomes the source to keep).
+		if a.autoStick != b.autoStick {
+			return cmp.Compare(b.autoStick, a.autoStick)
 		}
 		// Retail source (Crunchyroll subs / disc) beats a re-encode of it, cached or not — the same
 		// quality-over-cache rule one rung further down. This is the only rung that sees subtitle
@@ -929,7 +984,7 @@ func (s *AutoSelect) smartCachedPrioritization(
 	for i, it := range items {
 		result = append(result, it.torrent)
 		if i < 3 {
-			s.logger.Debug().Str("name", it.torrent.Name).Bool("cached", it.cached).Bool("trusted", it.trusted).Int("score", it.score).Str("provider", it.torrent.Provider).Msg("autoselect: Top candidates")
+			s.logger.Debug().Str("name", it.torrent.Name).Bool("cached", it.cached).Bool("trusted", it.trusted).Int("stick", it.manualStick+it.autoStick).Int("score", it.score).Str("provider", it.torrent.Provider).Msg("autoselect: Top candidates")
 		}
 	}
 	return result
@@ -940,7 +995,7 @@ func (s *AutoSelect) smartCachedPrioritization(
 // selections computed by an older ladder. Without this a ranking fix only reaches entries that
 // happen to miss the cache, which is exactly the continue-watching titles a user is mid-way
 // through and would notice first.
-const RankerVersion = "2026-09-24"
+const RankerVersion = "2026-09-30"
 
 // bandGated is the band of a release that can't serve the request at all (wrong episode or a
 // declared season other than the requested one). Named because the sort ladders treat it
@@ -1128,7 +1183,7 @@ func (s *AutoSelect) calculateScoreBreakdown(c *candidate, profile *anime.AutoSe
 	// Episode relevance: bury results whose declared episodes can't include the requested one
 	// (e.g. an E01-07 batch for an episode-10 request). Full-season batches / unnumbered
 	// releases have no parsed episodes and are left untouched.
-	if c.expectedEpisode > 0 && !episodeCovered(parsed.EpisodeNumber, c.expectedEpisode) {
+	if c.expectedEpisode > 0 && !c.episodeMatches() {
 		priority -= scoreEpisodeMismatch
 	}
 

@@ -2043,6 +2043,27 @@ export type AutoSelectCandidate = {
 }
 
 /**
+ * - Filepath: internal/torrents/autoselect/source.go
+ * - Filename: source.go
+ * - Package: autoselect
+ * @description
+ *  PreferredSource is the release a user last streamed for an entry. Auto-select keeps later
+ *  episodes on it - the same pack, else the same release group at the same resolution - so a
+ *  season doesn't hop between encodes from one episode to the next.
+ *  
+ *  A MANUAL pick outranks everything except the episode/season gates, until the user picks
+ *  manually again. An AUTO pick ranks just under SeaDex: a curated release still wins when one
+ *  exists, and the season then sticks to it.
+ */
+export type PreferredSource = {
+    name: string
+    infoHash?: string
+    group?: string
+    resolution?: string
+    manual: boolean
+}
+
+/**
  * - Filepath: internal/torrents/autoselect/autoselect.go
  * - Filename: autoselect.go
  * - Package: autoselect
@@ -5838,6 +5859,7 @@ export type Torrentstream_BatchHistoryResponse = {
     torrent?: HibikeTorrent_AnimeTorrent
     metadata?: Habari_Metadata
     batchEpisodeFiles?: HibikeTorrent_BatchEpisodeFiles
+    previousSource?: PreferredSource
 }
 
 /**

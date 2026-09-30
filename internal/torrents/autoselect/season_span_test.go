@@ -31,7 +31,7 @@ func TestSeasonEpisodeSpanParse(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		c := buildCandidates([]*hibiketorrent.AnimeTorrent{{Name: tc.name}}, tc.season, tc.episode, 0)[0]
+		c := buildCandidates([]*hibiketorrent.AnimeTorrent{{Name: tc.name}}, tc.season, tc.episode, SeasonEpisode{}, 0)[0]
 
 		if got := declaredSeasons(c); !equalInts(got, tc.wantSeasons) {
 			t.Errorf("%q: declaredSeasons = %v, want %v", tc.name, got, tc.wantSeasons)

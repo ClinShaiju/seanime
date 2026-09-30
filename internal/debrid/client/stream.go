@@ -999,6 +999,7 @@ func (s *StreamManager) startStream(ctx context.Context, opts *StartStreamOption
 		go func() {
 			defer util.HandlePanicInModuleThen("debridstream/AddBatchHistory", func() {})
 
+			s.repository.rememberSource(opts.UserID, media.GetID(), selectedTorrent, !opts.AutoSelect)
 			if selectedTorrent.IsBatch {
 				_ = db_bridge.InsertTorrentstreamHistory(s.repository.db, media.GetID(), selectedTorrent, opts.BatchEpisodeFiles)
 
@@ -1760,6 +1761,7 @@ func (s *StreamManager) playPreloadedStream(ctx context.Context, opts *StartStre
 
 	go func() {
 		defer util.HandlePanicInModuleThen("debridstream/AddBatchHistory", func() {})
+		s.repository.rememberSource(opts.UserID, media.GetID(), cached.torrent, !opts.AutoSelect)
 		if cached.torrent != nil && cached.torrent.IsBatch {
 			_ = db_bridge.InsertTorrentstreamHistory(s.repository.db, media.GetID(), cached.torrent, opts.BatchEpisodeFiles)
 			s.ev(opts).SendEvent(events.InvalidateQueries, []string{events.GetTorrentstreamBatchHistoryEndpoint})

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.10.3.2
+
+- ✨ Debrid: Streams keep to their source. The pack / release group you last streamed for an entry is remembered per user, and later episodes stay on it instead of hopping between encodes. A manual pick holds over everything but the episode and season checks until you pick manually again; an auto-selected one yields only to SeaDex. A later cour of the same TV season inherits the previous cour's source. In manual mode, a new "Use previous source" switch (on by default) plays the next episode from it without opening the picker; deleting the saved history resets it.
+- 🦺 Auto-select: Split-cour seasons no longer play the first cour's episodes. Releases that name a season are now checked against TV-season numbering (Dr. Stone New World Part 2 episode 1 = S3E12), so a cached "S03E01" stopped winning every Part 2 episode; season-less releases still match either numbering.
+- 🦺 Entry page: The Auto-select switch is back on merged multi-cour seasons, and turning it off opens the cour's page for manual selection.
+
 ## v3.10.3.1
 
 - ⬆️ Merged upstream v3.10.3 (last added/updated filters, plugin marketplace URL, mediastream direct-play + progress fixes, continuity history kept on completion, torrentstream autoplay fixes). Fork changes retained; mpv-prism stays pinned to 0.1.0/0.1.1 (0.1.9 not adopted).

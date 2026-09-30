@@ -14,6 +14,7 @@ import (
 	itorrent "seanime/internal/torrents/torrent"
 	"seanime/internal/util"
 	"seanime/internal/util/result"
+	"strconv"
 	"sync"
 
 	"github.com/anacrolix/torrent"
@@ -248,7 +249,8 @@ func (s *AutoSelect) FindBestTorrent(
 			mediaYear = *y
 		}
 	}
-	torrents = s.filterAndSort(ctx, torrents, profile, expectedSeason, episodeNumber, mediaYear, postSearchSort)
+	tvEpisode := s.ResolveTVEpisode(media.GetID(), episodeNumber)
+	torrents = s.filterAndSort(ctx, torrents, profile, expectedSeason, episodeNumber, tvEpisode, mediaYear, postSearchSort)
 
 	// 3. Select file (iterate top 3)
 	s.log("Selecting best file from top candidates")
@@ -300,6 +302,27 @@ func (s *AutoSelect) ResolveExpectedSeason(mediaId int, titleSeason int) int {
 		}
 	}
 	return titleSeason
+}
+
+// ResolveTVEpisode maps an entry's episode to TV-season numbering using the same animap metadata as
+// ResolveExpectedSeason (Dr. Stone New World Part 2 episode 1 -> S3E12). Zero value when unmapped.
+func (s *AutoSelect) ResolveTVEpisode(mediaId int, episodeNumber int) SeasonEpisode {
+	if s.metadataProvider == nil {
+		return SeasonEpisode{}
+	}
+	p := s.metadataProvider.Get()
+	if p == nil {
+		return SeasonEpisode{}
+	}
+	md, err := p.GetAnimeMetadata(metadata.AnilistPlatform, mediaId)
+	if err != nil || md == nil {
+		return SeasonEpisode{}
+	}
+	ep, ok := md.FindEpisode(strconv.Itoa(episodeNumber))
+	if !ok || ep.SeasonNumber <= 0 || ep.EpisodeNumber <= 0 {
+		return SeasonEpisode{}
+	}
+	return SeasonEpisode{Season: ep.SeasonNumber, Episode: ep.EpisodeNumber}
 }
 
 func (s *AutoSelect) log(msg string) {

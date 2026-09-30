@@ -236,6 +236,9 @@ func (h *Handler) HandleGetTorrentstreamBatchHistory(c echo.Context) error {
 	}
 
 	ret := h.App.TorrentstreamRepository.GetBatchHistory(b.MediaID)
+	if h.App.DebridClientRepository != nil {
+		ret.PreviousSource = h.App.DebridClientRepository.PreferredSource(h.dataUserID(c), b.MediaID)
+	}
 	return h.RespondWithData(c, ret)
 }
 
@@ -256,6 +259,9 @@ func (h *Handler) HandleDeleteTorrentstreamBatchHistory(c echo.Context) error {
 
 	if err := h.App.TorrentstreamRepository.DeleteBatchHistory(b.MediaID); err != nil {
 		return h.RespondWithError(c, err)
+	}
+	if h.App.DebridClientRepository != nil {
+		h.App.DebridClientRepository.ForgetPreferredSource(h.dataUserID(c), b.MediaID)
 	}
 
 	return h.RespondWithData(c, true)

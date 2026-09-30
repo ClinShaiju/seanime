@@ -5,14 +5,17 @@ import { EpisodeGridItem } from "@/app/(main)/_features/anime/_components/episod
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { EpisodeListPaginatedGrid } from "@/app/(main)/entry/_components/episode-list-grid"
 import { useHandleStartDebridStream } from "@/app/(main)/entry/_containers/debrid-stream/_lib/handle-debrid-stream"
+import { __debridStream_currentSessionAutoSelectAtom } from "@/app/(main)/entry/_containers/debrid-stream/debrid-stream-page"
 import { useHandlePlayMedia } from "@/app/(main)/entry/_lib/handle-play-media"
 import { episodeCardCarouselItemClass } from "@/components/shared/classnames"
 import { AppLayoutStack } from "@/components/ui/app-layout"
 import { Carousel, CarouselContent, CarouselDotButtons, CarouselItem } from "@/components/ui/carousel"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
+import { Switch } from "@/components/ui/switch"
 import { useRouter } from "@/lib/navigation"
 import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { atom } from "jotai"
+import { useSetAtom } from "jotai/react"
 import React from "react"
 
 // Selected merged season on the entry page (null = normal single-entry view).
@@ -31,6 +34,16 @@ export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: nu
     const { data, isLoading } = useGetMergedSeason(rootId, seasonNumber, tmdb)
     const { handleAutoSelectStream } = useHandleStartDebridStream()
     const { playMediaFile } = useHandlePlayMedia()
+
+    // The merged view replaces DebridStreamPage, which owns the Auto-select switch, so it
+    // carries its own (same default, same session atom) — otherwise cour seasons had no way
+    // to pick a torrent manually.
+    const debridEnabled = !!serverStatus?.debridSettings?.enabled
+    const [autoSelect, setAutoSelect] = React.useState(serverStatus?.debridSettings?.streamAutoSelect ?? false)
+    const setCurrentSessionAutoSelect = useSetAtom(__debridStream_currentSessionAutoSelectAtom)
+    React.useEffect(() => {
+        setCurrentSessionAutoSelect(autoSelect)
+    }, [autoSelect])
 
     // Per-cour AniList progress, used to compute per-episode watched status.
     const courProgress = React.useMemo(() => {
@@ -55,8 +68,8 @@ export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: nu
 
     // Open the episode's source cour (fallback for playback methods we don't start in
     // place). ?single=1 suppresses auto-merge so the cour shows its own list.
-    const openCour = (ep: Anime_Episode) => {
-        if (ep.baseAnime?.id) router.push(`/entry?id=${ep.baseAnime.id}&single=1`)
+    const openCour = (ep: Anime_Episode, manual = false) => {
+        if (ep.baseAnime?.id) router.push(`/entry?id=${ep.baseAnime.id}&single=1${manual ? "&manual=1" : ""}`)
     }
 
     // Play a merged episode in place, routed to its source cour. AniList progress and
@@ -65,12 +78,17 @@ export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: nu
         const courMediaId = ep.baseAnime?.id
         if (!courMediaId) return
         // Debrid (auto-select): start the stream for the cour via the global overlay/player.
-        if (serverStatus?.debridSettings?.enabled && serverStatus?.debridSettings?.streamAutoSelect && ep.aniDBEpisode) {
+        if (debridEnabled && autoSelect && ep.aniDBEpisode) {
             handleAutoSelectStream({
                 mediaId: courMediaId,
                 episodeNumber: ep.episodeNumber,
                 aniDBEpisode: ep.aniDBEpisode,
             })
+            return
+        }
+        // Debrid, manual: torrent selection is tied to the cour's own page.
+        if (debridEnabled && !ep.localFile?.path) {
+            openCour(ep, true)
             return
         }
         // Local library file: play directly.
@@ -92,6 +110,15 @@ export function MergedSeasonSection({ rootId, seasonNumber, tmdb }: { rootId: nu
                 <span className="text-[--muted] font-medium">{data?.totalProgress ?? 0} / {data?.totalEpisodes ?? episodes.length}</span>
                 {(data?.cours?.length ?? 0) > 1 && <span className="text-xs text-[--muted]">({data?.cours?.length} cours merged)</span>}
             </div>
+
+            {debridEnabled && (
+                <Switch
+                    label="Auto-select"
+                    value={autoSelect}
+                    onValueChange={setAutoSelect}
+                    fieldClass="w-fit flex-none"
+                />
+            )}
 
             {toWatch.length > 0 && (
                 <Carousel className="w-full max-w-full" gap="md" opts={{ align: "start" }} data-merged-season-carousel>
