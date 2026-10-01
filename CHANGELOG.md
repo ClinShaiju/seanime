@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.10.3.4
+
+- 🦺 Playback: Fixed streams hanging forever on "Loading preloaded stream / Preparing video" after a server restart. Reloading the large franchise cache used a JSON stream decoder that takes minutes on big files while holding the lock every cache shares, so the watch-history lookup that releases the player never finished. Cache files are now read and decoded in one pass (50 MB: minutes → 0.3 s) and written atomically, so a restart mid-write can't leave a truncated cache.
+- 🔍 Direct stream: logs the client and player target each start is signaled to, and warns when a client can't host MpvCore.
+
 ## v3.10.3.3
 
 - 🦺 Auto-select: Split-cour packs now play the right cour's file. A full-season pack has both cour 1's "05" and the continuous "16" claiming Part 2 episode 5, and file order decided which one played (Dr. Stone New World Part 2 played Part 1 episodes, inconsistently). Files are now chosen by cour numbering: the season's continuous number first (cour 2 episode 1 of two 12-episode cours = 13), then the cour's own release ("Part 2 - 01"), and a pack that can't tell the cours apart is skipped instead of guessed. Applies to auto-select, manual "Use previous source" and torrent streaming.

@@ -96,7 +96,10 @@ func (m *Manager) BeginOpen(clientId string, step string, onCancel func()) bool 
 // MpvCore would mount a player with no prism bridge and never start.
 func (m *Manager) targetForClient(clientId string) PlaybackTarget {
 	target := m.GetPlaybackTarget()
-	if target == PlaybackTargetMpvCore && m.wsEventManager.GetClientPlatform(clientId) != "denshi" {
+	if platform := m.wsEventManager.GetClientPlatform(clientId); target == PlaybackTargetMpvCore && platform != "denshi" {
+		// An id with no live socket also lands here (platform ""), and the signal then goes to a
+		// player that isn't mounted — log it, it's otherwise invisible.
+		m.Logger.Warn().Str("clientId", clientId).Str("platform", platform).Msg("directstream: Client can't host MpvCore, signaling VideoCore")
 		return PlaybackTargetVideoCore
 	}
 	return target
@@ -269,7 +272,7 @@ func (m *Manager) updateOpenStepLocked(clientId string, step string) bool {
 	}
 	m.openSignaled = true
 
-	m.Logger.Debug().Msgf("directstream: Signaling native player that a new stream is starting")
+	m.Logger.Debug().Str("clientId", clientId).Str("target", string(m.preparingTarget)).Msgf("directstream: Signaling native player that a new stream is starting")
 	m.openAndAwait(clientId, step, m.preparingTarget)
 	return true
 }
@@ -469,7 +472,7 @@ func (m *Manager) loadStream(stream Stream) {
 	//	parser.SetLoggerEnabled(false)
 	//}
 
-	m.Logger.Debug().Msgf("directstream: Signaling player that stream is ready")
+	m.Logger.Debug().Str("clientId", stream.ClientId()).Str("target", string(target)).Msgf("directstream: Signaling player that stream is ready")
 	if m.mediacoreCoordinator != nil {
 		m.mediacoreCoordinator.Watch(player.Target(target), stream.ClientId(), playbackInfo)
 	}

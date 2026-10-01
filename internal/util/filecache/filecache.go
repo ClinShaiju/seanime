@@ -354,16 +354,19 @@ func (c *Cacher) RemovePerm(bucketName string) error {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func (cs *CacheStore) loadFromFile() error {
-	file, err := os.Open(cs.filePath)
+	// ReadFile + Unmarshal, not json.NewDecoder: goccy's stream decoder is pathological on large
+	// stores (the 50 MB franchise-group cache: Unmarshal 0.3s, Decode >60s on a desktop, minutes on
+	// the Pi). This runs under the Cacher-wide lock, so a slow load froze every bucket — continuity
+	// included, which stalled every playback start at the Watch signal.
+	b, err := os.ReadFile(cs.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // File does not exist, so nothing to load
 		}
 		return fmt.Errorf("filecache: failed to open cache file: %w", err)
 	}
-	defer file.Close()
 
-	if err := json.NewDecoder(file).Decode(&cs.data); err != nil {
+	if err := json.Unmarshal(b, &cs.data); err != nil {
 		// If decode fails (empty or corrupted file), initialize with empty data
 		cs.data = make(map[string]*cacheItem)
 		return nil
@@ -373,14 +376,17 @@ func (cs *CacheStore) loadFromFile() error {
 }
 
 func (cs *CacheStore) saveToFile() error {
-	file, err := os.Create(cs.filePath)
+	b, err := json.Marshal(cs.data)
 	if err != nil {
-		return fmt.Errorf("filecache: failed to create cache file: %w", err)
-	}
-	defer file.Close()
-
-	if err := json.NewEncoder(file).Encode(cs.data); err != nil {
 		return fmt.Errorf("filecache: failed to encode cache data: %w", err)
+	}
+	// Write-then-rename so a restart mid-write never leaves a truncated store behind.
+	tmp := cs.filePath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return fmt.Errorf("filecache: failed to write cache file: %w", err)
+	}
+	if err := os.Rename(tmp, cs.filePath); err != nil {
+		return fmt.Errorf("filecache: failed to replace cache file: %w", err)
 	}
 	return nil
 }
