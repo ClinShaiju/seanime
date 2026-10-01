@@ -30,6 +30,92 @@ func infoHashFromMagnet(magnet string) string {
 	return h
 }
 
+// ResolveCour places media in its season (see torrentanalyzer.Cour). The earlier cours are the
+// chain of TV prequels that resolve to the same season — the season source auto-select ranks
+// with — so Dr. Stone New World Part 2 sits after New World (both S3) and the walk stops at
+// Stone Wars (S2). TV-season numbering from animap stands in when the chain finds nothing.
+func (s *AutoSelect) ResolveCour(ctx context.Context, media *anilist.CompleteAnime) torrentanalyzer.Cour {
+	c := torrentanalyzer.Cour{Season: s.ResolveExpectedSeason(media.GetID(), media.GetPossibleSeasonNumber()), Index: 1}
+	if c.Season > 0 && s.platform != nil && !s.platform.IsAbsent() {
+		cur := media
+		for i := 0; i < 8 && cur != nil; i++ {
+			prev := tvPrequel(cur)
+			if prev == nil || s.ResolveExpectedSeason(prev.GetID(), prev.GetPossibleSeasonNumber()) != c.Season {
+				break
+			}
+			c.Index++
+			if eps := prev.GetTotalEpisodeCount(); eps > 0 && c.Offset >= 0 {
+				c.Offset += eps
+			} else {
+				c.Offset = -1 // a cour of unknown length: the continuous number is unknowable
+			}
+			next, err := s.platform.Get().GetAnimeWithRelations(ctx, prev.GetID())
+			if err != nil {
+				break
+			}
+			cur = next
+		}
+		if c.Offset < 0 {
+			c.Offset = 0
+		}
+	}
+	if c.Offset == 0 {
+		if tv := s.ResolveTVEpisode(media.GetID(), 1); tv.Episode > 1 {
+			c.Offset = tv.Episode - 1
+		}
+	}
+	return c
+}
+
+func tvPrequel(media *anilist.CompleteAnime) *anilist.BaseAnime {
+	for _, edge := range media.GetRelations().GetEdges() {
+		if edge == nil || edge.RelationType == nil || *edge.RelationType != anilist.MediaRelationPrequel || edge.Node == nil || edge.Node.Format == nil {
+			continue
+		}
+		switch *edge.Node.Format {
+		case anilist.MediaFormatTv, anilist.MediaFormatTvShort, anilist.MediaFormatOna:
+			return edge.Node
+		}
+	}
+	return nil
+}
+
+// ResolveEpisodeFile picks the file for episodeNumber out of a force-matched analysis: cour
+// numbering first (GetFileForEpisode), then a media-tree analysis (no force, files keep their
+// own cour). Not found means skip this torrent — never guess between cours.
+func (s *AutoSelect) ResolveEpisodeFile(
+	ctx context.Context,
+	analysis *torrentanalyzer.Analysis,
+	filepaths []string,
+	media *anilist.CompleteAnime,
+	episodeNumber int,
+	shared *torrentanalyzer.SharedContext,
+) (*torrentanalyzer.File, bool) {
+	cour := s.ResolveCour(ctx, media)
+	if f, ok := analysis.GetFileForEpisode(episodeNumber, cour); ok {
+		s.logger.Debug().Interface("cour", cour).Msgf("autoselect: Episode %d of media %d is %s", episodeNumber, media.GetID(), f.GetPath())
+		return f, true
+	}
+	epStr := strconv.Itoa(episodeNumber)
+	tree, err := torrentanalyzer.NewAnalyzer(&torrentanalyzer.NewAnalyzerOptions{
+		Logger:              s.logger,
+		Filepaths:           filepaths,
+		Media:               media,
+		PlatformRef:         s.platform,
+		MetadataProviderRef: s.metadataProvider,
+		Shared:              shared,
+	}).AnalyzeTorrentFiles()
+	if err == nil {
+		if tf, ok := tree.GetFileByMediaIdAndAniDBEpisode(media.GetID(), epStr); ok {
+			s.logger.Debug().Msgf("autoselect: Resolved cour episode %s for media %d via media-tree analysis", epStr, media.GetID())
+			return tf, true
+		}
+	}
+	s.logger.Warn().Int("claims", analysis.CountByAniDBEpisode(epStr)).Interface("cour", cour).
+		Msgf("autoselect: No file is episode %s of media %d, skipping torrent", epStr, media.GetID())
+	return nil, false
+}
+
 const (
 	MaxTorrentCandidatesToCheck = 3
 	MaxAnalyzedTorrents         = 3
@@ -195,7 +281,7 @@ func (s *AutoSelect) selectFileFromTorrentClient(
 		return nil, err
 	}
 
-	analysisFile, found := analysis.GetFileByAniDBEpisode(strconv.Itoa(episodeNumber))
+	analysisFile, found := s.ResolveEpisodeFile(ctx, analysis, filepaths, media, episodeNumber, shared)
 	if !found {
 		cancel()
 		return nil, fmt.Errorf("episode not found")
@@ -298,7 +384,7 @@ func (s *AutoSelect) selectFileFromDebrid(
 		return nil, err
 	}
 
-	analysisFile, found := analysis.GetFileByAniDBEpisode(strconv.Itoa(episodeNumber))
+	analysisFile, found := s.ResolveEpisodeFile(ctx, analysis, filepaths, media, episodeNumber, shared)
 	if !found {
 		return nil, fmt.Errorf("episode not found")
 	}

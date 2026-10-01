@@ -11,6 +11,7 @@ import (
 	"seanime/internal/torrents/autoselect"
 	"seanime/internal/util"
 	"seanime/internal/util/torrentutil"
+	"strconv"
 
 	"github.com/anacrolix/torrent"
 	"github.com/samber/lo"
@@ -164,7 +165,14 @@ func (r *Repository) findBestTorrentFromManualSelection(ctx context.Context, t *
 			return nil, err
 		}
 
-		analysisFile, found := analysis.GetFileByAniDBEpisode(aniDbEpisode)
+		var analysisFile *torrentanalyzer.File
+		found := false
+		if n, convErr := strconv.Atoi(aniDbEpisode); convErr == nil {
+			// Multi-cour batches have several files claiming this episode under force-match.
+			analysisFile, found = r.autoSelect.ResolveEpisodeFile(ctx, analysis, filepaths, media, n, nil)
+		} else {
+			analysisFile, found = analysis.GetFileByAniDBEpisode(aniDbEpisode) // specials ("S1"), OVAs
+		}
 		// Check if analyzer found the episode
 		if !found {
 			r.logger.Error().Msgf("torrentstream: Failed to auto-select episode from torrent %s", selectedTorrent.Info().Name)

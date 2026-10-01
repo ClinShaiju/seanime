@@ -116,3 +116,48 @@ func newAnalyzedFile(path string, index int, mediaID int, episode int, fileType 
 	}
 	return file
 }
+
+// Force-matching renumbers absolute files onto the requested cour, so a full-season pack has two
+// files claiming each episode. Cour numbering decides, never file order.
+func TestGetFileForEpisode_Cours(t *testing.T) {
+	pack := func(names ...string) *Analysis {
+		a := &Analysis{}
+		for i, n := range names {
+			f := newFile(i, n)
+			f.localFile.Metadata = &anime.LocalFileMetadata{AniDBEpisode: "1"}
+			a.files = append(a.files, f)
+		}
+		return a
+	}
+	pick := func(a *Analysis, c Cour) int {
+		f, ok := a.GetFileForEpisode(1, c)
+		if !ok {
+			return -1
+		}
+		return f.GetIndex()
+	}
+
+	// Dr. Stone New World Part 2 episode 1 = S3 episode 12 (cour 1 has 11).
+	drStone := pack(
+		"Dr. STONE - New World/[sam] Dr. STONE - New World - 01v2 [BD 1080p FLAC] [A762B0C6].mkv",
+		"Dr. STONE - New World/[sam] Dr. STONE - New World - 12 [BD 1080p FLAC] [0F48FCFD].mkv",
+	)
+	require.Equal(t, 1, pick(drStone, Cour{Season: 3, Index: 2, Offset: 11}), "continuous number")
+	require.Equal(t, 0, pick(drStone, Cour{Season: 3, Index: 1}), "cour 1 keeps its own number")
+
+	// Two 12-episode cours, no continuous file: the release labeled as cour 2.
+	labeled := pack(
+		"Show S2/[Grp] Show S2 - 01 [1080p].mkv",
+		"Show S2 Part 2/[Grp] Show S2 Part 2 - 01 [1080p].mkv",
+	)
+	require.Equal(t, 1, pick(labeled, Cour{Season: 2, Index: 2, Offset: 12}), "cour-2 release")
+	require.Equal(t, 0, pick(labeled, Cour{Season: 2, Index: 1}), "cour 1 skips the Part 2 file")
+
+	// Nothing says which "01" is cour 2: skip the pack rather than guess.
+	unlabeled := pack("A/[Grp] Show - 01 [1080p].mkv", "B/[Grp] Show - 01 [1080p].mkv")
+	require.Equal(t, -1, pick(unlabeled, Cour{Season: 2, Index: 2, Offset: 12}))
+
+	// A lone claimant is trusted unless it is labeled as another cour.
+	require.Equal(t, 0, pick(pack("[Grp] Show S2 Part 2 - 01 [1080p].mkv"), Cour{Season: 2, Index: 2, Offset: 12}))
+	require.Equal(t, -1, pick(pack("[Grp] Show S2 Part 1 - 01 [1080p].mkv"), Cour{Season: 2, Index: 2, Offset: 12}))
+}

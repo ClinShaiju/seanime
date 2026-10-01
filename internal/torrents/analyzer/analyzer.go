@@ -10,6 +10,7 @@ import (
 	"seanime/internal/platforms/platform"
 	"seanime/internal/util"
 	"seanime/internal/util/limiter"
+	"strconv"
 
 	"github.com/rs/zerolog"
 	lop "github.com/samber/lo/parallel"
@@ -165,6 +166,112 @@ func (a *Analysis) GetFileByAniDBEpisode(episode string) (*File, bool) {
 		}
 	}
 	return nil, false
+}
+
+// Cour places a requested episode within its season. A split season (AniList "Part 2" entries)
+// numbers on from the earlier cours: with two 12-episode cours, cour 2 episode 1 is episode 13.
+type Cour struct {
+	Season int // season number, 0 = unknown
+	Index  int // the cour's ordinal within the season; 1 = first cour or an unsplit season
+	Offset int // episodes in the season's earlier cours, 0 = none or unknown
+}
+
+// GetFileForEpisode picks the file for a cour's episode. Force-matching renumbers absolute files
+// onto the requested cour ("New World - 16" -> Part 2 episode 5), so a full-season pack has two
+// files claiming the episode and file order used to decide which one played. In order:
+//  1. the season's continuous numbering (episode+Offset), when a file carries it;
+//  2. the cour's own numbering: the only claimant, or the claimant named with the episode itself
+//     and labeled with that cour ("Part 2"; unlabeled = cour 1);
+//  3. nothing — the caller re-resolves or skips the pack rather than play another cour's episode.
+func (a *Analysis) GetFileForEpisode(episode int, c Cour) (*File, bool) {
+	if c.Offset > 0 {
+		if f, ok := only(a.files, func(f *File) bool {
+			return f.rawEpisode() == episode+c.Offset && !f.labelConflicts(c)
+		}); ok {
+			return f, true
+		}
+	}
+	epStr := strconv.Itoa(episode)
+	var claims []*File
+	for _, f := range a.files {
+		if f.localFile.Metadata.AniDBEpisode == epStr {
+			claims = append(claims, f)
+		}
+	}
+	if len(claims) == 1 {
+		// Trust the hydrator's renumbering ("Jujutsu Kaisen - 25" = S2E1); only an explicit
+		// other-cour label ("Part 1" when Part 2 was asked for) disqualifies it.
+		if c.Index > 1 && claims[0].hasPart() && claims[0].part() != c.Index {
+			return nil, false
+		}
+		return claims[0], true
+	}
+	return only(claims, func(f *File) bool {
+		return f.rawEpisode() == episode && !f.labelConflicts(c) && f.part() == max(c.Index, 1)
+	})
+}
+
+// only returns the single file satisfying keep.
+func only(files []*File, keep func(f *File) bool) (*File, bool) {
+	var ret *File
+	for _, f := range files {
+		if keep(f) {
+			if ret != nil {
+				return nil, false
+			}
+			ret = f
+		}
+	}
+	return ret, ret != nil
+}
+
+// parsedInts returns a label's numeric values from the file name and its folders.
+func (f *File) parsedInts(get func(pd *anime.LocalFileParsedData) string) []int {
+	var ret []int
+	pds := append([]*anime.LocalFileParsedData{f.localFile.ParsedData}, f.localFile.ParsedFolderData...)
+	for _, pd := range pds {
+		if pd == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(get(pd)); err == nil {
+			ret = append(ret, n)
+		}
+	}
+	return ret
+}
+
+// rawEpisode is the episode number as written in the file name, -1 if none.
+func (f *File) rawEpisode() int {
+	if pd := f.localFile.ParsedData; pd != nil {
+		if n, err := strconv.Atoi(pd.Episode); err == nil {
+			return n
+		}
+	}
+	return -1
+}
+
+func (f *File) hasPart() bool {
+	return len(f.parsedInts(func(pd *anime.LocalFileParsedData) string { return pd.Part })) > 0
+}
+
+// part is the cour label ("Part 2") on the file or its folders, 1 when unlabeled.
+func (f *File) part() int {
+	if ps := f.parsedInts(func(pd *anime.LocalFileParsedData) string { return pd.Part }); len(ps) > 0 {
+		return ps[0]
+	}
+	return 1
+}
+
+// labelConflicts reports a season or cour label naming somewhere other than c.
+func (f *File) labelConflicts(c Cour) bool {
+	if c.Season > 0 {
+		for _, s := range f.parsedInts(func(pd *anime.LocalFileParsedData) string { return pd.Season }) {
+			if s != c.Season {
+				return true
+			}
+		}
+	}
+	return c.Index > 1 && f.hasPart() && f.part() != c.Index
 }
 
 // CountByAniDBEpisode returns how many analyzed files claim the given AniDB episode.

@@ -995,7 +995,7 @@ func (s *AutoSelect) smartCachedPrioritization(
 // selections computed by an older ladder. Without this a ranking fix only reaches entries that
 // happen to miss the cache, which is exactly the continue-watching titles a user is mid-way
 // through and would notice first.
-const RankerVersion = "2026-09-30"
+const RankerVersion = "2026-09-30c"
 
 // bandGated is the band of a release that can't serve the request at all (wrong episode or a
 // declared season other than the requested one). Named because the sort ladders treat it

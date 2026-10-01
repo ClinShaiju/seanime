@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v3.10.3.3
+
+- 🦺 Auto-select: Split-cour packs now play the right cour's file. A full-season pack has both cour 1's "05" and the continuous "16" claiming Part 2 episode 5, and file order decided which one played (Dr. Stone New World Part 2 played Part 1 episodes, inconsistently). Files are now chosen by cour numbering: the season's continuous number first (cour 2 episode 1 of two 12-episode cours = 13), then the cour's own release ("Part 2 - 01"), and a pack that can't tell the cours apart is skipped instead of guessed. Applies to auto-select, manual "Use previous source" and torrent streaming.
+
 ## v3.10.3.2
 
 - ✨ Debrid: Streams keep to their source. The pack / release group you last streamed for an entry is remembered per user, and later episodes stay on it instead of hopping between encodes. A manual pick holds over everything but the episode and season checks until you pick manually again; an auto-selected one yields only to SeaDex. A later cour of the same TV season inherits the previous cour's source. In manual mode, a new "Use previous source" switch (on by default) plays the next episode from it without opening the picker; deleting the saved history resets it.

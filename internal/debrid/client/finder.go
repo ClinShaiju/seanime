@@ -319,30 +319,8 @@ func (r *Repository) findBestTorrentFromManualSelection(provider debrid.Provider
 			return nil, err
 		}
 
-		epStr := strconv.Itoa(episodeNumber)
-		analysisFile, found := analysis.GetFileByAniDBEpisode(epStr)
-
-		// Multi-cour / multi-season batch: force-match collapses every file onto the
-		// requested cour, so more than one file ends up claiming this episode number
-		// (e.g. cour 1's ep 1 and cour 2's ep 1 in a full-season batch). The simple
-		// lookup then returns the wrong cour. Re-resolve with a media-tree analysis
-		// (no force) that assigns each file its true season, and pick by media id.
-		if (found && analysis.CountByAniDBEpisode(epStr) > 1) || !found {
-			treeAnalyzer := torrentanalyzer.NewAnalyzer(&torrentanalyzer.NewAnalyzerOptions{
-				Logger:              r.logger,
-				Filepaths:           filepaths,
-				Media:               media,
-				PlatformRef:         r.platformRef,
-				MetadataProviderRef: r.metadataProviderRef,
-				ForceMatch:          false,
-			})
-			if treeAnalysis, e := treeAnalyzer.AnalyzeTorrentFiles(); e == nil {
-				if f, ok := treeAnalysis.GetFileByMediaIdAndAniDBEpisode(media.GetID(), epStr); ok {
-					analysisFile, found = f, true
-					r.logger.Debug().Msgf("debridstream: Resolved cour episode %s for media %d via media-tree analysis", epStr, media.GetID())
-				}
-			}
-		}
+		// Multi-cour batches have several files claiming this episode under force-match.
+		analysisFile, found := r.autoSelect.ResolveEpisodeFile(context.Background(), analysis, filepaths, media, episodeNumber, nil)
 
 		// Check if analyzer found the episode
 		if !found {
